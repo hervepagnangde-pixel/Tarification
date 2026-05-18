@@ -255,7 +255,7 @@ if f_triangle and f_gnpis and f_indices:
                     })
 
                 df_proj = pd.DataFrame(projections)
-                print(df_proj)
+
                 # ── As-If ──
                 st.write("**Calcul As-If...**")
                 df_idx_set = df_idx.set_index('Annee')['Coefficients']
@@ -268,7 +268,6 @@ if f_triangle and f_gnpis and f_indices:
                         return float(val)
                     except:
                         return 1.0
-                print(df_proj['I_reg'])
                 
                 df_proj['I_ultime'] = df_proj['annee_ultime'].apply(get_indice)
                 df_proj['I_reg']    = df_proj['annee_reg'].apply(get_indice)
