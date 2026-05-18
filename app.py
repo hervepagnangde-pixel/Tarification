@@ -226,62 +226,92 @@ if f_triangle and f_gnpis and f_indices:
                 })
                 st.dataframe(df_facteurs, use_container_width=True)
 
-                # ── Projection jusqu'à dev 9 ──
-                st.write("**Projection des sinistres incomplets...**")
+                # ── As-If sur chaque paiement ──
+                st.write("**Calcul As-If par paiement...**")
 
-                projections = []
-                for sin_id, grp in df_liq.groupby('sinistre_id'):
-                    grp = grp.sort_values('dev').set_index('dev')
-                    annee_surv = grp['annee_surv'].iloc[0]
-                    dev_max = grp.index.max()
-                    total_actuel = grp.loc[dev_max, 'total']
-
-                    # Projeter
-                    total_ultime = total_actuel
-                    for k in range(dev_max, 9):
-                        total_ultime *= f_moyens[k]
-
-                    # Année ultime et règlement
-                    annee_ultime  = annee_surv + 9
-                    annee_reg_der = grp['annee_reg'].iloc[-1]
-
-                    projections.append({
-                        'sinistre_id' : sin_id,
-                        'annee_surv'  : annee_surv,
-                        'annee_reg'   : annee_reg_der,
-                        'annee_ultime': annee_ultime,
-                        'dev_max'     : dev_max,
-                        'total_ultime': total_ultime
-                    })
-
-                df_proj = pd.DataFrame(projections)
-
-                # ── As-If ──
-                st.write("**Calcul As-If...**")
                 df_idx_set = df_idx.set_index('Annee')['Coefficients']
 
                 def get_indice(annee):
                     try:
-                        val = df_idx_set[annee]
-                        if isinstance(val, str):
-                            val = val.replace(',', '.').replace(' ', '')
-                        return float(val)
+                        return float(df_idx_set[annee])
                     except:
                         return 1.0
-                
-                df_proj['I_ultime'] = df_proj['annee_ultime'].apply(get_indice)
-                df_proj['I_reg']    = df_proj['annee_reg'].apply(get_indice)
-                df_proj['total_asif'] = df_proj['total_ultime'] * (df_proj['I_ultime'] / df_proj['I_reg'])
-                st.write("Aperçu df_proj avant As-If :")
-                st.write(df_proj[['sinistre_id','annee_surv','annee_reg','annee_ultime','I_ultime','I_reg']].head(10))
-                st.success(f"✅ As-If calculé sur {len(df_proj)} sinistres")
-                with st.expander("Aperçu projections As-If"):
-                     st.dataframe(df_proj[['sinistre_id','annee_surv','dev_max','total_ultime','total_asif']].head(20))
-                    
-                # Sauvegarder
-                st.session_state["df_proj"]   = df_proj
-                st.session_state["df_idx"]    = df_idx
-                st.session_state["df_gnpis"]  = df_gnpis
+
+                # Pour chaque sinistre, année ultime = annee_surv + 9
+                df_liq['annee_ultime'] = df_liq['annee_surv'] + 9
+                df_liq['I_ultime']     = df_liq['annee_ultime'].apply(get_indice)
+                df_liq['I_reg']        = df_liq['annee_reg'].apply(get_indice)
+                df_liq['total_asif']   = df_liq['total'] * (
+                    df_liq['I_ultime'] / df_liq['I_reg']
+                )
+
+                with st.expander("Aperçu As-If par paiement"):
+                    st.dataframe(df_liq[['sinistre_id','annee_surv','annee_reg',
+                                         'dev','total','I_ultime','I_reg',
+                                         'total_asif']].head(20))
+
+                # ── Chain Ladder sur total_asif ──
+                st.write("**Calcul coefficients Chain Ladder As-If...**")
+
+                facteurs = {k: [] for k in range(9)}
+
+                for sin_id, grp in df_liq.groupby('sinistre_id'):
+                    grp = grp.sort_values('dev').set_index('dev')
+                    for k in range(9):
+                        if k in grp.index and (k+1) in grp.index:
+                            t_k  = grp.loc[k,   'total_asif']
+                            t_k1 = grp.loc[k+1, 'total_asif']
+                            if t_k > 0:
+                                f = t_k1 / t_k
+                                if 0.9 <= f <= 2.5:
+                                    facteurs[k].append(f)
+
+                f_moyens = {}
+                for k in range(9):
+                    if facteurs[k]:
+                        f_moyens[k] = np.mean(facteurs[k])
+                    else:
+                        f_moyens[k] = 1.0
+
+                df_facteurs = pd.DataFrame({
+                    'Développement'  : [f"{k}→{k+1}" for k in range(9)],
+                    'Facteur moyen'  : [round(f_moyens[k], 4) for k in range(9)],
+                    'Nb observations': [len(facteurs[k]) for k in range(9)]
+                })
+                st.dataframe(df_facteurs, use_container_width=True)
+
+                # ── Projection As-If jusqu'à dev 9 ──
+                st.write("**Projection As-If jusqu'à dev 9...**")
+
+                projections = []
+                for sin_id, grp in df_liq.groupby('sinistre_id'):
+                    grp = grp.sort_values('dev').set_index('dev')
+                    annee_surv   = grp['annee_surv'].iloc[0]
+                    dev_max      = grp.index.max()
+                    asif_actuel  = grp.loc[dev_max, 'total_asif']
+
+                    # Projeter
+                    total_ultime_asif = asif_actuel
+                    for k in range(dev_max, 9):
+                        total_ultime_asif *= f_moyens[k]
+
+                    projections.append({
+                        'sinistre_id'      : sin_id,
+                        'annee_surv'       : annee_surv,
+                        'dev_max'          : dev_max,
+                        'asif_actuel'      : asif_actuel,
+                        'total_ultime_asif': total_ultime_asif
+                    })
+
+                df_proj = pd.DataFrame(projections)
+
+                st.success(f"✅ {len(df_proj)} sinistres projetés")
+                with st.expander("Aperçu projections finales"):
+                    st.dataframe(df_proj.head(20))
+
+                st.session_state["df_proj"]  = df_proj
+                st.session_state["df_idx"]   = df_idx
+                st.session_state["df_gnpis"] = df_gnpis
                 st.session_state["annee_cotation"] = annee_cotation
 
 # ─── MARKET CURVE ───
