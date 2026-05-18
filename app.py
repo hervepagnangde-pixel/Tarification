@@ -385,7 +385,7 @@ if f_mkt and st.button("▶ Construire la market curve"):
         rows_mkt.append({
             "Tranche"        : t["nom"],
             "Type"           : t["type"],
-            "Taux P25"       : rol_c + p25) * (t['portee']/gnpi),
+            "Taux P25"       : (rol_c + p25) * (t['portee']/gnpi),
             "Taux médian"    : rol_c * (t['portee']/gnpi),
             "Taux P75"       : (rol_c + p75) * (t['portee']/gnpi),
         })
