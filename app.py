@@ -4,113 +4,71 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from scipy.stats import pareto
 import json
 
-# Configuration
 st.set_page_config(page_title="Agent Tarification Réassurance", layout="wide")
-st.title("🎯 Agent de Tarification Réassurance Non-Proportionnelle")
+st.title("🎯 Agent Tarification Réassurance Non-Proportionnelle")
 
-# Clé API
+# ─── SIDEBAR ───
+st.sidebar.header("⚙️ Configuration")
 api_key = st.sidebar.text_input("Clé API Claude", type="password")
 gnpi = st.sidebar.number_input("GNPI (MAD)", value=183_000_000, step=1_000_000)
 
-# Upload fichiers
-st.sidebar.header("Fichiers")
-f_prog = st.sidebar.file_uploader("Programme", type=["xlsx","csv"])
-f_bc   = st.sidebar.file_uploader("Burning Cost", type=["xlsx","csv"])
-f_sim  = st.sidebar.file_uploader("Simulation", type=["csv","xlsx"])
-f_mkt  = st.sidebar.file_uploader("Données Marché", type=["xlsx","csv"])
+# ─── FORMULAIRE PROGRAMME ───
+st.header("📋 Programme de Réassurance")
+st.subheader("Définir les tranches")
 
-if st.sidebar.button("▶ Lancer l'analyse", disabled=not all([api_key, f_prog, f_bc, f_sim])):
-    client = anthropic.Anthropic(api_key=api_key)
+nb_tranches = st.number_input("Nombre de tranches", min_value=1, max_value=10, value=3)
 
-    # ETAPE 1 - Programme
-    with st.spinner("Lecture du programme..."):
-        df = pd.read_excel(f_prog, header=None)
-        contenu = df.to_string()
-        msg = client.messages.create(
-            model="claude-opus-4-5", max_tokens=1000,
-            messages=[{"role":"user","content":f"Extrait les tranches en JSON uniquement, sans markdown:\n{{\"tranches\":[{{\"numero\":1,\"nom\":\"Risk & Cat\",\"type\":\"travaillante\",\"priorite\":2000000,\"limite\":13000000}}]}}\n\n{contenu}"}]
-        )
-        texte = msg.content[0].text.replace("```json","").replace("```","").strip()
-        tranches = json.loads(texte)["tranches"]
-        st.success(f"✅ {len(tranches)} tranches identifiées")
+tranches_input = []
+for i in range(nb_tranches):
+    st.markdown(f"**Tranche {i+1}**")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        nom = st.text_input(f"Nom", value=f"Tranche {i+1}", key=f"nom_{i}")
+        type_t = st.selectbox(f"Type", ["travaillante", "non_travaillante", "cat"], key=f"type_{i}")
+        priorite = st.number_input(f"Priorité (MAD)", value=2_000_000, step=500_000, key=f"prio_{i}")
+        portee = st.number_input(f"Portée/Limite (MAD)", value=13_000_000, step=500_000, key=f"port_{i}")
+    with col2:
+        st.markdown("**Conditions**")
+        has_aal = st.checkbox(f"AAL", key=f"aal_{i}")
+        aal_val = st.number_input(f"Montant AAL (MAD)", value=0, step=100_000, key=f"aal_v_{i}", disabled=not has_aal)
+        has_aad = st.checkbox(f"AAD", key=f"aad_{i}")
+        aad_val = st.number_input(f"Montant AAD (MAD)", value=0, step=100_000, key=f"aad_v_{i}", disabled=not has_aad)
+    with col3:
+        st.markdown("**Reconstitutions & Frais**")
+        nb_recon = st.number_input(f"Nb reconstitutions", value=1, min_value=0, max_value=5, key=f"recon_{i}")
+        tx_recon = st.number_input(f"Taux reconstitution (%)", value=100, min_value=0, max_value=200, key=f"txrecon_{i}")
+        has_indices = st.checkbox(f"Indices", key=f"idx_{i}")
+        brokage = st.number_input(f"Brokage (%)", value=10, min_value=0, max_value=30, key=f"brok_{i}")
+        frais = st.number_input(f"Frais généraux (%)", value=5, min_value=0, max_value=20, key=f"frais_{i}")
+        marge = st.number_input(f"Marge (%)", value=10, min_value=0, max_value=30, key=f"marge_{i}")
+        retrocession = st.number_input(f"Rétrocession (%)", value=0, min_value=0, max_value=50, key=f"retro_{i}")
 
-    # ETAPE 2 - Burning Cost
-    with st.spinner("Burning Cost..."):
-        df_bc = pd.read_excel(f_bc, header=None)
-        col_ha = df_bc.iloc[:, 208].dropna()
-        bc_taux = float(col_ha[col_ha.apply(lambda x: isinstance(x, float))].values[0])
-        bc_rates = {tranches[0]["nom"]: bc_taux}
-        for t in tranches[1:]:
-            bc_rates[t["nom"]] = 0.0
-        st.success("✅ Taux BC calculés")
+    tranches_input.append({
+        "numero": i+1, "nom": nom, "type": type_t,
+        "priorite": priorite, "portee": portee,
+        "AAL": aal_val if has_aal else None,
+        "AAD": aad_val if has_aad else None,
+        "nb_reconstitutions": nb_recon,
+        "taux_reconstitution": tx_recon,
+        "indices": has_indices,
+        "brokage": brokage/100,
+        "frais": frais/100,
+        "marge": marge/100,
+        "retrocession": retrocession/100
+    })
+    st.divider()
 
-    # ETAPE 3 - Simulation
-    with st.spinner("Simulation..."):
-        df_sim = pd.read_csv(f_sim)
-        sim_rates = {}
-        for i, t in enumerate(tranches):
-            sim_rates[t["nom"]] = {
-                "taux_pur": df_sim.iloc[i]["Taux_PrimePure"],
-                "taux_technique": df_sim.iloc[i]["Taux_Technique"]
-            }
-        st.success("✅ Taux simulation extraits")
-
-    # ETAPE 4 - Market Curve
-    taux_marche = {}
-    if f_mkt:
-        with st.spinner("Market Curve..."):
-            df_mkt = pd.read_excel(f_mkt)
-            df_curve = df_mkt[['Priorité en MAD','ROLs']].dropna()
-            if df_curve['ROLs'].dtype == object:
-                df_curve['ROLs'] = df_curve['ROLs'].str.replace('%','').astype(float)/100
-            x = df_curve['Priorité en MAD'].values
-            y = df_curve['ROLs'].values
-            def power_model(x, a, b):
-                return a * np.power(x, -b)
-            params, _ = curve_fit(power_model, x, y, p0=[1, 0.5], maxfev=5000)
-            a, b = params
-
-            for t in tranches:
-                rol = power_model(t['priorite'], a, b)
-                taux_marche[t["nom"]] = rol * (t["limite"] / gnpi)
-
-            # Graphique
-            fig, ax = plt.subplots(figsize=(8,4))
-            ax.scatter(x, y, color='orange', s=60, zorder=5, label='Données marché')
-            x_range = np.linspace(min(x), max(x), 200)
-            ax.plot(x_range, power_model(x_range, a, b), color='red', linewidth=2, label=f'y={a:.4f}×x^(-{b:.4f})')
-            ax.set_xlabel('Priorité (MAD)'); ax.set_ylabel('ROL')
-            ax.set_title('Market Curve'); ax.legend(); ax.grid(alpha=0.3)
-            st.pyplot(fig)
-            st.success("✅ Market curve construite")
-
-    # ETAPE 5 - Rapport
-    st.header("📊 Rapport de Tarification")
-    rows = []
-    prime_totale = 0
-    for t in tranches:
-        nom = t["nom"]
-        bc = bc_rates.get(nom, 0)
-        sim = sim_rates[nom]["taux_technique"]
-        mkt = taux_marche.get(nom, 0)
-        taux_retenu = max(sim, mkt) if t["type"] != "travaillante" else sim
-        prime = gnpi * taux_retenu
-        prime_totale += prime
-        ecart = (sim - bc) / bc * 100 if bc > 0 else None
-        alerte = "⚠️" if ecart and abs(ecart) > 25 else "✅"
-        rows.append({
-            "Tranche": nom,
-            "Type": t["type"],
-            "BC": f"{bc:.4%}",
-            "Simulation": f"{sim:.4%}",
-            "Marché": f"{mkt:.4%}" if mkt else "—",
-            "Taux retenu": f"{taux_retenu:.4%}",
-            "Prime (MAD)": f"{prime:,.0f}",
-            "Statut": alerte
-        })
-
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
-    st.metric("Prime totale", f"{prime_totale:,.0f} MAD")
-    st.metric("Taux global", f"{prime_totale/gnpi:.4%}")
+# Résumé programme
+if st.button("📊 Voir résumé du programme"):
+    df_prog = pd.DataFrame([{
+        "Tranche": t["nom"], "Type": t["type"],
+        "Priorité": f"{t['priorite']:,}", "Portée": f"{t['portee']:,}",
+        "AAL": t["AAL"] or "—", "AAD": t["AAD"] or "—",
+        "Reconst.": f"{t['nb_reconstitutions']} x {t['taux_reconstitution']}%",
+        "Indices": "✅" if t["indices"] else "—",
+        "Brokage": f"{t['brokage']:.0%}", "Marge": f"{t['marge']:.0%}"
+    } for t in tranches_input])
+    st.dataframe(df_prog, use_container_width=True)
