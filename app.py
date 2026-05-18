@@ -366,9 +366,11 @@ if f_mkt and st.button("▶ Construire la market curve"):
     df_curve = df_mkt[['Priorité en MAD','ROLs']].dropna().copy()
     if df_curve['ROLs'].dtype == object:
         df_curve['ROLs'] = df_curve['ROLs'].str.replace('%','').astype(float)/100
-
+    df_curve = df_curve[(df_curve['ROLs'] > 0) & (df_curve['ROLs'] <= 1)]
     x = df_curve['Priorité en MAD'].values
     y = df_curve['ROLs'].values
+    # 1. Filtrer valeurs atypiques
+   
 
     def power_model(x, a, b):
         return a * np.power(x, -b)
@@ -404,7 +406,11 @@ if "rows_mkt" in st.session_state:
     ax.set_xlabel('Priorité (MAD)'); ax.set_ylabel('ROL')
     ax.set_title('Market Curve'); ax.legend(); ax.grid(alpha=0.3)
     st.pyplot(fig)
-
+    ss_res = np.sum((y - power_model(x, a, b))**2)
+    ss_tot = np.sum((y - np.mean(y))**2)
+    r2 = 1 - ss_res/ss_tot
+    st.write(f"R² = {r2:.4f}")
+    ax.scatter(x, y, color='orange', s=60, zorder=5, label='Données marché')
     df_mkt_res = pd.DataFrame([{
         "Tranche" : r["Tranche"],
         "Type"    : r["Type"],
@@ -428,3 +434,4 @@ Tranches : {json.dumps(tranches_input, indent=2)}"""}]
     if "analyse_mkt" in st.session_state:
         st.subheader("🤖 Recommandation Claude")
         st.markdown(st.session_state["analyse_mkt"])
+
