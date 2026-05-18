@@ -105,90 +105,184 @@ if f_triangle and f_gnpis and f_indices:
     if st.button("▶ Transformer le triangle"):
         with st.spinner("Transformation en cours..."):
 
-            # Identifier les colonnes années (2016 à 2025)
-            annees_reglement = [c for c in df_tri_raw.columns if str(c).strip().isdigit()]
-            annees_reglement = sorted([int(a) for a in annees_reglement])
+            # ── Lire les 2 lignes d'entête ──
+            df_raw = pd.read_excel(f_triangle, header=None)
 
-            # Remplir la colonne UW Year (année de survenance)
-            # La colonne UW Year n'apparaît qu'une fois par groupe
-            col_uwyear = df_tri_raw.columns[0]
-            df_tri_raw[col_uwyear] = df_tri_raw[col_uwyear].fillna(method='ffill')
+            # Ligne 0 : années de règlement (ex: 2016, NaN, NaN, 2017, NaN, NaN...)
+            # Ligne 1 : types (PAID, OS, TOTAL, PAID, OS, TOTAL...)
+            # Ligne 2+ : sinistres
 
-            # Pour chaque sinistre (ligne), extraire TOTAL par année règlement
-            # Les colonnes TOTAL sont les colonnes de type "TOTAL" sous chaque année
-            records = []
-            
-            # Détecter les colonnes TOTAL
-            # Le triangle a structure : 2016(PAID,OS,TOTAL), 2017(PAID,OS,TOTAL)...
-            cols = list(df_tri_raw.columns)
-            
-            for idx_row, row in df_tri_raw.iterrows():
-                annee_surv = row[col_uwyear]
-                
-                # Essayer de convertir en entier
+            ligne_annees = df_raw.iloc[0].tolist()
+            ligne_types  = df_raw.iloc[1].tolist()
+
+            # Remplir les années manquantes (cellules fusionnées → NaN)
+            annee_courante = None
+            col_info = []  # liste de (annee_reglement, type) par colonne
+            for i, (ann, typ) in enumerate(zip(ligne_annees, ligne_types)):
+                if i == 0:
+                    col_info.append(('UW_YEAR', ''))
+                    continue
+                # Mettre à jour l'année courante
                 try:
-                    annee_surv = int(annee_surv)
+                    a = int(float(str(ann)))
+                    if 2010 <= a <= 2035:
+                        annee_courante = a
+                except:
+                    pass
+                # Nettoyer le type
+                typ_clean = str(typ).strip().upper() if pd.notna(typ) else ''
+                col_info.append((annee_courante, typ_clean))
+
+            # Données sinistres (à partir ligne 2)
+            df_data = df_raw.iloc[2:].reset_index(drop=True)
+
+            # Remplir UW Year (ffill)
+            df_data.iloc[:, 0] = df_data.iloc[:, 0].fillna(method='ffill')
+
+            # Extraire les enregistrements
+            records = []
+            for idx_row, row in df_data.iterrows():
+                # Année de survenance
+                try:
+                    annee_surv = int(float(str(row.iloc[0])))
+                    if not (2010 <= annee_surv <= 2035):
+                        continue
                 except:
                     continue
-                
-                # Parcourir les colonnes TOTAL par année règlement
-                for i, col in enumerate(cols):
-                    if 'TOTAL' in str(col).upper() or 'Total' in str(col):
-                        # Trouver l'année règlement correspondante
-                        # Chercher l'année dans les colonnes précédentes
-                        annee_reg = None
-                        for j in range(i, -1, -1):
-                            try:
-                                yr = int(str(cols[j]).strip())
-                                if 2016 <= yr <= 2025:
-                                    annee_reg = yr
-                                    break
-                            except:
+
+                sinistre_id = f"{annee_surv}_{idx_row}"
+
+                # Parcourir les colonnes TOTAL uniquement
+                for col_idx, (annee_reg, typ) in enumerate(col_info):
+                    if typ != 'TOTAL':
+                        continue
+                    if annee_reg is None:
+                        continue
+
+                    val = row.iloc[col_idx]
+
+                    # Nettoyer la valeur
+                    try:
+                        if isinstance(val, str):
+                            val = val.strip().replace(',', '.').replace(' ', '')
+                            if any(c.isalpha() for c in val) or '#' in val:
                                 continue
-                        
-                        if annee_reg is None:
+                        val = float(val)
+                        if val <= 0 or np.isnan(val):
                             continue
-                        
-                        val = row[col]
-                        
-                        # Nettoyer la valeur
-                        try:
-                            if isinstance(val, str):
-                                val = val.replace(',','.').replace(' ','')
-                                if any(c.isalpha() for c in val) or '#' in val:
-                                    continue
-                            val = float(val)
-                            if val <= 0 or np.isnan(val):
-                                continue
-                        except:
-                            continue
-                        
-                        # Calculer le développement
-                        dev = annee_reg - annee_surv
-                        if dev < 0 or dev > 9:
-                            continue
-                        
-                        records.append({
-                            'sinistre_id' : idx_row,
-                            'annee_surv'  : annee_surv,
-                            'annee_reg'   : annee_reg,
-                            'dev'         : dev,
-                            'total'       : val
-                        })
+                    except:
+                        continue
+
+                    # Développement
+                    dev = annee_reg - annee_surv
+                    if dev < 0 or dev > 9:
+                        continue
+
+                    records.append({
+                        'sinistre_id': sinistre_id,
+                        'annee_surv' : annee_surv,
+                        'annee_reg'  : annee_reg,
+                        'dev'        : dev,
+                        'total'      : val
+                    })
 
             df_liq = pd.DataFrame(records)
-            
+
             if df_liq.empty:
                 st.error("❌ Triangle vide après transformation. Vérifiez le format.")
             else:
-                st.success(f"✅ {len(df_liq)} observations extraites")
+                st.success(f"✅ {len(df_liq)} observations extraites — {df_liq['sinistre_id'].nunique()} sinistres")
+
                 with st.expander("Aperçu triangle de liquidation"):
                     st.dataframe(df_liq.head(30))
-                st.session_state["df_liq"] = df_liq
-                st.session_state["df_idx"] = df_idx
-                st.session_state["df_gnpis"] = df_gnpis
-                st.session_state["annee_cotation"] = annee_cotation
 
+                # ── Coefficients Chain Ladder individuels ──
+                st.write("**Calcul des coefficients Chain Ladder individuels...**")
+
+                facteurs = {k: [] for k in range(9)}  # dev 0→1, 1→2, ..., 8→9
+
+                for sin_id, grp in df_liq.groupby('sinistre_id'):
+                    grp = grp.sort_values('dev').set_index('dev')
+                    for k in range(9):
+                        if k in grp.index and (k+1) in grp.index:
+                            t_k   = grp.loc[k,   'total']
+                            t_k1  = grp.loc[k+1, 'total']
+                            if t_k > 0:
+                                f = t_k1 / t_k
+                                if 0.9 <= f <= 2.5:
+                                    facteurs[k].append(f)
+
+                # Moyennes
+                f_moyens = {}
+                for k in range(9):
+                    if facteurs[k]:
+                        f_moyens[k] = np.mean(facteurs[k])
+                    else:
+                        f_moyens[k] = 1.0  # pas de développement = stable
+
+                df_facteurs = pd.DataFrame({
+                    'Développement': [f"{k}→{k+1}" for k in range(9)],
+                    'Facteur moyen': [round(f_moyens[k], 4) for k in range(9)],
+                    'Nb observations': [len(facteurs[k]) for k in range(9)]
+                })
+                st.dataframe(df_facteurs, use_container_width=True)
+
+                # ── Projection jusqu'à dev 9 ──
+                st.write("**Projection des sinistres incomplets...**")
+
+                projections = []
+                for sin_id, grp in df_liq.groupby('sinistre_id'):
+                    grp = grp.sort_values('dev').set_index('dev')
+                    annee_surv = grp['annee_surv'].iloc[0]
+                    dev_max = grp.index.max()
+                    total_actuel = grp.loc[dev_max, 'total']
+
+                    # Projeter
+                    total_ultime = total_actuel
+                    for k in range(dev_max, 9):
+                        total_ultime *= f_moyens[k]
+
+                    # Année ultime et règlement
+                    annee_ultime  = annee_surv + 9
+                    annee_reg_der = grp['annee_reg'].iloc[-1]
+
+                    projections.append({
+                        'sinistre_id' : sin_id,
+                        'annee_surv'  : annee_surv,
+                        'annee_reg'   : annee_reg_der,
+                        'annee_ultime': annee_ultime,
+                        'dev_max'     : dev_max,
+                        'total_ultime': total_ultime
+                    })
+
+                df_proj = pd.DataFrame(projections)
+
+                # ── As-If ──
+                st.write("**Calcul As-If...**")
+
+                df_idx_set = df_idx.set_index('Annee')['Coefficients']
+
+                def get_indice(annee):
+                    try:
+                        return float(str(df_idx_set[annee]).replace(',','.'))
+                    except:
+                        return 1.0
+
+                df_proj['I_ultime'] = df_proj['annee_ultime'].apply(get_indice)
+                df_proj['I_reg']    = df_proj['annee_reg'].apply(get_indice)
+                df_proj['total_asif'] = df_proj['total_ultime'] * (
+                    df_proj['I_ultime'] / df_proj['I_reg']
+                )
+
+                st.success(f"✅ As-If calculé sur {len(df_proj)} sinistres")
+                with st.expander("Aperçu projections As-If"):
+                    st.dataframe(df_proj[['sinistre_id','annee_surv','dev_max','total_ultime','total_asif']].head(20))
+
+                # Sauvegarder
+                st.session_state["df_proj"]   = df_proj
+                st.session_state["df_idx"]    = df_idx
+                st.session_state["df_gnpis"]  = df_gnpis
+                st.session_state["annee_cotation"] = annee_cotation
 
 
 # ─── MARKET CURVE ───
