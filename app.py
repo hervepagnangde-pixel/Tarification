@@ -255,20 +255,11 @@ if f_triangle and f_gnpis and f_indices:
                     })
 
                 df_proj = pd.DataFrame(projections)
-
+                print(df_proj)
                 # ── As-If ──
                 st.write("**Calcul As-If...**")
                 df_idx_set = df_idx.set_index('Annee')['Coefficients']
 
-                
-                st.write("Aperçu indices :")
-                st.write(df_idx.head(10))
-                st.write("Type colonne Coefficients :", df_idx['Coefficients'].dtype)
-                st.write("Exemple indice 2016 :", df_idx_set.get(2016, 'NON TROUVÉ'))
-                st.write("Exemple indice 2025 :", df_idx_set.get(2025, 'NON TROUVÉ'))
-                
-                st.write("Aperçu df_proj avant As-If :")
-                st.write(df_proj[['sinistre_id','annee_surv','annee_reg','annee_ultime','I_ultime','I_reg']].head(10))
                 def get_indice(annee):
                     try:
                         val = df_idx_set[annee]
@@ -277,12 +268,10 @@ if f_triangle and f_gnpis and f_indices:
                         return float(val)
                     except:
                         return 1.0
-
+                print(df_proj['I_reg'])
                 df_proj['I_ultime'] = df_proj['annee_ultime'].apply(get_indice)
                 df_proj['I_reg']    = df_proj['annee_reg'].apply(get_indice)
-                df_proj['total_asif'] = df_proj['total_ultime'] * (
-                    df_proj['I_ultime'] / df_proj['I_reg']
-                )
+                df_proj['total_asif'] = df_proj['total_ultime'] * (df_proj['I_ultime'] / df_proj['I_reg'])
 
                 st.success(f"✅ As-If calculé sur {len(df_proj)} sinistres")
                 with st.expander("Aperçu projections As-If"):
