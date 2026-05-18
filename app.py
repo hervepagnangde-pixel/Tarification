@@ -32,7 +32,8 @@ if st.sidebar.button("▶ Lancer l'analyse", disabled=not all([api_key, f_prog, 
             model="claude-opus-4-5", max_tokens=1000,
             messages=[{"role":"user","content":f"Extrait les tranches en JSON uniquement, sans markdown:\n{{\"tranches\":[{{\"numero\":1,\"nom\":\"Risk & Cat\",\"type\":\"travaillante\",\"priorite\":2000000,\"limite\":13000000}}]}}\n\n{contenu}"}]
         )
-        tranches = json.loads(msg.content[0].text)["tranches"]
+        texte = msg.content[0].text.replace("```json","").replace("```","").strip()
+        tranches = json.loads(texte)["tranches"]
         st.success(f"✅ {len(tranches)} tranches identifiées")
 
     # ETAPE 2 - Burning Cost
