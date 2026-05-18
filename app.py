@@ -269,6 +269,7 @@ if f_triangle and f_gnpis and f_indices:
                     except:
                         return 1.0
                 print(df_proj['I_reg'])
+                
                 df_proj['I_ultime'] = df_proj['annee_ultime'].apply(get_indice)
                 df_proj['I_reg']    = df_proj['annee_reg'].apply(get_indice)
                 df_proj['total_asif'] = df_proj['total_ultime'] * (df_proj['I_ultime'] / df_proj['I_reg'])
