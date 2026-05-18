@@ -272,11 +272,11 @@ if f_triangle and f_gnpis and f_indices:
                 df_proj['I_ultime'] = df_proj['annee_ultime'].apply(get_indice)
                 df_proj['I_reg']    = df_proj['annee_reg'].apply(get_indice)
                 df_proj['total_asif'] = df_proj['total_ultime'] * (df_proj['I_ultime'] / df_proj['I_reg'])
-                print(df_proj['I_ultime'] / df_proj['I_reg'])
+                st.print(df_proj['I_ultime'] / df_proj['I_reg'])
                 st.success(f"✅ As-If calculé sur {len(df_proj)} sinistres")
                 with st.expander("Aperçu projections As-If"):
                      st.dataframe(df_proj[['sinistre_id','annee_surv','dev_max','total_ultime','total_asif']].head(20))
-
+                    
                 # Sauvegarder
                 st.session_state["df_proj"]   = df_proj
                 st.session_state["df_idx"]    = df_idx
