@@ -267,7 +267,8 @@ if f_triangle and f_gnpis and f_indices:
                 st.write("Exemple indice 2016 :", df_idx_set.get(2016, 'NON TROUVÉ'))
                 st.write("Exemple indice 2025 :", df_idx_set.get(2025, 'NON TROUVÉ'))
                 
-                
+                st.write("Aperçu df_proj avant As-If :")
+                st.write(df_proj[['sinistre_id','annee_surv','annee_reg','annee_ultime','I_ultime','I_reg']].head(10))
                 def get_indice(annee):
                     try:
                         val = df_idx_set[annee]
