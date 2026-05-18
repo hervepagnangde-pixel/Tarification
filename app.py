@@ -291,6 +291,13 @@ if f_triangle and f_gnpis and f_indices:
             coeffs = coeffs[coeffs > 0]
 
             # ── 7. Simulation ──
+            st.write("Alpha:", alpha_final)
+            st.write("Lambda:", lambda_final)
+            st.write("Seuil:", seuil_final)
+            st.write("Nb coeffs:", len(coeffs))
+            st.write("Exemple coeffs:", coeffs[:5] if len(coeffs) > 0 else "VIDE")
+            st.write("X shape:", X.shape)
+            st.write("X above seuil:", len(X_above))
             st.subheader("🚀 Lancer la simulation")
             n_sim = st.number_input("Nombre de simulations", value=10000, step=1000)
 
