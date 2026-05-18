@@ -262,10 +262,13 @@ if f_triangle and f_gnpis and f_indices:
                 df_idx_set = df_idx.set_index('Annee')['Coefficients']
 
                 def get_indice(annee):
-                    try:
-                        return float(str(df_idx_set[annee]).replace(',','.'))
-                    except:
-                        return 1.0
+                try:
+                    val = df_idx_set[annee]
+                    if isinstance(val, str):
+                        val = val.replace(',', '.').replace(' ', '')
+                    return float(val)
+                except:
+                    return 1.0
 
                 df_proj['I_ultime'] = df_proj['annee_ultime'].apply(get_indice)
                 df_proj['I_reg']    = df_proj['annee_reg'].apply(get_indice)
