@@ -280,6 +280,60 @@ if f_triangle and f_gnpis and f_indices:
                 })
                 st.dataframe(df_facteurs, use_container_width=True)
 
+               # ── As-If sur chaque paiement ──
+                st.write("**Calcul As-If par paiement...**")
+
+                df_idx_set = df_idx.set_index('Annee')['Coefficients']
+
+                def get_indice(annee):
+                    try:
+                        return float(df_idx_set[annee])
+                    except:
+                        return 1.0
+
+                # Pour chaque sinistre, année ultime = annee_surv + 9
+                df_liq['annee_ultime'] = df_liq['annee_surv'] + 9
+                df_liq['I_ultime']     = df_liq['annee_ultime'].apply(get_indice)
+                df_liq['I_reg']        = df_liq['annee_reg'].apply(get_indice)
+                df_liq['total_asif']   = df_liq['total'] * (
+                    df_liq['I_ultime'] / df_liq['I_reg']
+                )
+
+                with st.expander("Aperçu As-If par paiement"):
+                    st.dataframe(df_liq[['sinistre_id','annee_surv','annee_reg',
+                                         'dev','total','I_ultime','I_reg',
+                                         'total_asif']].head(20))
+
+                # ── Chain Ladder sur total_asif ──
+                st.write("**Calcul coefficients Chain Ladder As-If...**")
+
+                facteurs = {k: [] for k in range(9)}
+
+                for sin_id, grp in df_liq.groupby('sinistre_id'):
+                    grp = grp.sort_values('dev').set_index('dev')
+                    for k in range(9):
+                        if k in grp.index and (k+1) in grp.index:
+                            t_k  = grp.loc[k,   'total_asif']
+                            t_k1 = grp.loc[k+1, 'total_asif']
+                            if t_k > 0:
+                                f = t_k1 / t_k
+                                if 0.9 <= f <= 2.5:
+                                    facteurs[k].append(f)
+
+                f_moyens = {}
+                for k in range(9):
+                    if facteurs[k]:
+                        f_moyens[k] = np.mean(facteurs[k])
+                    else:
+                        f_moyens[k] = 1.0
+
+                df_facteurs = pd.DataFrame({
+                    'Développement'  : [f"{k}→{k+1}" for k in range(9)],
+                    'Facteur moyen'  : [round(f_moyens[k], 4) for k in range(9)],
+                    'Nb observations': [len(facteurs[k]) for k in range(9)]
+                })
+                st.dataframe(df_facteurs, use_container_width=True)
+
                 # ── Projection As-If jusqu'à dev 9 ──
                 st.write("**Projection As-If jusqu'à dev 9...**")
 
