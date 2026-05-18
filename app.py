@@ -208,6 +208,105 @@ Pour chaque tranche donne :
         st.session_state["tranches"] = tranches_input
         st.success("✅ Simulation terminée !")
 
+
+
+# ─── MARKET CURVE ───
+st.header("📈 Market Curve")
+
+f_mkt = st.file_uploader("Données marché (Excel)", type=["xlsx","csv"])
+
+if f_mkt:
+    df_mkt = pd.read_excel(f_mkt)
+    
+    # Nettoyage
+    df_curve = df_mkt[['Priorité en MAD','ROLs']].dropna()
+    if df_curve['ROLs'].dtype == object:
+        df_curve['ROLs'] = df_curve['ROLs'].str.replace('%','').astype(float)/100
+    
+    x = df_curve['Priorité en MAD'].values
+    y = df_curve['ROLs'].values
+
+    # Modèle puissance
+    def power_model(x, a, b):
+        return a * np.power(x, -b)
+
+    params, _ = curve_fit(power_model, x, y, p0=[1, 0.5], maxfev=5000)
+    a, b = params
+
+    # Résidus pour percentiles
+    y_pred = power_model(x, a, b)
+    residus = y - y_pred
+
+    p25 = np.percentile(residus, 25)
+    p75 = np.percentile(residus, 75)
+
+    st.write(f"Modèle ajusté : y = {a:.5f} × x^(-{b:.4f})")
+
+    # Graphique
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.scatter(x, y, color='orange', s=60, zorder=5, label='Données marché')
+    x_range = np.linspace(min(x), max(x), 300)
+    ax.plot(x_range, power_model(x_range, a, b), 
+            color='red', linewidth=2, label='Courbe centrale')
+    ax.plot(x_range, power_model(x_range, a, b) + p25, 
+            color='green', linewidth=1.5, linestyle='--', label='P25 (bas)')
+    ax.plot(x_range, power_model(x_range, a, b) + p75, 
+            color='blue', linewidth=1.5, linestyle='--', label='P75 (haut)')
+    ax.set_xlabel('Priorité (MAD)')
+    ax.set_ylabel('ROL')
+    ax.set_title('Market Curve — P25 / Médiane / P75')
+    ax.legend()
+    ax.grid(alpha=0.3)
+    st.pyplot(fig)
+
+    # Taux par tranche
+    st.subheader("📊 Taux marché par tranche")
+    rows_mkt = []
+    for t in tranches_input:
+        rol_central = power_model(t['priorite'], a, b)
+        rol_bas     = max(rol_central + p25, 0)
+        rol_haut    = rol_central + p75
+
+        taux_bas     = rol_bas     * (t['portee'] / gnpi)
+        taux_central = rol_central * (t['portee'] / gnpi)
+        taux_haut    = rol_haut    * (t['portee'] / gnpi)
+
+        rows_mkt.append({
+            "Tranche"       : t["nom"],
+            "Type"          : t["type"],
+            "Taux P25 (bas)": f"{taux_bas:.4%}",
+            "Taux médian"   : f"{taux_central:.4%}",
+            "Taux P75 (haut)": f"{taux_haut:.4%}",
+            "ROL central"   : f"{rol_central:.4%}"
+        })
+
+    df_mkt_res = pd.DataFrame(rows_mkt)
+    st.dataframe(df_mkt_res, use_container_width=True)
+
+    # Analyse Claude
+    if api_key:
+        with st.spinner("Claude analyse la market curve..."):
+            client = anthropic.Anthropic(api_key=api_key)
+            analyse_mkt = client.messages.create(
+                model="claude-opus-4-5", max_tokens=1000,
+                messages=[{"role": "user", "content": f"""Tu es expert en réassurance non-proportionnelle.
+Voici les taux de marché estimés par la market curve pour chaque tranche.
+Pour chaque tranche dis quel taux choisir (P25, médian ou P75) et pourquoi.
+Tiens compte du type de tranche (travaillante vs cat) et du contexte marché.
+
+Taux marché :
+{json.dumps(rows_mkt, indent=2)}
+
+Tranches :
+{json.dumps(tranches_input, indent=2)}"""
+                }]
+            )
+            st.subheader("🤖 Recommandation Claude sur les taux marché")
+            st.markdown(analyse_mkt.content[0].text)
+
+    st.session_state["rows_mkt"] = rows_mkt
+    st.success("✅ Market curve construite !")
+
 # Résumé programme
 if st.button("📊 Voir résumé du programme"):
     df_prog = pd.DataFrame([{
