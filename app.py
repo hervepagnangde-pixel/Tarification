@@ -286,7 +286,7 @@ if f_triangle and f_gnpis and f_indices:
 
                 st.success(f"✅ As-If calculé sur {len(df_proj)} sinistres")
                 with st.expander("Aperçu projections As-If"):
-                    st.dataframe(df_proj[['sinistre_id','annee_surv','dev_max','total_ultime','total_asif']].head(20))
+                st.dataframe(df_proj[['sinistre_id','annee_surv','dev_max','total_ultime','total_asif']].head(20))
 
                 # Sauvegarder
                 st.session_state["df_proj"]   = df_proj
