@@ -137,8 +137,7 @@ if f_triangle and f_gnpis and f_indices:
             df_data = df_raw.iloc[2:].reset_index(drop=True)
 
             # Remplir UW Year (ffill)
-            df_data.iloc[:, 0] = df_data.iloc[:, 0].fillna(method='ffill')
-
+            df_data.iloc[:, 0] = df_data.iloc[:, 0].ffill()
             # Extraire les enregistrements
             records = []
             for idx_row, row in df_data.iterrows():
