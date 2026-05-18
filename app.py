@@ -7,7 +7,7 @@ from scipy.optimize import curve_fit
 import json
 
 st.set_page_config(page_title="Agent Tarification Réassurance", layout="wide")
-st.title("Atarificateur")
+st.title("🎯 Agent Tarification Réassurance Non-Proportionnelle")
 
 # ─── SIDEBAR ───
 st.sidebar.header("⚙️ Configuration")
