@@ -99,7 +99,7 @@ if f_triangle and f_gnpis and f_indices:
     with st.expander("Aperçu triangle brut"):
         st.dataframe(df_tri_raw.head(20))
 
-    # ── Transformation triangle → liquidation ──
+# ── Transformation triangle → liquidation ──
     st.subheader("🔄 Transformation en triangle de liquidation")
 
     if st.button("▶ Transformer le triangle"):
@@ -283,7 +283,6 @@ if f_triangle and f_gnpis and f_indices:
                 st.session_state["df_idx"]    = df_idx
                 st.session_state["df_gnpis"]  = df_gnpis
                 st.session_state["annee_cotation"] = annee_cotation
-
 
 # ─── MARKET CURVE ───
 st.header("📈 Market Curve")
