@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import json
 
 st.set_page_config(page_title="Agent Tarification Réassurance", layout="wide")
-st.title("🎯 Agent Tarification Réassurance Non-Proportionnelle")
+st.title("Atarificatairé")
 
 # ─── SIDEBAR ───
 st.sidebar.header("⚙️ Configuration")
