@@ -258,9 +258,16 @@ if f_triangle and f_gnpis and f_indices:
 
                 # ── As-If ──
                 st.write("**Calcul As-If...**")
-
                 df_idx_set = df_idx.set_index('Annee')['Coefficients']
 
+                
+                st.write("Aperçu indices :")
+                st.write(df_idx.head(10))
+                st.write("Type colonne Coefficients :", df_idx['Coefficients'].dtype)
+                st.write("Exemple indice 2016 :", df_idx_set.get(2016, 'NON TROUVÉ'))
+                st.write("Exemple indice 2025 :", df_idx_set.get(2025, 'NON TROUVÉ'))
+                
+                
                 def get_indice(annee):
                     try:
                         val = df_idx_set[annee]
