@@ -62,111 +62,249 @@ for i in range(nb_tranches):
     st.divider()
 
 # ─── SIMULATION ───
-st.header("🎲 Simulation Pareto / Poisson")
+st.header("🎲 Simulation")
 
+# Upload fichiers
+st.subheader("📂 Données de base")
+col1, col2, col3 = st.columns(3)
+with col1:
+    f_sins = st.file_uploader("Base sinistres (Annee, Sinistres)", type=["xlsx","csv"])
+with col2:
+    f_gnpis = st.file_uploader("Base GNPIs (Annee, GNPI)", type=["xlsx","csv"])
+with col3:
+    f_indices = st.file_uploader("Table indices (Annee, Coefficients)", type=["xlsx","csv"])
+
+# Choix indice
+st.subheader("⚙️ Paramètres d'indexation")
 col1, col2 = st.columns(2)
 with col1:
-    st.subheader("Paramètres")
-    alpha = st.number_input("Alpha (Pareto - sévérité)", value=1.5, min_value=0.1, step=0.1)
-    lambda_ = st.number_input("Lambda (Poisson - fréquence)", value=5.0, min_value=0.1, step=0.1)
-    n_sim = st.number_input("Nombre de simulations", value=10000, step=1000)
-    seuil_min = st.number_input("Seuil minimum sinistre (MAD)", value=100_000, step=50_000)
-
+    nom_indice = st.selectbox("Type d'indice", ["IPC", "Salaires", "Autre"])
 with col2:
-    st.subheader("Paramètres de chargement")
-    tx_risque = st.number_input("Chargement risque (%)", value=20, min_value=0, max_value=100) / 100
-    tx_secu = st.number_input("Chargement sécurité (%)", value=18, min_value=0, max_value=100) / 100
+    appliquer_sur = st.multiselect(
+        "Appliquer l'indice sur",
+        ["Sinistres", "GNPIs"],
+        default=["Sinistres", "GNPIs"]
+    )
 
-if st.button("▶ Lancer la simulation"):
-    with st.spinner("Simulation en cours..."):
+if f_sins and f_gnpis and f_indices:
 
-        np.random.seed(42)
-        resultats_sim = []
+    # Lecture fichiers
+    df_sins   = pd.read_excel(f_sins)   if f_sins.name.endswith('xlsx')    else pd.read_csv(f_sins)
+    df_gnpis  = pd.read_excel(f_gnpis)  if f_gnpis.name.endswith('xlsx')   else pd.read_csv(f_gnpis)
+    df_idx    = pd.read_excel(f_indices) if f_indices.name.endswith('xlsx') else pd.read_csv(f_indices)
 
-        for t in tranches_input:
-            priorite = t["priorite"]
-            portee = t["portee"]
-            aal = t["AAL"]
-            aad = t["AAD"]
-            nb_recon = t["nb_reconstitutions"]
+    # Standardiser noms colonnes
+    df_sins.columns   = [c.strip() for c in df_sins.columns]
+    df_gnpis.columns  = [c.strip() for c in df_gnpis.columns]
+    df_idx.columns    = [c.strip() for c in df_idx.columns]
 
-            charges_annuelles = []
+    # Jointure indices
+    if "Sinistres" in appliquer_sur:
+        df_sins = df_sins.merge(df_idx, on="Annee", how="left")
+        df_sins["Sinistres_asif"] = df_sins["Sinistres"] * df_sins["Coefficients"]
+    else:
+        df_sins["Sinistres_asif"] = df_sins["Sinistres"]
 
-            for _ in range(int(n_sim)):
-                # Nombre de sinistres (Poisson)
-                n_sin = np.random.poisson(lambda_)
+    if "GNPIs" in appliquer_sur:
+        df_gnpis = df_gnpis.merge(df_idx, on="Annee", how="left")
+        df_gnpis["GNPI_asif"] = df_gnpis["GNPI"] * df_gnpis["Coefficients"]
+    else:
+        df_gnpis["GNPI_asif"] = df_gnpis["GNPI"]
 
-                # Sévérité (Pareto)
-                severites = pareto.rvs(alpha, scale=seuil_min, size=n_sin) if n_sin > 0 else []
+    st.success("✅ As-If calculé")
 
-                # Charge dans la tranche par sinistre
-                charge_tranche = 0
-                for s in severites:
-                    part = min(max(s - priorite, 0), portee)
-                    charge_tranche += part
+    # Aperçu
+    with st.expander("Voir données As-If"):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**Sinistres As-If**")
+            st.dataframe(df_sins[["Annee","Sinistres","Sinistres_asif"]].head(20))
+        with col2:
+            st.write("**GNPIs As-If**")
+            st.dataframe(df_gnpis[["Annee","GNPI","GNPI_asif"]])
 
-                # Application AAD
-                if aad:
-                    charge_tranche = max(charge_tranche - aad, 0)
+    # ── Estimation paramètres ──
+    st.subheader("📐 Estimation des paramètres")
 
-                # Application AAL
-                if aal:
-                    charge_tranche = min(charge_tranche, aal)
+    X = df_sins["Sinistres_asif"].dropna().values
+    X = X[X > 0]
 
-                # Application reconstitutions
-                plafond = portee * (1 + nb_recon)
-                charge_tranche = min(charge_tranche, plafond)
+    # Seuil automatique (percentile 85)
+    seuil = np.percentile(X, 85)
 
-                charges_annuelles.append(charge_tranche)
+    # Alpha (estimateur MLE/Hill)
+    X_above = X[X >= seuil]
+    t = np.min(X_above)
+    n = len(X_above)
+    alpha_est = n / np.sum(np.log(X_above / t))
 
-            charges = np.array(charges_annuelles)
-            charge_moyenne = np.mean(charges)
+    # Lambda (Poisson As-If)
+    N_obs = df_sins[df_sins["Sinistres_asif"] >= seuil].groupby("Annee").size()
+    df_gnpis_idx = df_gnpis.set_index("Annee")
+    N_asif = N_obs * (gnpi / df_gnpis_idx.loc[N_obs.index, "GNPI_asif"])
+    lambda_est = float(N_asif.mean())
 
-            # Taux pur
-            taux_pur = charge_moyenne / gnpi
+    # Affichage + correction manuelle
+    st.info(f"Seuil automatique (P85) : {seuil:,.0f} MAD | N sinistres au-dessus : {n}")
 
-            # Plusieurs taux
-            taux_risque_sim = taux_pur * (1 + tx_risque)
-            taux_technique_sim = taux_risque_sim * (1 + tx_secu)
-            taux_final_sim = taux_technique_sim * (
-                1 + t["brokage"] + t["frais"] + t["marge"] + t["retrocession"]
-            )
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        alpha_final = st.number_input(
+            "Alpha (Pareto)",
+            value=round(float(alpha_est), 4),
+            step=0.01, format="%.4f"
+        )
+    with col2:
+        lambda_final = st.number_input(
+            "Lambda (Poisson)",
+            value=round(float(lambda_est), 4),
+            step=0.1, format="%.4f"
+        )
+    with col3:
+        seuil_final = st.number_input(
+            "Seuil (MAD)",
+            value=round(float(seuil), 0),
+            step=50_000.0
+        )
 
-            # Variantes conditions
-            # Sans AAL
-            charges_sans_aal = []
-            for _ in range(int(n_sim)):
-                n_sin = np.random.poisson(lambda_)
-                severites = pareto.rvs(alpha, scale=seuil_min, size=n_sin) if n_sin > 0 else []
-                charge = sum(min(max(s - priorite, 0), portee) for s in severites)
-                if aad: charge = max(charge - aad, 0)
-                charges_sans_aal.append(min(charge, portee * (1 + nb_recon)))
-            taux_sans_aal = np.mean(charges_sans_aal) / gnpi
+    # ── Simulation ──
+    st.subheader("🚀 Lancer la simulation")
+    n_sim = st.number_input("Nombre de simulations", value=10000, step=1000)
 
-            # Sans AAD
-            charges_sans_aad = []
-            for _ in range(int(n_sim)):
-                n_sin = np.random.poisson(lambda_)
-                severites = pareto.rvs(alpha, scale=seuil_min, size=n_sin) if n_sin > 0 else []
-                charge = sum(min(max(s - priorite, 0), portee) for s in severites)
-                if aal: charge = min(charge, aal)
-                charges_sans_aad.append(min(charge, portee * (1 + nb_recon)))
-            taux_sans_aad = np.mean(charges_sans_aad) / gnpi
+    # Coefficients stabilisation
+    coeffs = (df_sins["Sinistres_asif"] / df_sins["Sinistres"]).dropna().values
+    coeffs = coeffs[coeffs > 0]
 
-            resultats_sim.append({
-                "tranche": t["nom"],
-                "type": t["type"],
-                "taux_pur": taux_pur,
-                "taux_risque": taux_risque_sim,
-                "taux_technique": taux_technique_sim,
-                "taux_final": taux_final_sim,
-                "taux_sans_aal": taux_sans_aal,
-                "taux_sans_aad": taux_sans_aad,
-                "charge_moyenne": charge_moyenne
-            })
+    if st.button("▶ Lancer la simulation"):
+        with st.spinner("Simulation en cours..."):
 
-        # Affichage résultats
-        st.subheader("📊 Résultats simulation")
+            np.random.seed(42)
+            resultats_sim = []
+
+            for t_info in tranches_input:
+                D  = t_info["priorite"]
+                P  = t_info["portee"]
+                r  = t_info["nb_reconstitutions"]
+                aal = t_info["AAL"]
+                aad = t_info["AAD"]
+                cap = (r + 1) * P
+
+                charges = []
+                charges_sans_aal = []
+                charges_sans_aad = []
+                charges_sans_rec = []
+
+                for _ in range(int(n_sim)):
+                    N = np.random.poisson(lambda_final)
+                    S_total = 0
+                    if N > 0:
+                        pareto_sim = seuil_final * (np.random.uniform(size=N) ** (-1/alpha_final))
+                        idx_coeffs = np.random.choice(len(coeffs), size=N, replace=True)
+                        for i in range(N):
+                            coeff_i = coeffs[idx_coeffs[i]]
+                            S0 = pareto_sim[i]
+                            if S0 <= D:
+                                S_i = 0
+                            elif S0 <= D + P:
+                                S_i = coeff_i * (S0 - D)
+                            else:
+                                S_i = coeff_i * P
+                            S_total += S_i
+
+                    # Avec toutes conditions
+                    c = S_total
+                    if aad: c = max(c - aad, 0)
+                    if aal: c = min(c, aal)
+                    charges.append(min(c, cap))
+
+                    # Sans AAL
+                    c2 = S_total
+                    if aad: c2 = max(c2 - aad, 0)
+                    charges_sans_aal.append(min(c2, cap))
+
+                    # Sans AAD
+                    c3 = S_total
+                    if aal: c3 = min(c3, aal)
+                    charges_sans_aad.append(min(c3, cap))
+
+                    # Sans reconstitution
+                    c4 = S_total
+                    if aad: c4 = max(c4 - aad, 0)
+                    if aal: c4 = min(c4, aal)
+                    charges_sans_rec.append(c4)
+
+                # Calcul taux
+                def calcul_taux(ch):
+                    arr = np.array(ch)
+                    P0  = np.mean(arr)
+                    sig = np.std(arr)
+                    taux_pur  = P0 / gnpi
+                    taux_risq = (P0 + 0.2 * sig) / gnpi
+                    taux_tech = taux_risq / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
+                    taux_fin  = taux_tech * (1 + t_info["marge"] + t_info["retrocession"])
+                    return taux_pur, taux_risq, taux_tech, taux_fin
+
+                tp, tr, tt, tf           = calcul_taux(charges)
+                tp2, tr2, tt2, tf2       = calcul_taux(charges_sans_aal)
+                tp3, tr3, tt3, tf3       = calcul_taux(charges_sans_aad)
+                tp4, tr4, tt4, tf4       = calcul_taux(charges_sans_rec)
+
+                resultats_sim.append({
+                    "tranche"         : t_info["nom"],
+                    "type"            : t_info["type"],
+                    "taux_pur"        : tp,
+                    "taux_risque"     : tr,
+                    "taux_technique"  : tt,
+                    "taux_final"      : tf,
+                    "sans_aal"        : tt2,
+                    "sans_aad"        : tt3,
+                    "sans_rec"        : tt4,
+                })
+
+            # Affichage
+            st.subheader("📊 Résultats simulation")
+            df_res = pd.DataFrame([{
+                "Tranche"        : r["tranche"],
+                "Taux pur"       : f"{r['taux_pur']:.4%}",
+                "Taux risque"    : f"{r['taux_risque']:.4%}",
+                "Taux technique" : f"{r['taux_technique']:.4%}",
+                "Taux final"     : f"{r['taux_final']:.4%}",
+                "Sans AAL"       : f"{r['sans_aal']:.4%}",
+                "Sans AAD"       : f"{r['sans_aad']:.4%}",
+                "Sans reconst."  : f"{r['sans_rec']:.4%}",
+            } for r in resultats_sim])
+            st.dataframe(df_res, use_container_width=True)
+
+            # Analyse Claude conditions
+            if api_key:
+                with st.spinner("Claude analyse les conditions..."):
+                    client = anthropic.Anthropic(api_key=api_key)
+                    analyse = client.messages.create(
+                        model="claude-opus-4-5", max_tokens=1500,
+                        messages=[{"role":"user","content":f"""Tu es expert en réassurance non-proportionnelle.
+Analyse ces résultats et dis pour chaque tranche si les conditions sont nécessaires, à ajuster ou inutiles.
+
+Pour chaque tranche compare :
+- Taux technique (toutes conditions) vs Sans AAL vs Sans AAD vs Sans reconstitution
+- Si l'écart est faible → condition inutile
+- Si l'écart est significatif → condition nécessaire
+- Si l'écart est intermédiaire → à ajuster
+
+Résultats :
+{json.dumps(resultats_sim, indent=2)}
+
+Tranches :
+{json.dumps(tranches_input, indent=2)}
+
+Donne une recommandation claire par tranche et par condition."""
+                        }]
+                    )
+                    st.subheader("🤖 Analyse Claude des conditions")
+                    st.markdown(analyse.content[0].text)
+
+            st.session_state["resultats_sim"] = resultats_sim
+            st.session_state["tranches"] = tranches_input
+            st.success("✅ Simulation terminée !")
         df_res = pd.DataFrame([{
             "Tranche": r["tranche"],
             "Taux pur": f"{r['taux_pur']:.4%}",
