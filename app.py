@@ -61,6 +61,153 @@ for i in range(nb_tranches):
     })
     st.divider()
 
+# ─── SIMULATION ───
+st.header("🎲 Simulation Pareto / Poisson")
+
+col1, col2 = st.columns(2)
+with col1:
+    st.subheader("Paramètres")
+    alpha = st.number_input("Alpha (Pareto - sévérité)", value=1.5, min_value=0.1, step=0.1)
+    lambda_ = st.number_input("Lambda (Poisson - fréquence)", value=5.0, min_value=0.1, step=0.1)
+    n_sim = st.number_input("Nombre de simulations", value=10000, step=1000)
+    seuil_min = st.number_input("Seuil minimum sinistre (MAD)", value=100_000, step=50_000)
+
+with col2:
+    st.subheader("Paramètres de chargement")
+    tx_risque = st.number_input("Chargement risque (%)", value=20, min_value=0, max_value=100) / 100
+    tx_secu = st.number_input("Chargement sécurité (%)", value=18, min_value=0, max_value=100) / 100
+
+if st.button("▶ Lancer la simulation"):
+    with st.spinner("Simulation en cours..."):
+
+        np.random.seed(42)
+        resultats_sim = []
+
+        for t in tranches_input:
+            priorite = t["priorite"]
+            portee = t["portee"]
+            aal = t["AAL"]
+            aad = t["AAD"]
+            nb_recon = t["nb_reconstitutions"]
+
+            charges_annuelles = []
+
+            for _ in range(int(n_sim)):
+                # Nombre de sinistres (Poisson)
+                n_sin = np.random.poisson(lambda_)
+
+                # Sévérité (Pareto)
+                severites = pareto.rvs(alpha, scale=seuil_min, size=n_sin) if n_sin > 0 else []
+
+                # Charge dans la tranche par sinistre
+                charge_tranche = 0
+                for s in severites:
+                    part = min(max(s - priorite, 0), portee)
+                    charge_tranche += part
+
+                # Application AAD
+                if aad:
+                    charge_tranche = max(charge_tranche - aad, 0)
+
+                # Application AAL
+                if aal:
+                    charge_tranche = min(charge_tranche, aal)
+
+                # Application reconstitutions
+                plafond = portee * (1 + nb_recon)
+                charge_tranche = min(charge_tranche, plafond)
+
+                charges_annuelles.append(charge_tranche)
+
+            charges = np.array(charges_annuelles)
+            charge_moyenne = np.mean(charges)
+
+            # Taux pur
+            taux_pur = charge_moyenne / gnpi
+
+            # Plusieurs taux
+            taux_risque_sim = taux_pur * (1 + tx_risque)
+            taux_technique_sim = taux_risque_sim * (1 + tx_secu)
+            taux_final_sim = taux_technique_sim * (
+                1 + t["brokage"] + t["frais"] + t["marge"] + t["retrocession"]
+            )
+
+            # Variantes conditions
+            # Sans AAL
+            charges_sans_aal = []
+            for _ in range(int(n_sim)):
+                n_sin = np.random.poisson(lambda_)
+                severites = pareto.rvs(alpha, scale=seuil_min, size=n_sin) if n_sin > 0 else []
+                charge = sum(min(max(s - priorite, 0), portee) for s in severites)
+                if aad: charge = max(charge - aad, 0)
+                charges_sans_aal.append(min(charge, portee * (1 + nb_recon)))
+            taux_sans_aal = np.mean(charges_sans_aal) / gnpi
+
+            # Sans AAD
+            charges_sans_aad = []
+            for _ in range(int(n_sim)):
+                n_sin = np.random.poisson(lambda_)
+                severites = pareto.rvs(alpha, scale=seuil_min, size=n_sin) if n_sin > 0 else []
+                charge = sum(min(max(s - priorite, 0), portee) for s in severites)
+                if aal: charge = min(charge, aal)
+                charges_sans_aad.append(min(charge, portee * (1 + nb_recon)))
+            taux_sans_aad = np.mean(charges_sans_aad) / gnpi
+
+            resultats_sim.append({
+                "tranche": t["nom"],
+                "type": t["type"],
+                "taux_pur": taux_pur,
+                "taux_risque": taux_risque_sim,
+                "taux_technique": taux_technique_sim,
+                "taux_final": taux_final_sim,
+                "taux_sans_aal": taux_sans_aal,
+                "taux_sans_aad": taux_sans_aad,
+                "charge_moyenne": charge_moyenne
+            })
+
+        # Affichage résultats
+        st.subheader("📊 Résultats simulation")
+        df_res = pd.DataFrame([{
+            "Tranche": r["tranche"],
+            "Taux pur": f"{r['taux_pur']:.4%}",
+            "Taux risque": f"{r['taux_risque']:.4%}",
+            "Taux technique": f"{r['taux_technique']:.4%}",
+            "Taux final": f"{r['taux_final']:.4%}",
+            "Sans AAL": f"{r['taux_sans_aal']:.4%}",
+            "Sans AAD": f"{r['taux_sans_aad']:.4%}",
+        } for r in resultats_sim])
+        st.dataframe(df_res, use_container_width=True)
+
+        # Analyse Claude des conditions
+        if api_key:
+            with st.spinner("Claude analyse les conditions..."):
+                client = anthropic.Anthropic(api_key=api_key)
+                analyse = client.messages.create(
+                    model="claude-opus-4-5", max_tokens=1500,
+                    messages=[{"role": "user", "content": f"""Tu es expert en réassurance non-proportionnelle.
+Analyse ces résultats de simulation et dis pour chaque tranche si les conditions (AAL, AAD, reconstitutions) sont nécessaires, à ajuster ou inutiles.
+
+Résultats :
+{json.dumps(resultats_sim, indent=2)}
+
+Tranches :
+{json.dumps(tranches_input, indent=2)}
+
+Pour chaque tranche donne :
+1. Analyse de l'impact AAL (si présent)
+2. Analyse de l'impact AAD (si présent)
+3. Recommandation reconstitutions
+4. Verdict final : condition NÉCESSAIRE / À AJUSTER / INUTILE"""
+                    }]
+                )
+                st.subheader("🤖 Analyse Claude des conditions")
+                st.markdown(analyse.content[0].text)
+
+        # Sauvegarder pour suite
+        st.session_state["resultats_sim"] = resultats_sim
+        st.session_state["tranches"] = tranches_input
+        st.success("✅ Simulation terminée !")
+
 # Résumé programme
 if st.button("📊 Voir résumé du programme"):
     df_prog = pd.DataFrame([{
