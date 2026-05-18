@@ -7,7 +7,7 @@ from scipy.optimize import curve_fit
 import json
 
 st.set_page_config(page_title="Agent Tarification Réassurance", layout="wide")
-st.title("🎯 Agent Tarification Réassurance Non-Proportionnelle")
+st.title("Atarificateur")
 
 # ─── SIDEBAR ───
 st.sidebar.header("⚙️ Configuration")
@@ -23,10 +23,10 @@ for i in range(nb_tranches):
     st.markdown(f"**Tranche {i+1}**")
     c1, c2, c3 = st.columns(3)
     with c1:
-        nom      = st.text_input("Nom",           value=f"Tranche {i+1}", key=f"nom_{i}")
-        type_t   = st.selectbox("Type",           ["travaillante","non_travaillante","cat"], key=f"type_{i}")
-        priorite = st.number_input("Priorité",    value=2_000_000,  step=500_000, key=f"prio_{i}")
-        portee   = st.number_input("Portée",      value=13_000_000, step=500_000, key=f"port_{i}")
+        nom      = st.text_input("Nom",       value=f"Tranche {i+1}", key=f"nom_{i}")
+        type_t   = st.selectbox("Type",       ["travaillante","non_travaillante","cat"], key=f"type_{i}")
+        priorite = st.number_input("Priorité",value=2_000_000,  step=500_000, key=f"prio_{i}")
+        portee   = st.number_input("Portée",  value=13_000_000, step=500_000, key=f"port_{i}")
     with c2:
         st.markdown("**Conditions**")
         has_aal = st.checkbox("AAL", key=f"aal_{i}")
@@ -38,10 +38,10 @@ for i in range(nb_tranches):
         nb_recon     = st.number_input("Nb reconstitutions",    value=1,   min_value=0, max_value=5,   key=f"recon_{i}")
         tx_recon     = st.number_input("Taux reconstitution %", value=100, min_value=0, max_value=200, key=f"txrecon_{i}")
         has_indices  = st.checkbox("Indices", key=f"idx_{i}")
-        brokage      = st.number_input("Brokage %",       value=10, min_value=0, max_value=30,  key=f"brok_{i}")
-        frais        = st.number_input("Frais généraux %",value=5,  min_value=0, max_value=20,  key=f"frais_{i}")
-        marge        = st.number_input("Marge %",         value=10, min_value=0, max_value=30,  key=f"marge_{i}")
-        retrocession = st.number_input("Rétrocession %",  value=0,  min_value=0, max_value=50,  key=f"retro_{i}")
+        brokage      = st.number_input("Brokage %",        value=10, min_value=0, max_value=30, key=f"brok_{i}")
+        frais        = st.number_input("Frais généraux %", value=5,  min_value=0, max_value=20, key=f"frais_{i}")
+        marge        = st.number_input("Marge %",          value=10, min_value=0, max_value=30, key=f"marge_{i}")
+        retrocession = st.number_input("Rétrocession %",   value=0,  min_value=0, max_value=50, key=f"retro_{i}")
 
     tranches_input.append({
         "numero": i+1, "nom": nom, "type": type_t,
@@ -80,16 +80,15 @@ with c3: f_indices  = st.file_uploader("Table indices",          type=["xlsx","c
 
 annee_cotation = st.number_input("Année de cotation", value=2026, step=1)
 
-# ── ETAPE 1 : Transformer triangle ──
 if st.button("▶ Transformer le triangle") and f_triangle and f_gnpis and f_indices:
     with st.spinner("Transformation en cours..."):
 
-        df_gnpis_df = pd.read_excel(f_gnpis)   if f_gnpis.name.endswith('xlsx')    else pd.read_csv(f_gnpis)
-        df_idx_df   = pd.read_excel(f_indices)  if f_indices.name.endswith('xlsx')  else pd.read_csv(f_indices)
+        df_gnpis_df = pd.read_excel(f_gnpis)  if f_gnpis.name.endswith('xlsx')   else pd.read_csv(f_gnpis)
+        df_idx_df   = pd.read_excel(f_indices) if f_indices.name.endswith('xlsx') else pd.read_csv(f_indices)
         df_gnpis_df.columns = [c.strip() for c in df_gnpis_df.columns]
         df_idx_df.columns   = [c.strip() for c in df_idx_df.columns]
 
-        df_raw = pd.read_excel(f_triangle, header=None)
+        df_raw       = pd.read_excel(f_triangle, header=None)
         ligne_annees = df_raw.iloc[0].tolist()
         ligne_types  = df_raw.iloc[1].tolist()
 
@@ -142,25 +141,35 @@ if st.button("▶ Transformer le triangle") and f_triangle and f_gnpis and f_ind
 
         df_liq = pd.DataFrame(records)
 
-        # As-If
+        # ── Indices ──
         df_idx_set = df_idx_df.set_index('Annee')['Coefficients']
         def get_indice(annee):
             try: return float(df_idx_set[annee])
             except: return 1.0
 
+        # ── As-If ──
         df_liq['annee_ultime'] = df_liq['annee_surv'] + 9
         df_liq['I_ultime']     = df_liq['annee_ultime'].apply(get_indice)
         df_liq['I_reg']        = df_liq['annee_reg'].apply(get_indice)
+        df_liq['I_surv']       = df_liq['annee_surv'].apply(get_indice)
         df_liq['total_asif']   = df_liq['total'] * (df_liq['I_ultime'] / df_liq['I_reg'])
 
-        # Chain Ladder As-If
+        # ── Stabilisation ──
+        df_liq['ratio_stab'] = df_liq['I_reg'] / df_liq['I_surv']
+        df_liq['total_stab'] = np.where(
+            (df_liq['ratio_stab'] - 1) > 0.10,
+            df_liq['total'] * (df_liq['I_surv'] / df_liq['I_reg']),
+            df_liq['total']
+        )
+
+        # ── Chain Ladder sur total_stab ──
         facteurs = {k: [] for k in range(9)}
         for sin_id, grp in df_liq.groupby('sinistre_id'):
             grp = grp.sort_values('dev').set_index('dev')
             for k in range(9):
                 if k in grp.index and (k+1) in grp.index:
-                    t_k  = grp.loc[k,   'total_asif']
-                    t_k1 = grp.loc[k+1, 'total_asif']
+                    t_k  = grp.loc[k,   'total_stab']
+                    t_k1 = grp.loc[k+1, 'total_stab']
                     if t_k > 0:
                         f = t_k1 / t_k
                         if 0.9 <= f <= 2.5:
@@ -168,28 +177,28 @@ if st.button("▶ Transformer le triangle") and f_triangle and f_gnpis and f_ind
 
         f_moyens = {k: np.mean(facteurs[k]) if facteurs[k] else 1.0 for k in range(9)}
 
-        # Projection
+        # ── Projection sur total_stab ──
         projections = []
         for sin_id, grp in df_liq.groupby('sinistre_id'):
             grp = grp.sort_values('dev').set_index('dev')
-            annee_surv        = grp['annee_surv'].iloc[0]
-            dev_max           = grp.index.max()
-            asif_actuel       = grp.loc[dev_max, 'total_asif']
-            total_ultime_asif = asif_actuel
+            annee_surv         = grp['annee_surv'].iloc[0]
+            dev_max            = grp.index.max()
+            stab_actuel        = grp.loc[dev_max, 'total_stab']
+            total_ultime_stab  = stab_actuel
             for k in range(dev_max, 9):
-                total_ultime_asif *= f_moyens[k]
+                total_ultime_stab *= f_moyens[k]
             projections.append({
-                'sinistre_id'      : sin_id,
-                'annee_surv'       : annee_surv,
-                'dev_max'          : dev_max,
-                'asif_actuel'      : asif_actuel,
-                'total_ultime_asif': total_ultime_asif
+                'sinistre_id'     : sin_id,
+                'annee_surv'      : annee_surv,
+                'dev_max'         : dev_max,
+                'stab_actuel'     : stab_actuel,
+                'total_ultime_stab': total_ultime_stab
             })
 
         df_proj = pd.DataFrame(projections)
 
-        # Estimation alpha & lambda
-        X       = df_proj['total_ultime_asif'].values
+        # ── Estimation alpha & lambda sur total_ultime_stab ──
+        X       = df_proj['total_ultime_stab'].values
         X       = X[X > 0]
         seuil   = np.percentile(X, 85)
         X_above = X[X >= seuil]
@@ -199,7 +208,7 @@ if st.button("▶ Transformer le triangle") and f_triangle and f_gnpis and f_ind
 
         df_gnpis_idx = df_gnpis_df.set_index(df_gnpis_df.columns[0])
         gnpi_col     = df_gnpis_df.columns[1]
-        N_obs        = df_proj[df_proj['total_ultime_asif'] >= seuil].groupby('annee_surv').size()
+        N_obs        = df_proj[df_proj['total_ultime_stab'] >= seuil].groupby('annee_surv').size()
         N_asif_vals  = []
         for ann, cnt in N_obs.items():
             try:
@@ -209,56 +218,53 @@ if st.button("▶ Transformer le triangle") and f_triangle and f_gnpis and f_ind
                 N_asif_vals.append(cnt)
         lambda_est = float(np.mean(N_asif_vals)) if N_asif_vals else 5.0
 
-        coeffs = df_liq.groupby('sinistre_id').apply(
-            lambda g: g.sort_values('dev').iloc[-1]['I_ultime'] / g.sort_values('dev').iloc[-1]['I_reg']
-        ).values
-        coeffs = coeffs[coeffs > 0]
+        # ── Coefficients stabilisation pour simulation ──
+        coeffs_raw = df_liq['total_stab'].values / df_liq['total'].values
+        coeffs     = coeffs_raw[(coeffs_raw > 0) & np.isfinite(coeffs_raw)]
 
-        # Tout sauvegarder
-        st.session_state["df_liq"]      = df_liq
-        st.session_state["df_proj"]     = df_proj
-        st.session_state["f_moyens"]    = f_moyens
-        st.session_state["alpha_est"]   = float(alpha_est)
-        st.session_state["lambda_est"]  = float(lambda_est)
-        st.session_state["seuil_est"]   = float(seuil)
-        st.session_state["coeffs"]      = coeffs
-        st.session_state["df_facteurs"] = pd.DataFrame({
+        # ── Sauvegarder ──
+        st.session_state["df_liq"]       = df_liq
+        st.session_state["df_proj"]      = df_proj
+        st.session_state["f_moyens"]     = f_moyens
+        st.session_state["alpha_est"]    = float(alpha_est)
+        st.session_state["lambda_est"]   = float(lambda_est)
+        st.session_state["seuil_est"]    = float(seuil)
+        st.session_state["coeffs"]       = coeffs
+        st.session_state["df_facteurs"]  = pd.DataFrame({
             'Développement'  : [f"{k}→{k+1}" for k in range(9)],
             'Facteur moyen'  : [round(f_moyens[k], 4) for k in range(9)],
             'Nb observations': [len(facteurs[k]) for k in range(9)]
         })
 
-# Affichage résultats transformation (persistant)
+# ── Affichage transformation (persistant) ──
 if "df_liq" in st.session_state:
     st.success(f"✅ {len(st.session_state['df_liq'])} observations — {st.session_state['df_liq']['sinistre_id'].nunique()} sinistres")
     with st.expander("Triangle de liquidation"):
-        st.dataframe(st.session_state["df_liq"].head(30))
-    with st.expander("Facteurs Chain Ladder As-If"):
+        st.dataframe(st.session_state["df_liq"][['sinistre_id','annee_surv','annee_reg','dev','total','total_asif','total_stab']].head(30))
+    with st.expander("Facteurs Chain Ladder (sur stabilisé)"):
         st.dataframe(st.session_state["df_facteurs"])
-    with st.expander("Projections As-If"):
+    with st.expander("Projections (total_ultime_stab)"):
         st.dataframe(st.session_state["df_proj"].head(20))
 
-# ── ETAPE 2 : Paramètres ──
+# ── Paramètres ──
 if "alpha_est" in st.session_state:
     st.subheader("📐 Paramètres de simulation")
-    st.info(f"Seuil P85 : {st.session_state['seuil_est']:,.0f} | Alpha estimé : {st.session_state['alpha_est']:.4f} | Lambda estimé : {st.session_state['lambda_est']:.4f}")
-
+    st.info(f"Seuil P85 : {st.session_state['seuil_est']:,.0f} | Alpha : {st.session_state['alpha_est']:.4f} | Lambda : {st.session_state['lambda_est']:.4f}")
     c1, c2, c3, c4 = st.columns(4)
-    with c1: alpha_final  = st.number_input("Alpha",   value=st.session_state["alpha_est"],  step=0.01,      format="%.4f", key="alpha_input")
-    with c2: lambda_final = st.number_input("Lambda",  value=st.session_state["lambda_est"], step=0.1,       format="%.4f", key="lambda_input")
-    with c3: seuil_final  = st.number_input("Seuil",   value=st.session_state["seuil_est"],  step=50_000.0,  format="%.0f", key="seuil_input")
-    with c4: n_sim        = st.number_input("Nb simulations", value=10000, step=1000, key="nsim_input")
+    with c1: alpha_final  = st.number_input("Alpha",          value=st.session_state["alpha_est"],  step=0.01,     format="%.4f", key="alpha_input")
+    with c2: lambda_final = st.number_input("Lambda",         value=st.session_state["lambda_est"], step=0.1,      format="%.4f", key="lambda_input")
+    with c3: seuil_final  = st.number_input("Seuil",          value=st.session_state["seuil_est"],  step=50_000.0, format="%.0f", key="seuil_input")
+    with c4: n_sim        = st.number_input("Nb simulations", value=10000, step=1000,                               key="nsim_input")
 
-# ── ETAPE 3 : Simulation ──
+# ── Simulation ──
 if "coeffs" in st.session_state and st.button("▶ Lancer la simulation"):
     with st.spinner("Simulation en cours..."):
 
         alpha_final  = st.session_state["alpha_input"]
         lambda_final = st.session_state["lambda_input"]
         seuil_final  = st.session_state["seuil_input"]
-        n_sim        = st.session_state["nsim_input"]
+        n_sim        = int(st.session_state["nsim_input"])
         coeffs       = st.session_state["coeffs"]
-
         np.random.seed(42)
         resultats_sim = []
 
@@ -272,7 +278,7 @@ if "coeffs" in st.session_state and st.button("▶ Lancer la simulation"):
 
             def simuler(avec_aal, avec_aad, avec_rec):
                 charges = []
-                for _ in range(int(n_sim)):
+                for _ in range(n_sim):
                     N = np.random.poisson(lambda_final)
                     S_total = 0
                     if N > 0:
@@ -280,11 +286,10 @@ if "coeffs" in st.session_state and st.button("▶ Lancer la simulation"):
                         pareto_sim = seuil_final * (U ** (-1/alpha_final))
                         idx_c      = np.random.choice(len(coeffs), size=N, replace=True)
                         for i in range(N):
-                            S0 = pareto_sim[i]
-                            c  = coeffs[idx_c[i]]
-                            if   S0 <= D:       S_i = 0
-                            elif S0 <= D + P:   S_i = c * (S0 - D)
-                            else:               S_i = c * P
+                            S0 = pareto_sim[i]; c = coeffs[idx_c[i]]
+                            if   S0 <= D:     S_i = 0
+                            elif S0 <= D + P: S_i = c * (S0 - D)
+                            else:             S_i = c * P
                             S_total += S_i
                     ch = S_total
                     if avec_aad and aad: ch = max(ch - aad, 0)
@@ -293,8 +298,7 @@ if "coeffs" in st.session_state and st.button("▶ Lancer la simulation"):
                 return np.array(charges)
 
             def calc_taux(ch):
-                P0  = np.mean(ch)
-                sig = np.std(ch)
+                P0  = np.mean(ch); sig = np.std(ch)
                 tp  = P0 / gnpi
                 tr  = (P0 + 0.2 * sig) / gnpi
                 tt  = tr / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
@@ -312,23 +316,18 @@ if "coeffs" in st.session_state and st.button("▶ Lancer la simulation"):
             tp4, tr4, tt4, tf4 = calc_taux(c_sans_rec)
 
             resultats_sim.append({
-                "tranche"       : t_info["nom"],
-                "type"          : t_info["type"],
-                "taux_pur"      : tp,
-                "taux_risque"   : tr,
-                "taux_technique": tt,
-                "taux_final"    : tf,
-                "sans_aal"      : tt2,
-                "sans_aad"      : tt3,
-                "sans_rec"      : tt4,
+                "tranche"       : t_info["nom"],  "type": t_info["type"],
+                "taux_pur"      : tp,  "taux_risque"   : tr,
+                "taux_technique": tt,  "taux_final"    : tf,
+                "sans_aal"      : tt2, "sans_aad"      : tt3, "sans_rec": tt4,
             })
 
         st.session_state["resultats_sim"] = resultats_sim
 
-# Affichage simulation (persistant)
+# ── Affichage simulation (persistant) ──
 if "resultats_sim" in st.session_state:
     st.subheader("📊 Résultats simulation")
-    df_res = pd.DataFrame([{
+    st.dataframe(pd.DataFrame([{
         "Tranche"       : r["tranche"],
         "Taux pur"      : f"{r['taux_pur']:.4%}",
         "Taux risque"   : f"{r['taux_risque']:.4%}",
@@ -337,8 +336,7 @@ if "resultats_sim" in st.session_state:
         "Sans AAL"      : f"{r['sans_aal']:.4%}",
         "Sans AAD"      : f"{r['sans_aad']:.4%}",
         "Sans reconst." : f"{r['sans_rec']:.4%}",
-    } for r in st.session_state["resultats_sim"]])
-    st.dataframe(df_res, use_container_width=True)
+    } for r in st.session_state["resultats_sim"]]), use_container_width=True)
 
     if api_key and st.button("🤖 Analyser conditions avec Claude"):
         with st.spinner("Claude analyse..."):
@@ -357,77 +355,166 @@ Tranches : {json.dumps(tranches_input, indent=2)}"""}]
         st.subheader("🤖 Analyse Claude des conditions")
         st.markdown(st.session_state["analyse_sim"])
 
+# ─── BURNING COST ───
+st.header("🔥 Burning Cost")
+
+if "df_proj" in st.session_state and st.button("▶ Calculer le Burning Cost"):
+    with st.spinner("Calcul BC en cours..."):
+
+        df_proj  = st.session_state["df_proj"]
+        df_gnpis_bc = pd.read_excel(f_gnpis) if f_gnpis and f_gnpis.name.endswith('xlsx') else None
+
+        resultats_bc = []
+
+        for t_info in tranches_input:
+            D   = t_info["priorite"]
+            P   = t_info["portee"]
+            aal = t_info["AAL"]
+            aad = t_info["AAD"]
+            r   = t_info["nb_reconstitutions"]
+            cap = (r + 1) * P
+
+            # Charge réassurance par sinistre
+            def charge_sin(x):
+                return min(max(x - D, 0), P)
+
+            df_proj['charge_sin'] = df_proj['total_ultime_stab'].apply(charge_sin)
+
+            # Charge annuelle avec AAD et AAL
+            charges_ann = df_proj.groupby('annee_surv')['charge_sin'].sum()
+
+            charges_finales = []
+            for ann, ch in charges_ann.items():
+                if aad: ch = max(ch - aad, 0)
+                if aal: ch = min(ch, aal)
+                ch = min(ch, cap)
+                charges_finales.append({'annee': ann, 'charge': ch})
+
+            df_ch = pd.DataFrame(charges_finales)
+
+            # Taux pur = charge / GNPI par année → moyenne
+            # Utiliser GNPIs as-if si disponible
+            charge_moy = df_ch['charge'].mean()
+            taux_pur   = charge_moy / gnpi
+            taux_risque   = taux_pur * 1.20
+            taux_technique = taux_risque / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
+            taux_final     = taux_technique * (1 + t_info["marge"] + t_info["retrocession"])
+
+            resultats_bc.append({
+                "tranche"       : t_info["nom"],
+                "type"          : t_info["type"],
+                "charge_moy"    : charge_moy,
+                "taux_pur"      : taux_pur,
+                "taux_risque"   : taux_risque,
+                "taux_technique": taux_technique,
+                "taux_final"    : taux_final,
+            })
+
+        st.session_state["resultats_bc"] = resultats_bc
+
+if "resultats_bc" in st.session_state:
+    st.subheader("📊 Résultats Burning Cost")
+    st.dataframe(pd.DataFrame([{
+        "Tranche"       : r["tranche"],
+        "Charge moy."   : f"{r['charge_moy']:,.0f}",
+        "Taux pur"      : f"{r['taux_pur']:.4%}",
+        "Taux risque"   : f"{r['taux_risque']:.4%}",
+        "Taux technique": f"{r['taux_technique']:.4%}",
+        "Taux final"    : f"{r['taux_final']:.4%}",
+    } for r in st.session_state["resultats_bc"]]), use_container_width=True)
+
 # ─── MARKET CURVE ───
 st.header("📈 Market Curve")
 f_mkt = st.file_uploader("Données marché", type=["xlsx","csv"])
 
 if f_mkt and st.button("▶ Construire la market curve"):
-    df_mkt   = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
-    df_curve = df_mkt[['Priorité en MAD','ROLs']].dropna().copy()
-    if df_curve['ROLs'].dtype == object:
-        df_curve['ROLs'] = df_curve['ROLs'].str.replace('%','').astype(float)/100
-    df_curve = df_curve[(df_curve['ROLs'] > 0) & (df_curve['ROLs'] <= 1)]
-    x = df_curve['Priorité en MAD'].values
-    y = df_curve['ROLs'].values
-    # 1. Filtrer valeurs atypiques
-   
+    df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
+
+    if df_mkt['ROLs'].dtype == object:
+        df_mkt['ROLs'] = df_mkt['ROLs'].str.replace('%','').astype(float)/100
+    for col in ['Priorité en MAD','Garantie en MAD']:
+        if df_mkt[col].dtype == object:
+            df_mkt[col] = df_mkt[col].str.replace(' ','').str.replace(',','.').astype(float)
+
+    df_mkt = df_mkt[(df_mkt['ROLs'] > 0) & (df_mkt['ROLs'] <= 1)].copy()
 
     def power_model(x, a, b):
         return a * np.power(x, -b)
 
-    params, _ = curve_fit(power_model, x, y, p0=[1, 0.5], maxfev=5000)
-    a, b      = params
-    residus   = y - power_model(x, a, b)
-    p25       = np.percentile(residus, 25)
-    p75       = np.percentile(residus, 75)
+    def r2_score(y, y_pred):
+        ss_res = np.sum((y - y_pred)**2)
+        ss_tot = np.sum((y - np.mean(y))**2)
+        return 1 - ss_res/ss_tot
 
-    rows_mkt = []
-    for t in tranches_input:
-        rol_c = power_model(t['priorite'], a, b)
-        rows_mkt.append({
-            "Tranche"        : t["nom"],
-            "Type"           : t["type"],
-            "Taux P25"       : (rol_c + p25) * (t['portee']/gnpi),
-            "Taux médian"    : rol_c * (t['portee']/gnpi),
-            "Taux P75"       : (rol_c + p75) * (t['portee']/gnpi),
-        })
+    quantiles     = [0.10,0.20,0.30,0.40,0.50,0.60,0.70,0.80,0.90,1.0]
+    resultats_mkt = []
 
-    st.session_state["rows_mkt"]    = rows_mkt
-    st.session_state["mkt_params"]  = (a, b, p25, p75)
+    for q in quantiles:
+        prio_max = np.quantile(df_mkt['Priorité en MAD'], q)
+        port_max = np.quantile(df_mkt['Garantie en MAD'], q)
+        df_q     = df_mkt[(df_mkt['Priorité en MAD'] <= prio_max) & (df_mkt['Garantie en MAD'] <= port_max)]
+        if len(df_q) < 5: continue
+        x = df_q['Priorité en MAD'].values
+        y = df_q['ROLs'].values
+        try:
+            params, _ = curve_fit(power_model, x, y, p0=[1,0.5], maxfev=5000)
+            a, b      = params
+            r2        = r2_score(y, power_model(x,a,b))
+            taux_tranches = [{"tranche": t["nom"], "taux": power_model(t['priorite'],a,b)*(t['portee']/gnpi)} for t in tranches_input]
+            resultats_mkt.append({"quantile":q,"n_points":len(df_q),"a":a,"b":b,"r2":r2,"taux_tranches":taux_tranches})
+        except:
+            continue
 
-if "rows_mkt" in st.session_state:
-    a, b, p25, p75 = st.session_state["mkt_params"]
+    resultats_mkt = sorted(resultats_mkt, key=lambda x: x['r2'], reverse=True)
+    st.session_state["resultats_mkt"] = resultats_mkt
+    st.session_state["df_mkt_clean"]  = df_mkt
+
+if "resultats_mkt" in st.session_state:
+    resultats_mkt = st.session_state["resultats_mkt"]
+    df_mkt_clean  = st.session_state["df_mkt_clean"]
+
+    rows_recap = []
+    for r in resultats_mkt:
+        row = {"Quantile":f"Q{int(r['quantile']*100)}","N pts":r["n_points"],"a":f"{r['a']:.5f}","b":f"{r['b']:.4f}","R²":f"{r['r2']:.4f}"}
+        for tt in r["taux_tranches"]: row[tt["tranche"]] = f"{tt['taux']:.4%}"
+        rows_recap.append(row)
+
+    st.subheader("📊 Comparaison des ajustements")
+    st.dataframe(pd.DataFrame(rows_recap), use_container_width=True)
+
+    best = resultats_mkt[0]
+    st.success(f"✅ Meilleur : Q{int(best['quantile']*100)} — R² = {best['r2']:.4f}")
+
+    choix_q   = st.selectbox("Choisir la combinaison", options=[f"Q{int(r['quantile']*100)} — R²={r['r2']:.4f}" for r in resultats_mkt], index=0)
+    idx_choix = [f"Q{int(r['quantile']*100)} — R²={r['r2']:.4f}" for r in resultats_mkt].index(choix_q)
+    choix     = resultats_mkt[idx_choix]
+
+    def power_model(x, a, b):
+        return a * np.power(x, -b)
+
+    x_all   = df_mkt_clean['Priorité en MAD'].values
+    y_all   = df_mkt_clean['ROLs'].values
+    x_range = np.linspace(min(x_all), max(x_all), 300)
 
     fig, ax = plt.subplots(figsize=(10,5))
-    x_range = np.linspace(min(x), max(x), 300) if "df_curve_x" not in st.session_state else np.linspace(1e5, 1e8, 300)
-    ax.plot(x_range, power_model(x_range,a,b),       color='red',   lw=2,   label='Médiane')
-    ax.plot(x_range, power_model(x_range,a,b)+p25,   color='green', lw=1.5, linestyle='--', label='P25')
-    ax.plot(x_range, power_model(x_range,a,b)+p75,   color='blue',  lw=1.5, linestyle='--', label='P75')
+    ax.scatter(x_all, y_all, color='orange', s=60, zorder=5, label='Données marché')
+    ax.plot(x_range, power_model(x_range, choix['a'], choix['b']),
+            color='red', lw=2, label=f"Q{int(choix['quantile']*100)} — R²={choix['r2']:.4f}")
     ax.set_xlabel('Priorité (MAD)'); ax.set_ylabel('ROL')
     ax.set_title('Market Curve'); ax.legend(); ax.grid(alpha=0.3)
-    ax.scatter(x, y, color='orange', s=60, zorder=5, label='Données marché')
     st.pyplot(fig)
-    ss_res = np.sum((y - power_model(x, a, b))**2)
-    ss_tot = np.sum((y - np.mean(y))**2)
-    r2 = 1 - ss_res/ss_tot
-    st.write(f"R² = {r2:.4f}")
-    
-    df_mkt_res = pd.DataFrame([{
-        "Tranche" : r["Tranche"],
-        "Type"    : r["Type"],
-        "P25"     : f"{r['Taux P25']:.4%}",
-        "Médian"  : f"{r['Taux médian']:.4%}",
-        "P75"     : f"{r['Taux P75']:.4%}",
-    } for r in st.session_state["rows_mkt"]])
-    st.dataframe(df_mkt_res, use_container_width=True)
 
-    if api_key and st.button("🤖 Recommandation Claude market curve"):
+    st.subheader("📊 Taux marché retenus")
+    st.dataframe(pd.DataFrame([{"Tranche":tt["tranche"],"Taux marché":f"{tt['taux']:.4%}"} for tt in choix["taux_tranches"]]), use_container_width=True)
+    st.session_state["taux_mkt_final"] = choix["taux_tranches"]
+
+    if api_key and st.button("🤖 Analyse Claude market curve"):
         client = anthropic.Anthropic(api_key=api_key)
         reco   = client.messages.create(
             model="claude-opus-4-5", max_tokens=1000,
-            messages=[{"role":"user","content":f"""Expert réassurance.
-Pour chaque tranche recommande P25, médian ou P75 et pourquoi.
-Taux : {json.dumps(st.session_state['rows_mkt'], indent=2)}
+            messages=[{"role":"user","content":f"""Expert réassurance. Recommande le meilleur ajustement market curve.
+Tiens compte du R², nombre de points et cohérence des taux.
+Ajustements : {json.dumps(rows_recap, indent=2)}
 Tranches : {json.dumps(tranches_input, indent=2)}"""}]
         )
         st.session_state["analyse_mkt"] = reco.content[0].text
@@ -436,3 +523,73 @@ Tranches : {json.dumps(tranches_input, indent=2)}"""}]
         st.subheader("🤖 Recommandation Claude")
         st.markdown(st.session_state["analyse_mkt"])
 
+# ─── RAPPORT FINAL ───
+st.header("📋 Rapport Final")
+
+if all(k in st.session_state for k in ["resultats_bc","resultats_sim","taux_mkt_final"]):
+    if st.button("▶ Générer le rapport"):
+        bc_map  = {r["tranche"]: r for r in st.session_state["resultats_bc"]}
+        sim_map = {r["tranche"]: r for r in st.session_state["resultats_sim"]}
+        mkt_map = {r["tranche"]: r["taux"] for r in st.session_state["taux_mkt_final"]}
+
+        rows_rapport = []
+        for t in tranches_input:
+            nom = t["nom"]
+            bc  = bc_map.get(nom, {})
+            sim = sim_map.get(nom, {})
+            mkt = mkt_map.get(nom, 0)
+
+            bc_tt  = bc.get("taux_technique", 0)
+            sim_tt = sim.get("taux_technique", 0)
+
+            if t["type"] == "travaillante":
+                ecart = abs(bc_tt - sim_tt) / bc_tt * 100 if bc_tt > 0 else 0
+                taux_retenu = sim_tt
+                alerte = "⚠️" if ecart > 25 else "✅"
+                methode = f"Simulation (écart BC/Sim: {ecart:.0f}%) {alerte}"
+            else:
+                taux_retenu = max(sim_tt, mkt)
+                methode = "Simulation" if sim_tt >= mkt else "Marché"
+
+            rows_rapport.append({
+                "Tranche"       : nom,
+                "Type"          : t["type"],
+                "Taux BC"       : f"{bc_tt:.4%}",
+                "Taux Sim."     : f"{sim_tt:.4%}",
+                "Taux Marché"   : f"{mkt:.4%}",
+                "Taux retenu"   : f"{taux_retenu:.4%}",
+                "Prime (MAD)"   : f"{gnpi * taux_retenu:,.0f}",
+                "Méthode"       : methode
+            })
+
+        df_rapport = pd.DataFrame(rows_rapport)
+        st.session_state["df_rapport"] = df_rapport
+
+        prime_totale = sum(gnpi * max(
+            sim_map.get(t["nom"],{}).get("taux_technique",0),
+            mkt_map.get(t["nom"],0)
+        ) for t in tranches_input)
+        st.session_state["prime_totale"] = prime_totale
+
+        if api_key:
+            with st.spinner("Claude génère les recommandations finales..."):
+                client = anthropic.Anthropic(api_key=api_key)
+                reco_finale = client.messages.create(
+                    model="claude-opus-4-5", max_tokens=2000,
+                    messages=[{"role":"user","content":f"""Expert réassurance non-proportionnelle automobile.
+Analyse ce rapport de tarification et donne des recommandations finales.
+Pour chaque tranche : valide ou questionne le taux retenu, signale les anomalies.
+Rapport : {json.dumps(rows_rapport, indent=2)}"""}]
+                )
+                st.session_state["reco_finale"] = reco_finale.content[0].text
+
+if "df_rapport" in st.session_state:
+    st.subheader("📊 Synthèse de tarification")
+    st.dataframe(st.session_state["df_rapport"], use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1: st.metric("Prime totale", f"{st.session_state['prime_totale']:,.0f} MAD")
+    with c2: st.metric("Taux global",  f"{st.session_state['prime_totale']/gnpi:.4%}")
+
+if "reco_finale" in st.session_state:
+    st.subheader("🤖 Recommandations finales Claude")
+    st.markdown(st.session_state["reco_finale"])
