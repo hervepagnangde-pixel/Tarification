@@ -5,8 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import json
 
-st.set_page_config(page_title="Agent Tarification Réassurance", layout="wide")
-st.title("Atarificatairé")
+st.set_page_config(page_title="AtarificataiRE", layout="wide")
+st.title("AtarificataiRE")
 
 # ─── SIDEBAR ───
 st.sidebar.header("⚙️ Configuration")
