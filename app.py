@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import json
 
-st.set_page_config(page_title="AtarificataiRE", layout="wide")
+st.set_page_config(page_title="Herve IA", layout="wide")
 st.title("AtarificataiRE")
 
 # ─── SIDEBAR ───
