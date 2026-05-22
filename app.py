@@ -9,12 +9,12 @@ st.set_page_config(page_title="AtarificataiRE", layout="wide")
 st.title("AtarificataiRE")
 
 # ─── SIDEBAR ───
-st.sidebar.header("⚙️ Configuration")
+st.sidebar.header("Configuration")
 api_key = st.sidebar.text_input("Clé API Claude", type="password")
 gnpi    = st.sidebar.number_input("GNPI (MAD)", value=183_000_000, step=1_000_000)
 
 # ─── PROGRAMME ───
-st.header("📋 Programme de Réassurance")
+st.header("Programme de Réassurance")
 nb_tranches = st.number_input("Nombre de tranches", min_value=1, max_value=10, value=3)
 
 tranches_input = []
@@ -55,7 +55,7 @@ for i in range(nb_tranches):
     })
     st.divider()
 
-if st.button("📊 Résumé programme"):
+if st.button("Résumé programme"):
     st.session_state["tranches_input"] = tranches_input
     st.session_state["df_prog"] = pd.DataFrame([{
         "Tranche": t["nom"], "Type": t["type"],
@@ -244,7 +244,7 @@ if "df_liq" in st.session_state:
         st.dataframe(st.session_state["df_proj"].head(20))
 
 # ─── BURNING COST ───
-st.header("🔥 Burning Cost")
+st.header("Burning Cost")
 
 if "df_proj" in st.session_state and st.button("▶ Calculer le Burning Cost"):
     with st.spinner("Calcul BC en cours..."):
@@ -294,7 +294,7 @@ if "df_proj" in st.session_state and st.button("▶ Calculer le Burning Cost"):
         st.session_state["resultats_bc"] = resultats_bc
 
 if "resultats_bc" in st.session_state:
-    st.subheader("📊 Résultats Burning Cost")
+    st.subheader("Résultats Burning Cost")
     st.dataframe(pd.DataFrame([{
         "Tranche"       : r["tranche"],
         "Charge moy."   : f"{r['charge_moy']:,.0f}",
@@ -304,7 +304,7 @@ if "resultats_bc" in st.session_state:
         "Taux final"    : f"{r['taux_final']:.4%}",
     } for r in st.session_state["resultats_bc"]]), use_container_width=True)
 
-    if api_key and st.button("🤖 Recommandations Claude — Burning Cost"):
+    if api_key and st.button("Recommandations Claude — Burning Cost"):
         with st.spinner("Claude analyse le BC..."):
             client  = anthropic.Anthropic(api_key=api_key)
             analyse = client.messages.create(
@@ -323,7 +323,7 @@ Tranches : {json.dumps(tranches_input, indent=2)}"""}]
         st.markdown(st.session_state["analyse_bc"])
 
 # ─── SIMULATION ───
-st.header("🎲 Simulation")
+st.header("Simulation")
 
 if "alpha_est" in st.session_state:
     st.info(f"Seuil P85 : {st.session_state['seuil_est']:,.0f} | Alpha : {st.session_state['alpha_est']:.4f} | Lambda : {st.session_state['lambda_est']:.4f}")
@@ -401,7 +401,7 @@ if "coeffs" in st.session_state and st.button("▶ Lancer la simulation"):
         st.session_state["resultats_sim"] = resultats_sim
 
 if "resultats_sim" in st.session_state:
-    st.subheader("📊 Résultats simulation")
+    st.subheader("Résultats simulation")
     st.dataframe(pd.DataFrame([{
         "Tranche"       : r["tranche"],
         "Taux pur"      : f"{r['taux_pur']:.4%}",
@@ -413,7 +413,7 @@ if "resultats_sim" in st.session_state:
         "Sans reconst." : f"{r['sans_rec']:.4%}",
     } for r in st.session_state["resultats_sim"]]), use_container_width=True)
 
-    if api_key and st.button("🤖 Analyser conditions avec Claude"):
+    if api_key and st.button("Analyser conditions avec Claude"):
         with st.spinner("Claude analyse..."):
             client  = anthropic.Anthropic(api_key=api_key)
             analyse = client.messages.create(
@@ -427,11 +427,11 @@ Tranches : {json.dumps(tranches_input, indent=2)}"""}]
             st.session_state["analyse_sim"] = analyse.content[0].text
 
     if "analyse_sim" in st.session_state:
-        st.subheader("🤖 Analyse Claude des conditions")
+        st.subheader("Analyse Claude des conditions")
         st.markdown(st.session_state["analyse_sim"])
 
 # ─── MARKET CURVE ───
-st.header("📈 Market Curve")
+st.header("Market Curve")
 f_mkt = st.file_uploader("Données marché", type=["xlsx","csv"])
 
 if f_mkt and st.button("▶ Construire la market curve"):
@@ -547,7 +547,7 @@ if "resultats_mkt" in st.session_state:
             row[tt["tranche"]] = f"{tt['taux']:.4%}"
         rows_recap.append(row)
 
-    st.subheader("📊 Comparaison des ajustements")
+    st.subheader("Comparaison des ajustements")
     st.dataframe(pd.DataFrame(rows_recap), use_container_width=True)
 
     best = resultats_mkt[0]
@@ -576,7 +576,7 @@ if "resultats_mkt" in st.session_state:
     ax.legend(); ax.grid(alpha=0.3)
     st.pyplot(fig)
 
-    st.subheader("📊 Taux marché retenus")
+    st.subheader("Taux marché retenus")
     st.dataframe(pd.DataFrame([{
         "Tranche"    : tt["tranche"],
         "Type"       : tt["type"],
@@ -586,7 +586,7 @@ if "resultats_mkt" in st.session_state:
 
     st.session_state["taux_mkt_final"] = choix["taux_tranches"]
 
-    if api_key and st.button("🤖 Analyse Claude market curve"):
+    if api_key and st.button("Analyse Claude market curve"):
         client = anthropic.Anthropic(api_key=api_key)
         reco   = client.messages.create(
             model="claude-opus-4-5", max_tokens=1000,
@@ -600,11 +600,11 @@ Tranches : {json.dumps(tranches_input, indent=2)}"""}]
         st.session_state["analyse_mkt"] = reco.content[0].text
 
     if "analyse_mkt" in st.session_state:
-        st.subheader("🤖 Recommandation Claude")
+        st.subheader("Recommandation Claude")
         st.markdown(st.session_state["analyse_mkt"])
 
 # ─── RAPPORT FINAL ───
-st.header("📋 Rapport Final")
+st.header("Rapport Final")
 
 if all(k in st.session_state for k in ["resultats_bc","resultats_sim","taux_mkt_final"]):
     if st.button("▶ Générer le rapport final"):
@@ -654,7 +654,7 @@ if all(k in st.session_state for k in ["resultats_bc","resultats_sim","taux_mkt_
                 client      = anthropic.Anthropic(api_key=api_key)
                 reco_finale = client.messages.create(
                     model="claude-opus-4-5", max_tokens=2000,
-                    messages=[{"role":"user","content":f"""Expert réassurance non-proportionnelle automobile.
+                    messages=[{"role":"user","content":f"""Expert réassurance non-proportionnelle automobile branche à développement long.
 Analyse ce rapport de tarification final.
 Pour chaque tranche : valide ou questionne le taux retenu, signale les anomalies,
 compare les méthodes, donne une recommandation finale.
@@ -664,12 +664,12 @@ GNPI : {gnpi:,} MAD"""}]
                 st.session_state["reco_finale"] = reco_finale.content[0].text
 
 if "df_rapport" in st.session_state:
-    st.subheader("📊 Synthèse de tarification")
+    st.subheader("Synthèse de tarification")
     st.dataframe(st.session_state["df_rapport"], use_container_width=True)
     c1, c2 = st.columns(2)
     with c1: st.metric("Prime totale", f"{st.session_state['prime_totale']:,.0f} MAD")
     with c2: st.metric("Taux global",  f"{st.session_state['prime_totale']/gnpi:.4%}")
 
 if "reco_finale" in st.session_state:
-    st.subheader("🤖 Recommandations finales Claude")
+    st.subheader("Recommandations finales Claude")
     st.markdown(st.session_state["reco_finale"])
