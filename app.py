@@ -7,116 +7,200 @@ import json
 
 st.set_page_config(page_title="Herve IA — Tarification XL", layout="wide", page_icon="🎯")
 
-# ─── CSS PERSONNALISÉ ───
+# ─── CSS ───
 st.markdown("""
 <style>
-    /* Fond général */
-    .stApp { background-color: #f0f2f6; }
-    
-    /* Header principal */
-    h1 { color: #1a1a2e; font-size: 1.8rem !important; }
-    h2 { color: #16213e; border-bottom: 2px solid #0f3460; padding-bottom: 8px; }
-    h3 { color: #0f3460; }
-    
-    /* Boutons primaires */
-    .stButton > button {
-        background-color: #0f3460;
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 8px 20px;
-        font-weight: 600;
-        transition: all 0.3s;
-    }
-    .stButton > button:hover {
-        background-color: #e94560;
-        transform: translateY(-1px);
-    }
-    
-    /* Cards */
-    .metric-card {
-        background: white;
-        padding: 16px;
-        border-radius: 10px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        border-left: 4px solid #0f3460;
-        margin-bottom: 12px;
-    }
-    
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: #1a1a2e;
-        border-radius: 10px;
-        padding: 4px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        color: #aaa;
-        font-weight: 500;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #e94560 !important;
-        color: white !important;
-        border-radius: 8px;
-    }
-    
-    /* Instruction box */
-    .instruction-box {
-        background: #fff8e1;
-        border: 1px solid #ffc107;
-        border-radius: 8px;
-        padding: 12px;
-        margin: 8px 0;
-    }
-    
-    /* Sidebar */
-    .css-1d391kg { background-color: #1a1a2e; }
-    
-    /* Success/warning */
-    .stSuccess { border-radius: 8px; }
-    .stWarning { border-radius: 8px; }
+.stApp { background-color: #f0f2f6; }
+h1 { color: #1a1a2e; }
+h2 { color: #16213e; border-bottom: 2px solid #0f3460; padding-bottom: 8px; }
+h3 { color: #0f3460; }
+.stButton > button {
+    background-color: #0f3460; color: white;
+    border: none; border-radius: 8px;
+    padding: 8px 20px; font-weight: 600; transition: all 0.3s;
+}
+.stButton > button:hover { background-color: #e94560; transform: translateY(-1px); }
+.stTabs [data-baseweb="tab-list"] { background-color: #1a1a2e; border-radius: 10px; padding: 4px; }
+.stTabs [data-baseweb="tab"] { color: #aaa; font-weight: 500; }
+.stTabs [aria-selected="true"] { background-color: #e94560 !important; color: white !important; border-radius: 8px; }
+.instruction-box { background: #fff8e1; border: 1px solid #ffc107; border-radius: 8px; padding: 12px; margin: 8px 0; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── HEADER ───
-col_logo, col_title = st.columns([1, 8])
-with col_title:
-    st.title("🎯 Herve IA — Tarification Réassurance Non-Proportionnelle")
-    st.caption("Burning Cost · Simulation · Market Curve · Recommandations IA")
+# ════════════════════════════════════════════
+# PROMPT ENGINEERING
+# ════════════════════════════════════════════
 
+def prompt_inputs(key_prefix, placeholder_contexte="", placeholder_instructions="",
+                  placeholder_input="", placeholder_output=""):
+    with st.expander("✏️ Personnaliser le prompt Claude", expanded=False):
+        st.markdown("##### 🎯 Prompt Engineering")
+        c1, c2 = st.columns(2)
+        with c1:
+            contexte = st.text_area(
+                "📌 Contexte",
+                placeholder=placeholder_contexte or "Ex: Portefeuille automobile Maroc 2026...",
+                height=80, key=f"{key_prefix}_contexte",
+                help="Informations de contexte sur le portefeuille, le marché, l'historique"
+            )
+            instructions = st.text_area(
+                "📋 Instructions spécifiques",
+                placeholder=placeholder_instructions or "Ex: Être attentif à la tranche Cat L1...",
+                height=80, key=f"{key_prefix}_instructions",
+                help="Directives spécifiques pour cette analyse"
+            )
+        with c2:
+            input_data = st.text_area(
+                "📥 Données supplémentaires",
+                placeholder=placeholder_input or "Ex: Taux marché de référence : 3.2%...",
+                height=80, key=f"{key_prefix}_input",
+                help="Données additionnelles non présentes dans les fichiers"
+            )
+            output_instructions = st.text_area(
+                "📤 Format de sortie souhaité",
+                placeholder=placeholder_output or "Ex: Tableau structuré + recommandation chiffrée...",
+                height=80, key=f"{key_prefix}_output",
+                help="Comment structurer la réponse de Claude"
+            )
+    return contexte, instructions, input_data, output_instructions
+
+
+def build_prompt(role, task, data, contexte="", instructions="",
+                 input_data="", output_instructions="",
+                 contexte_global="", exemples="", contraintes=""):
+    prompt = f"""
+════════════════════════════════════════════
+RÔLE
+════════════════════════════════════════════
+{role}
+
+════════════════════════════════════════════
+RÈGLES ABSOLUES — RESPECTER IMPÉRATIVEMENT
+════════════════════════════════════════════
+1. ANTI-HALLUCINATION :
+   Ne jamais inventer de chiffres, de faits ou de références.
+   Si une information est manquante ou incertaine, écrire EXPLICITEMENT :
+   "Information insuffisante pour conclure sur ce point."
+   Ne jamais extrapoler au-delà des données fournies.
+
+2. RAISONNEMENT STRUCTURÉ :
+   Avant chaque conclusion, montrer le raisonnement étape par étape.
+   Format obligatoire : [Observation] → [Analyse] → [Conclusion]
+   Ne jamais donner une conclusion sans la justifier par des chiffres.
+
+3. CONTRAINTES MÉTIER :
+{contraintes if contraintes else """   - Les taux techniques doivent être positifs et inférieurs à 50%
+   - Un écart BC/Simulation > 25% est systématiquement signalé ⚠️
+   - Ne pas recommander un taux inférieur au taux pur calculé
+   - Pour les tranches cat : la market curve prime sur le BC historique
+   - BC = 0 pour tranche cat est NORMAL, ne pas le signaler comme anomalie
+   - Signaler tout résultat qui semble mathématiquement incohérent"""}
+
+4. ITÉRATION ET VÉRIFICATION :
+   Avant de finaliser la réponse, vérifier :
+   ✓ Les chiffres cités sont-ils présents dans les données fournies ?
+   ✓ Les recommandations sont-elles cohérentes entre tranches ?
+   ✓ Y a-t-il des contradictions dans l'analyse ?
+   ✓ Les taux respectent-ils la hiérarchie : taux_pur < taux_risque < taux_technique ?
+   Si non, corriger avant de répondre.
+
+5. ANCRAGE PAR EXEMPLES :
+{exemples if exemples else """   Exemple de BONNE recommandation :
+   "La tranche Risk & Cat affiche un taux BC de 2.94% et simulation de 3.98%.
+    L'écart de 35% [Observation] suggère que le BC sous-estime le risque actuel,
+    probablement dû à l'inflation sinistres non capturée [Analyse].
+    → Retenir le taux simulation de 3.98% avec mention au comité [Conclusion]."
+
+   Exemple de MAUVAISE recommandation (à éviter) :
+   "Le taux est acceptable." ← pas de raisonnement, pas de chiffres."""}
+
+════════════════════════════════════════════
+CONTEXTE GÉNÉRAL DU PORTEFEUILLE
+════════════════════════════════════════════
+{contexte_global if contexte_global else "Non fourni — raisonner uniquement sur les données."}
+
+════════════════════════════════════════════
+CONTEXTE SPÉCIFIQUE
+════════════════════════════════════════════
+{contexte if contexte else "Aucun contexte spécifique fourni."}
+
+════════════════════════════════════════════
+TÂCHE
+════════════════════════════════════════════
+{task}
+
+════════════════════════════════════════════
+DONNÉES D'ENTRÉE
+════════════════════════════════════════════
+{data}
+{f"""
+DONNÉES SUPPLÉMENTAIRES :
+{input_data}""" if input_data else ""}
+
+════════════════════════════════════════════
+INSTRUCTIONS SPÉCIFIQUES
+════════════════════════════════════════════
+{instructions if instructions else "Suivre la tâche telle que décrite ci-dessus."}
+
+════════════════════════════════════════════
+FORMAT DE SORTIE ATTENDU
+════════════════════════════════════════════
+{output_instructions if output_instructions else """
+Structure ta réponse ainsi :
+1. SYNTHÈSE (2-3 phrases max)
+2. ANALYSE PAR TRANCHE
+   - Observations factuelles (chiffres)
+   - Raisonnement [→]
+   - Recommandation chiffrée
+3. POINTS D'ATTENTION (anomalies, incertitudes)
+4. CONCLUSION (verdict final avec taux retenus)"""}
+
+Rappel final : La précision prime sur l'exhaustivité.
+Si incertain → le dire plutôt qu'inventer.
+════════════════════════════════════════════
+"""
+    return prompt.strip()
+
+
+# ════════════════════════════════════════════
+# HEADER + SIDEBAR
+# ════════════════════════════════════════════
+
+st.title("🎯 Herve IA — Tarification Réassurance Non-Proportionnelle")
+st.caption("Burning Cost · Simulation · Market Curve · Recommandations IA")
 st.divider()
 
-# ─── SIDEBAR ───
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
     api_key = st.text_input("🔑 Clé API Claude", type="password", placeholder="sk-ant-...")
-    gnpi    = st.number_input("💰 GNPI (MAD)", value=183_000_000, step=1_000_000,
-                               help="Gross Net Premium Income — assiette de tarification")
+    gnpi    = st.number_input("💰 GNPI (MAD)", value=183_000_000, step=1_000_000)
     st.divider()
-    
-    # Statut des étapes
-    st.markdown("### 📊 Statut")
+
+    st.markdown("### 📊 Statut des étapes")
     etapes = [
-        ("Programme",    "tranches_input" in st.session_state),
+        ("Programme",    "df_prog"        in st.session_state),
         ("Données",      "df_liq"         in st.session_state),
         ("Burning Cost", "resultats_bc"   in st.session_state),
         ("Simulation",   "resultats_sim"  in st.session_state),
         ("Market Curve", "resultats_mkt"  in st.session_state),
     ]
     for nom, done in etapes:
-        icon = "✅" if done else "⬜"
-        st.markdown(f"{icon} {nom}")
-    
+        st.markdown(f"{'✅' if done else '⬜'} {nom}")
+
     st.divider()
-    st.markdown("### 💡 Instructions globales")
+    st.markdown("### 🌍 Contexte global")
     instructions_globales = st.text_area(
-        "Contexte à donner à Claude",
-        placeholder="Ex: Portefeuille automobile Maroc, forte croissance en 2023, changement de mix sinistres...",
-        height=120,
-        key="instructions_globales",
-        help="Ces instructions seront incluses dans TOUS les prompts Claude"
+        "Contexte portefeuille",
+        placeholder="Ex: Portefeuille automobile Maroc, forte croissance 2023, sinistralité COVID...",
+        height=120, key="instructions_globales",
+        help="Inclus dans TOUS les prompts Claude"
     )
 
-# ─── TABS ───
+
+# ════════════════════════════════════════════
+# TABS
+# ════════════════════════════════════════════
+
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📋 Programme",
     "📂 Données & Triangle",
@@ -126,9 +210,11 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📋 Rapport Final"
 ])
 
-# ════════════════════════════════
+
+# ════════════════════════════════════════════
 # TAB 1 — PROGRAMME
-# ════════════════════════════════
+# ════════════════════════════════════════════
+
 with tab1:
     st.header("Programme de Réassurance")
     st.caption("Définissez les tranches, conditions et paramètres de chargement")
@@ -141,25 +227,25 @@ with tab1:
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown("**Identification**")
-                nom      = st.text_input("Nom",       value=f"Tranche {i+1}", key=f"nom_{i}")
-                type_t   = st.selectbox("Type",       ["travaillante","non_travaillante","cat"], key=f"type_{i}")
-                priorite = st.number_input("Priorité (MAD)", value=2_000_000,  step=500_000, key=f"prio_{i}", format="%d")
-                portee   = st.number_input("Portée (MAD)",   value=13_000_000, step=500_000, key=f"port_{i}", format="%d")
+                nom      = st.text_input("Nom",               value=f"Tranche {i+1}", key=f"nom_{i}")
+                type_t   = st.selectbox("Type",               ["travaillante","non_travaillante","cat"], key=f"type_{i}")
+                priorite = st.number_input("Priorité (MAD)",  value=2_000_000,  step=500_000, key=f"prio_{i}", format="%d")
+                portee   = st.number_input("Portée (MAD)",    value=13_000_000, step=500_000, key=f"port_{i}", format="%d")
             with c2:
                 st.markdown("**Conditions contractuelles**")
-                has_aal = st.checkbox("AAL (Aggregate Annual Limit)", key=f"aal_{i}")
-                aal_val = st.number_input("Montant AAL", value=0, step=100_000, key=f"aal_v_{i}", disabled=not has_aal)
-                has_aad = st.checkbox("AAD (Annual Aggregate Deductible)", key=f"aad_{i}")
-                aad_val = st.number_input("Montant AAD", value=0, step=100_000, key=f"aad_v_{i}", disabled=not has_aad)
-                has_indices = st.checkbox("Clause d'indexation", key=f"idx_{i}")
+                has_aal     = st.checkbox("AAL",                   key=f"aal_{i}")
+                aal_val     = st.number_input("Montant AAL",   value=0, step=100_000, key=f"aal_v_{i}",  disabled=not has_aal)
+                has_aad     = st.checkbox("AAD",                   key=f"aad_{i}")
+                aad_val     = st.number_input("Montant AAD",   value=0, step=100_000, key=f"aad_v_{i}",  disabled=not has_aad)
+                has_indices = st.checkbox("Clause d'indexation",   key=f"idx_{i}")
             with c3:
                 st.markdown("**Reconstitutions & Chargements**")
                 nb_recon     = st.number_input("Nb reconstitutions",    value=1,   min_value=0, max_value=5,   key=f"recon_{i}")
                 tx_recon     = st.number_input("Taux reconstitution %", value=100, min_value=0, max_value=200, key=f"txrecon_{i}")
-                brokage      = st.number_input("Brokage %",        value=10, min_value=0, max_value=30, key=f"brok_{i}")
-                frais        = st.number_input("Frais généraux %", value=5,  min_value=0, max_value=20, key=f"frais_{i}")
-                marge        = st.number_input("Marge %",          value=10, min_value=0, max_value=30, key=f"marge_{i}")
-                retrocession = st.number_input("Rétrocession %",   value=0,  min_value=0, max_value=50, key=f"retro_{i}")
+                brokage      = st.number_input("Brokage %",             value=10,  min_value=0, max_value=30,  key=f"brok_{i}")
+                frais        = st.number_input("Frais généraux %",      value=5,   min_value=0, max_value=20,  key=f"frais_{i}")
+                marge        = st.number_input("Marge %",               value=10,  min_value=0, max_value=30,  key=f"marge_{i}")
+                retrocession = st.number_input("Rétrocession %",        value=0,   min_value=0, max_value=50,  key=f"retro_{i}")
 
         tranches_input.append({
             "numero": i+1, "nom": nom, "type": type_t,
@@ -176,32 +262,30 @@ with tab1:
     if st.button("💾 Valider le programme", type="primary"):
         st.session_state["tranches_input"] = tranches_input
         st.session_state["df_prog"] = pd.DataFrame([{
-            "Tranche": t["nom"], "Type": t["type"],
-            "Priorité": f"{t['priorite']:,}", "Portée": f"{t['portee']:,}",
-            "AAL": f"{t['AAL']:,}" if t["AAL"] else "—",
-            "AAD": f"{t['AAD']:,}" if t["AAD"] else "—",
-            "Reconst.": f"{t['nb_reconstitutions']} x {t['taux_reconstitution']}%",
-            "Indices": "✅" if t["indices"] else "—",
-            "Brokage": f"{t['brokage']:.0%}",
-            "Frais": f"{t['frais']:.0%}",
-            "Marge": f"{t['marge']:.0%}",
+            "Tranche"  : t["nom"],  "Type"    : t["type"],
+            "Priorité" : f"{t['priorite']:,}", "Portée": f"{t['portee']:,}",
+            "AAL"      : f"{t['AAL']:,}" if t["AAL"] else "—",
+            "AAD"      : f"{t['AAD']:,}" if t["AAD"] else "—",
+            "Reconst." : f"{t['nb_reconstitutions']} x {t['taux_reconstitution']}%",
+            "Indices"  : "✅" if t["indices"] else "—",
+            "Brokage"  : f"{t['brokage']:.0%}",
+            "Frais"    : f"{t['frais']:.0%}",
+            "Marge"    : f"{t['marge']:.0%}",
         } for t in tranches_input])
         st.success("✅ Programme validé !")
 
     if "df_prog" in st.session_state:
         st.dataframe(st.session_state["df_prog"], use_container_width=True)
-        # Résumé visuel
-        col1, col2, col3 = st.columns(3)
-        trav  = sum(1 for t in tranches_input if t["type"] == "travaillante")
-        cat   = sum(1 for t in tranches_input if t["type"] == "cat")
-        other = sum(1 for t in tranches_input if t["type"] == "non_travaillante")
-        col1.metric("Tranches travaillantes", trav)
-        col2.metric("Tranches cat", cat)
-        col3.metric("Tranches non-travaillantes", other)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Tranches travaillantes", sum(1 for t in tranches_input if t["type"]=="travaillante"))
+        c2.metric("Tranches cat",           sum(1 for t in tranches_input if t["type"]=="cat"))
+        c3.metric("Tranches non-trav.",     sum(1 for t in tranches_input if t["type"]=="non_travaillante"))
 
-# ════════════════════════════════
+
+# ════════════════════════════════════════════
 # TAB 2 — DONNÉES & TRIANGLE
-# ════════════════════════════════
+# ════════════════════════════════════════════
+
 with tab2:
     st.header("Données de base & Transformation triangle")
 
@@ -214,7 +298,7 @@ with tab2:
         f_gnpis = st.file_uploader("📁 GNPIs (Excel/CSV)", type=["xlsx","csv"], key="f_gnp")
     with c3:
         st.markdown("**Table d'indices**")
-        f_indices = st.file_uploader("📁 Indices IPC/Salaires (Excel/CSV)", type=["xlsx","csv"], key="f_idx")
+        f_indices = st.file_uploader("📁 Indices (Excel/CSV)", type=["xlsx","csv"], key="f_idx")
 
     annee_cotation = st.number_input("Année de cotation", value=2026, step=1)
 
@@ -282,7 +366,7 @@ with tab2:
 
             df_liq = pd.DataFrame(records)
 
-            progress.progress(45, text="Calcul As-If & Stabilisation...")
+            progress.progress(45, text="As-If & Stabilisation...")
             df_idx_set = df_idx_df.set_index('Annee')['Coefficients']
             def get_indice(annee):
                 try: return float(df_idx_set[annee])
@@ -378,33 +462,33 @@ with tab2:
             })
 
     if "df_liq" in st.session_state:
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Observations extraites", len(st.session_state['df_liq']))
-        col2.metric("Sinistres uniques", st.session_state['df_liq']['sinistre_id'].nunique())
-        col3.metric("Années de survenance", st.session_state['df_liq']['annee_surv'].nunique())
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Observations", len(st.session_state['df_liq']))
+        c2.metric("Sinistres",    st.session_state['df_liq']['sinistre_id'].nunique())
+        c3.metric("Années",       st.session_state['df_liq']['annee_surv'].nunique())
 
-        with st.expander("📊 Triangle de liquidation (As-If & Stab.)"):
+        with st.expander("📊 Triangle de liquidation"):
             st.dataframe(st.session_state["df_liq"][
                 ['sinistre_id','annee_surv','annee_reg','dev','total','total_asif','total_stab']
             ].head(30), use_container_width=True)
-
-        with st.expander("📊 Facteurs Chain Ladder individuels"):
+        with st.expander("📊 Facteurs Chain Ladder"):
             st.dataframe(st.session_state["df_facteurs"], use_container_width=True)
-
-        with st.expander("📊 Projections à l'ultime"):
+        with st.expander("📊 Projections"):
             st.dataframe(st.session_state["df_proj"].head(20), use_container_width=True)
 
-        st.info(f"🔢 Paramètres estimés — Seuil P85: {st.session_state['seuil_est']:,.0f} MAD | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f}")
+        st.info(f"🔢 Seuil P85: {st.session_state['seuil_est']:,.0f} MAD | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f}")
 
-# ════════════════════════════════
+
+# ════════════════════════════════════════════
 # TAB 3 — BURNING COST
-# ════════════════════════════════
+# ════════════════════════════════════════════
+
 with tab3:
     st.header("Burning Cost")
-    st.caption("Calcul des charges historiques réassurance par tranche")
+    st.caption("Charges historiques réassurance par tranche")
 
     if "df_proj" not in st.session_state:
-        st.warning("⚠️ Transformez d'abord le triangle dans l'onglet 'Données & Triangle'")
+        st.warning("⚠️ Transformez d'abord le triangle (onglet 'Données & Triangle')")
     else:
         if st.button("▶ Calculer le Burning Cost", type="primary"):
             with st.spinner("Calcul en cours..."):
@@ -447,7 +531,6 @@ with tab3:
                         "taux_final"    : taux_final,
                         "detail_annuel" : df_ch.to_dict('records')
                     })
-
                 st.session_state["resultats_bc"] = resultats_bc
 
     if "resultats_bc" in st.session_state:
@@ -464,36 +547,41 @@ with tab3:
 
         st.divider()
         st.markdown("### 🤖 Analyse Claude — Burning Cost")
-        st.markdown('<div class="instruction-box">💡 <b>Instructions pour Claude</b> — Ajoutez du contexte spécifique à cette analyse</div>', unsafe_allow_html=True)
-        instructions_bc = st.text_area(
-            "Instructions supplémentaires",
-            placeholder="Ex: Le portefeuille a connu une forte sinistralité en 2020 liée à la crise COVID. La tranche Risk & Cat a été touchée de manière exceptionnelle...",
-            height=100,
-            key="instructions_bc",
-            label_visibility="collapsed"
+        ctx_bc, inst_bc, inp_bc, out_bc = prompt_inputs(
+            key_prefix="bc",
+            placeholder_contexte="Ex: Sinistralité exceptionnelle 2020, portefeuille en croissance...",
+            placeholder_instructions="Ex: Comparer avec taux marché de référence 3-4%...",
+            placeholder_input="Ex: Taux BC année précédente : R&C=2.5%",
+            placeholder_output="Ex: Tableau par tranche + verdict OK/ALERTE/RÉVISER"
         )
 
-        if api_key and st.button("🤖 Obtenir les recommandations Claude — BC"):
+        if api_key and st.button("🤖 Recommandations Claude — BC"):
             with st.spinner("Claude analyse..."):
-                contexte_global = st.session_state.get("instructions_globales", "")
-                prompt = f"""Tu es expert en réassurance non-proportionnelle automobile.
-{f"CONTEXTE GÉNÉRAL : {contexte_global}" if contexte_global else ""}
-{f"INSTRUCTIONS SPÉCIFIQUES : {instructions_bc}" if instructions_bc else ""}
+                prompt = build_prompt(
+                    role="Expert actuaire senior en réassurance non-proportionnelle automobile, 15 ans d'expérience en tarification XL et cat.",
+                    task="""Analyse les résultats de Burning Cost par tranche.
+Pour chaque tranche :
+1. Évalue le niveau du taux (élevé/normal/faible vs normes marché)
+2. Vérifie la cohérence entre tranches (progression logique priorité/taux)
+3. Identifie les anomalies ou données suspectes
+4. Donne un verdict : ✅ Cohérent | ⚠️ À vérifier | ❌ Problème""",
+                    data=f"""Résultats BC :
+{json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}
 
-Analyse ces résultats de Burning Cost par tranche.
-Pour chaque tranche : commente le niveau du taux, signale les anomalies, vérifie la cohérence entre tranches, compare travaillante vs cat.
-
-Résultats BC :
-{json.dumps([{k:v for k,v in r.items() if k != 'detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}
-
-Programme :
-{json.dumps(tranches_input, indent=2)}
-
-GNPI : {gnpi:,} MAD"""
-
+Programme : {json.dumps(tranches_input, indent=2)}
+GNPI : {gnpi:,} MAD""",
+                    contexte=ctx_bc, instructions=inst_bc,
+                    input_data=inp_bc, output_instructions=out_bc,
+                    contexte_global=st.session_state.get("instructions_globales",""),
+                    contraintes="""- Taux pur BC négatif = erreur de calcul à signaler immédiatement
+- BC = 0 pour tranche cat est NORMAL, ne pas signaler comme anomalie
+- Vérifier hiérarchie : taux_pur < taux_risque < taux_technique < taux_final
+- Si charge_moy / portée > 50% → tranche très touchée, signaler
+- Ne jamais inventer de comparatifs marché non fournis"""
+                )
                 client  = anthropic.Anthropic(api_key=api_key)
                 analyse = client.messages.create(
-                    model="claude-opus-4-5", max_tokens=1500,
+                    model="claude-opus-4-5", max_tokens=2000,
                     messages=[{"role":"user","content":prompt}]
                 )
                 st.session_state["analyse_bc"] = analyse.content[0].text
@@ -501,23 +589,25 @@ GNPI : {gnpi:,} MAD"""
         if "analyse_bc" in st.session_state:
             st.markdown(st.session_state["analyse_bc"])
 
-# ════════════════════════════════
+
+# ════════════════════════════════════════════
 # TAB 4 — SIMULATION
-# ════════════════════════════════
+# ════════════════════════════════════════════
+
 with tab4:
     st.header("Simulation Pareto / Poisson")
     st.caption("Modélisation probabiliste des charges de réassurance")
 
     if "alpha_est" not in st.session_state:
-        st.warning("⚠️ Transformez d'abord le triangle dans l'onglet 'Données & Triangle'")
+        st.warning("⚠️ Transformez d'abord le triangle (onglet 'Données & Triangle')")
     else:
-        st.info(f"🔢 Estimations automatiques — Seuil P85: {st.session_state['seuil_est']:,.0f} | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f}")
+        st.info(f"🔢 Seuil P85: {st.session_state['seuil_est']:,.0f} | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f}")
 
         c1, c2, c3, c4 = st.columns(4)
-        with c1: alpha_final  = st.number_input("Alpha (Pareto)",    value=st.session_state["alpha_est"],  step=0.01,     format="%.4f", key="alpha_input")
-        with c2: lambda_final = st.number_input("Lambda (Poisson)",  value=st.session_state["lambda_est"], step=0.1,      format="%.4f", key="lambda_input")
-        with c3: seuil_final  = st.number_input("Seuil (MAD)",       value=st.session_state["seuil_est"],  step=50_000.0, format="%.0f", key="seuil_input")
-        with c4: n_sim        = st.number_input("Nb simulations",     value=10000, step=1000,               key="nsim_input")
+        with c1: alpha_final  = st.number_input("Alpha",          value=st.session_state["alpha_est"],  step=0.01,     format="%.4f", key="alpha_input")
+        with c2: lambda_final = st.number_input("Lambda",         value=st.session_state["lambda_est"], step=0.1,      format="%.4f", key="lambda_input")
+        with c3: seuil_final  = st.number_input("Seuil (MAD)",    value=st.session_state["seuil_est"],  step=50_000.0, format="%.0f", key="seuil_input")
+        with c4: n_sim        = st.number_input("Nb simulations",  value=10000, step=1000,               key="nsim_input")
 
         if st.button("▶ Lancer la simulation", type="primary"):
             with st.spinner("🎲 Simulation en cours..."):
@@ -532,7 +622,7 @@ with tab4:
 
                 for idx_t, t_info in enumerate(tranches_input):
                     progress_sim.progress(int((idx_t/len(tranches_input))*100),
-                                          text=f"Simulation tranche {t_info['nom']}...")
+                                          text=f"Simulation {t_info['nom']}...")
                     D   = t_info["priorite"]
                     P   = t_info["portee"]
                     r   = t_info["nb_reconstitutions"]
@@ -604,35 +694,40 @@ with tab4:
 
         st.divider()
         st.markdown("### 🤖 Analyse Claude — Simulation & Conditions")
-        st.markdown('<div class="instruction-box">💡 <b>Instructions pour Claude</b></div>', unsafe_allow_html=True)
-        instructions_sim = st.text_area(
-            "Instructions supplémentaires",
-            placeholder="Ex: La clause AAL a été introduite pour la première fois cette année. Le réassureur est particulièrement sensible à la tranche Cat L1...",
-            height=100,
-            key="instructions_sim",
-            label_visibility="collapsed"
+        ctx_sim, inst_sim, inp_sim, out_sim = prompt_inputs(
+            key_prefix="sim",
+            placeholder_contexte="Ex: Nouveau modèle cat, lambda revu à la hausse...",
+            placeholder_instructions="Ex: Seuil d'alerte écart = 20% au lieu de 25%...",
+            placeholder_input="Ex: Résultats simulation année précédente...",
+            placeholder_output="Ex: Verdict par condition + impact en points de taux"
         )
 
-        if api_key and st.button("🤖 Obtenir les recommandations Claude — Simulation"):
+        if api_key and st.button("🤖 Recommandations Claude — Simulation"):
             with st.spinner("Claude analyse..."):
-                contexte_global = st.session_state.get("instructions_globales", "")
-                prompt = f"""Tu es expert en réassurance non-proportionnelle automobile.
-{f"CONTEXTE GÉNÉRAL : {contexte_global}" if contexte_global else ""}
-{f"INSTRUCTIONS SPÉCIFIQUES : {instructions_sim}" if instructions_sim else ""}
-
-Compare taux technique base vs sans AAL vs sans AAD vs sans reconstitution.
-Règle : Écart < 5% → condition inutile | 5-15% → à ajuster | > 15% → nécessaire.
-Pour chaque tranche donne : verdict par condition + justification actuarielle.
-
-Résultats simulation :
+                prompt = build_prompt(
+                    role="Expert en modélisation catastrophe et simulation stochastique réassurance.",
+                    task="""Analyse les résultats simulation et l'impact des conditions contractuelles.
+Pour chaque tranche et chaque condition (AAL, AAD, Reconstitution) :
+1. Calcule l'impact en points de taux : taux_base - taux_sans_condition
+2. Classe : NÉCESSAIRE (impact >15%) | À AJUSTER (5-15%) | INUTILE (<5%)
+3. Recommande le montant optimal de chaque condition présente
+4. Compare BC vs Simulation — signale les écarts > 25% avec explication""",
+                    data=f"""Résultats simulation :
 {json.dumps(st.session_state['resultats_sim'], indent=2)}
 
-Programme :
-{json.dumps(tranches_input, indent=2)}"""
-
+Programme : {json.dumps(tranches_input, indent=2)}""",
+                    contexte=ctx_sim, instructions=inst_sim,
+                    input_data=inp_sim, output_instructions=out_sim,
+                    contexte_global=st.session_state.get("instructions_globales",""),
+                    contraintes="""- Ne pas recommander la suppression d'une AAL sur tranche cat
+- Un AAD trop élevé peut rendre la tranche inutile — le signaler
+- Reconstitution = 0 acceptable seulement si taux très bas
+- Écart BC/Sim > 50% = anomalie majeure à investiguer
+- Ne jamais comparer à des benchmarks non fournis"""
+                )
                 client  = anthropic.Anthropic(api_key=api_key)
                 analyse = client.messages.create(
-                    model="claude-opus-4-5", max_tokens=1500,
+                    model="claude-opus-4-5", max_tokens=2000,
                     messages=[{"role":"user","content":prompt}]
                 )
                 st.session_state["analyse_sim"] = analyse.content[0].text
@@ -640,9 +735,11 @@ Programme :
         if "analyse_sim" in st.session_state:
             st.markdown(st.session_state["analyse_sim"])
 
-# ════════════════════════════════
+
+# ════════════════════════════════════════════
 # TAB 5 — MARKET CURVE
-# ════════════════════════════════
+# ════════════════════════════════════════════
+
 with tab5:
     st.header("Market Curve")
     st.caption("Modèle log-log : log(ROL) = a × log(midpoints) + b")
@@ -685,7 +782,7 @@ with tab5:
                 x = df_q['midpoints'].values
                 y = df_q['ROLs'].values
                 try:
-                    a, b, r2  = fit_log_log(x, y)
+                    a, b, r2 = fit_log_log(x, y)
                     taux_tranches = []
                     for t in tranches_input:
                         mid_t = t['priorite'] + t['portee'] / 2
@@ -738,7 +835,7 @@ with tab5:
                 row[tt["tranche"]] = f"{tt['taux']:.4%}"
             rows_recap.append(row)
 
-        st.subheader("📊 Comparaison des 10 ajustements")
+        st.subheader("📊 Comparaison des ajustements")
         st.dataframe(pd.DataFrame(rows_recap), use_container_width=True)
 
         best = resultats_mkt[0]
@@ -781,35 +878,43 @@ with tab5:
 
         st.divider()
         st.markdown("### 🤖 Analyse Claude — Market Curve")
-        st.markdown('<div class="instruction-box">💡 <b>Instructions pour Claude</b></div>', unsafe_allow_html=True)
-        instructions_mkt = st.text_area(
-            "Instructions supplémentaires",
-            placeholder="Ex: Le marché est actuellement en phase de durcissement. Les taux observés sont en hausse de 15% par rapport à l'an dernier...",
-            height=100,
-            key="instructions_mkt",
-            label_visibility="collapsed"
+        ctx_mkt, inst_mkt, inp_mkt, out_mkt = prompt_inputs(
+            key_prefix="mkt",
+            placeholder_contexte="Ex: Marché en durcissement, hausse 15% vs année précédente...",
+            placeholder_instructions="Ex: Privilégier les ajustements avec N > 20 points...",
+            placeholder_input="Ex: Taux marché de référence secteur : Cat L1=1.5%",
+            placeholder_output="Ex: Recommandation unique avec justification R² et cohérence"
         )
 
-        if api_key and st.button("🤖 Obtenir les recommandations Claude — Market Curve"):
+        if api_key and st.button("🤖 Recommandations Claude — Market Curve"):
             with st.spinner("Claude analyse..."):
-                contexte_global = st.session_state.get("instructions_globales", "")
-                prompt = f"""Tu es expert en réassurance catastrophe et market curve.
-{f"CONTEXTE GÉNÉRAL : {contexte_global}" if contexte_global else ""}
-{f"INSTRUCTIONS SPÉCIFIQUES : {instructions_mkt}" if instructions_mkt else ""}
-
-Analyse ces ajustements de market curve et recommande le meilleur.
+                prompt = build_prompt(
+                    role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
+                    task="""Analyse les ajustements de market curve et recommande le meilleur.
 Modèle : log(ROL) = a × log(midpoints) + b
-Tiens compte du R², score optimal, nombre de points, cohérence des taux et contexte marché.
-
-Ajustements :
+Pour chaque ajustement :
+1. Évalue la qualité du R² (log-log)
+2. Vérifie la cohérence des taux obtenus vs normes marché
+3. Tiens compte du nombre de points (robustesse statistique)
+4. Identifie les ajustements aberrants (taux trop élevés ou trop bas)
+Conclusion : recommande UN seul ajustement avec justification complète.""",
+                    data=f"""Ajustements :
 {json.dumps(rows_recap, indent=2)}
 
-Programme :
-{json.dumps(tranches_input, indent=2)}"""
-
+Programme : {json.dumps(tranches_input, indent=2)}
+GNPI : {gnpi:,} MAD""",
+                    contexte=ctx_mkt, instructions=inst_mkt,
+                    input_data=inp_mkt, output_instructions=out_mkt,
+                    contexte_global=st.session_state.get("instructions_globales",""),
+                    contraintes="""- R² < 0.3 = ajustement médiocre, à éviter sauf absence d'alternative
+- N < 10 points = faible robustesse, signaler
+- Taux marché > 3x taux simulation = suspect, investiguer
+- Ne jamais recommander un taux basé sur un seul point de données
+- Le score composite (R² + cohérence) prime sur le R² seul"""
+                )
                 client = anthropic.Anthropic(api_key=api_key)
                 reco   = client.messages.create(
-                    model="claude-opus-4-5", max_tokens=1000,
+                    model="claude-opus-4-5", max_tokens=1500,
                     messages=[{"role":"user","content":prompt}]
                 )
                 st.session_state["analyse_mkt"] = reco.content[0].text
@@ -817,28 +922,28 @@ Programme :
         if "analyse_mkt" in st.session_state:
             st.markdown(st.session_state["analyse_mkt"])
 
-# ════════════════════════════════
+
+# ════════════════════════════════════════════
 # TAB 6 — RAPPORT FINAL
-# ════════════════════════════════
+# ════════════════════════════════════════════
+
 with tab6:
     st.header("Rapport Final de Tarification")
 
     manquants = []
-    if "resultats_bc"  not in st.session_state: manquants.append("Burning Cost")
-    if "resultats_sim" not in st.session_state: manquants.append("Simulation")
-    if "taux_mkt_final"not in st.session_state: manquants.append("Market Curve")
+    if "resultats_bc"   not in st.session_state: manquants.append("Burning Cost")
+    if "resultats_sim"  not in st.session_state: manquants.append("Simulation")
+    if "taux_mkt_final" not in st.session_state: manquants.append("Market Curve")
 
     if manquants:
         st.warning(f"⚠️ Complétez d'abord : {', '.join(manquants)}")
     else:
-        st.divider()
-        st.markdown("### 🤖 Instructions pour le rapport final")
-        st.markdown('<div class="instruction-box">💡 Ces instructions guideront Claude dans la rédaction du rapport final</div>', unsafe_allow_html=True)
-        instructions_rapport = st.text_area(
-            "Instructions finales",
-            placeholder="Ex: Focus particulier sur la cohérence entre méthodes. Le cedant souhaite minimiser la prime totale tout en maintenant une protection adéquate. Comparer avec les taux de l'année précédente si pertinent...",
-            height=120,
-            key="instructions_rapport"
+        ctx_rap, inst_rap, inp_rap, out_rap = prompt_inputs(
+            key_prefix="rapport",
+            placeholder_contexte="Ex: Négociation avec réassureur XYZ, objectif prime < 14M MAD...",
+            placeholder_instructions="Ex: Justifier chaque taux retenu, comparer avec N-1...",
+            placeholder_input="Ex: Taux retenus N-1 : R&C=3.1%, CatL1=1.2%, CatL2=0.8%",
+            placeholder_output="Ex: Rapport 1 page max, tableau synthèse final obligatoire"
         )
 
         if st.button("▶ Générer le rapport final", type="primary"):
@@ -885,30 +990,54 @@ with tab6:
 
             if api_key:
                 with st.spinner("Claude rédige le rapport final..."):
-                    contexte_global = st.session_state.get("instructions_globales", "")
-                    prompt = f"""Tu es expert senior en tarification réassurance non-proportionnelle automobile.
-{f"CONTEXTE GÉNÉRAL : {contexte_global}" if contexte_global else ""}
-{f"INSTRUCTIONS SPÉCIFIQUES : {instructions_rapport}" if instructions_rapport else ""}
-
-Rédige un rapport de tarification structuré et professionnel.
-Pour chaque tranche :
-1. Valide ou questionne le taux retenu
-2. Compare les 3 méthodes (BC, Simulation, Marché)
-3. Signale les anomalies ou incohérences
-4. Donne une recommandation finale motivée
-
-Termine par une synthèse globale avec avis sur la structure du programme.
-
-Rapport de tarification :
+                    prompt = build_prompt(
+                        role="""Expert senior en tarification réassurance non-proportionnelle,
+spécialisé branche automobile marchés émergents (Maroc, Afrique francophone).
+Rôle de consultant indépendant — objectif : fournir un avis technique rigoureux.""",
+                        task="""Rédige un rapport de tarification professionnel et complet.
+Structure OBLIGATOIRE :
+1. SYNTHÈSE EXÉCUTIVE (5 lignes max — pour le management)
+2. ANALYSE PAR TRANCHE (une section par tranche)
+   - Chiffres clés BC / Simulation / Marché
+   - Raisonnement [Observation → Analyse → Conclusion]
+   - Verdict et taux retenu justifié
+3. COHÉRENCE INTER-MÉTHODES
+4. ANOMALIES ET POINTS D'ATTENTION
+5. TABLEAU RÉCAPITULATIF FINAL
+6. RECOMMANDATION GLOBALE""",
+                        data=f"""Rapport :
 {json.dumps(rows_rapport, indent=2)}
 
-GNPI : {gnpi:,} MAD
-Prime totale : {prime_totale:,.0f} MAD
-Taux global : {prime_totale/gnpi:.4%}"""
+BC détaillé :
+{json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}
 
+Simulation :
+{json.dumps(st.session_state['resultats_sim'], indent=2)}
+
+GNPI : {gnpi:,} MAD
+Prime totale calculée : {prime_totale:,.0f} MAD
+Taux global : {prime_totale/gnpi:.4%}""",
+                        contexte=ctx_rap, instructions=inst_rap,
+                        input_data=inp_rap, output_instructions=out_rap,
+                        contexte_global=st.session_state.get("instructions_globales",""),
+                        exemples="""Exemple de BONNE synthèse exécutive :
+"Le programme 2026 de 3 tranches ressort à 14.2M MAD (7.76% du GNPI).
+La tranche travaillante Risk&Cat présente un écart BC/Simulation de 35%
+— vraisemblablement lié à l'inflation sinistres. Les tranches cat sont
+tarifées sur la market curve, plus prudente que la simulation seule."
+
+Exemple à ÉVITER :
+"Les taux calculés semblent raisonnables." ← vague, sans chiffres.""",
+                        contraintes="""- Ne jamais recommander un taux inférieur au taux pur
+- Si BC = 0 sur tranche cat → c'est normal, ne pas le signaler comme problème
+- Prime totale = somme des (GNPI × taux_retenu par tranche)
+- Si taux marché >> simulation sur tranche cat → normal, l'expliquer
+- Mentionner explicitement les incertitudes et limites de chaque méthode
+- Ne pas inventer de comparatifs historiques non fournis"""
+                    )
                     client      = anthropic.Anthropic(api_key=api_key)
                     reco_finale = client.messages.create(
-                        model="claude-opus-4-5", max_tokens=2000,
+                        model="claude-opus-4-5", max_tokens=2500,
                         messages=[{"role":"user","content":prompt}]
                     )
                     st.session_state["reco_finale"] = reco_finale.content[0].text
@@ -916,11 +1045,10 @@ Taux global : {prime_totale/gnpi:.4%}"""
     if "df_rapport" in st.session_state:
         st.subheader("📊 Synthèse de tarification")
         st.dataframe(st.session_state["df_rapport"], use_container_width=True)
-
         c1, c2, c3 = st.columns(3)
         c1.metric("💰 Prime totale", f"{st.session_state['prime_totale']:,.0f} MAD")
         c2.metric("📊 Taux global",  f"{st.session_state['prime_totale']/gnpi:.4%}")
-        c3.metric("📋 Nb tranches",  len(tranches_input))
+        c3.metric("📋 Tranches",     len(tranches_input))
 
     if "reco_finale" in st.session_state:
         st.divider()
