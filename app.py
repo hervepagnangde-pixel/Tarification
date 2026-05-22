@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import json
 
 st.set_page_config(page_title="Herve IA", layout="wide")
-st.title("AtarificataiRE")
+st.title("Herve IA")
 
 # ─── SIDEBAR ───
 st.sidebar.header("Configuration")
