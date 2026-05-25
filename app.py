@@ -1253,10 +1253,9 @@ Programme : {json.dumps(tranches_input, indent=2)}""",
 # ════════════════════════════════════════════
 # TAB 5 — MARKET CURVE
 # ════════════════════════════════════════════
-
 with tab5:
     st.header("Market Curve")
-    st.caption("Modèle log-log : log(ROL) = a × log(midpoints) + b")
+    st.caption("Modèle puissance : ROL = a × midpoints^(−b)  ↔  log(ROL) = log(a) − b×log(midpoints)")
 
     f_mkt = st.file_uploader("📁 Données marché", type=["xlsx","csv"], key="f_mkt")
 
@@ -1268,18 +1267,34 @@ with tab5:
                 if col in df_mkt.columns and df_mkt[col].dtype == object:
                     df_mkt[col] = df_mkt[col].str.replace('%','').str.replace(' ','').str.replace(',','.').astype(float)
 
-            df_mkt = df_mkt[(df_mkt['ROLs'] > 0) & (df_mkt['ROLs'] <= 1)].copy()
+            df_mkt = df_mkt[(df_mkt['ROLs'] > 0) & (df_mkt['ROLs'] <= 1.5)].copy()
             df_mkt = df_mkt[df_mkt['midpoints'] > 0].copy()
 
             def fit_log_log(x, y):
-                log_x = np.log(x); log_y = np.log(y)
-                c     = np.polyfit(log_x, log_y, 1)
-                a, b  = c[0], c[1]
-                r2    = 1 - np.sum((log_y - np.polyval(c,log_x))**2) / np.sum((log_y - log_y.mean())**2)
+                """
+                Modèle : ROL = a × midpoints^(-b)
+                Forme log : log(ROL) = log(a) - b×log(midpoints)
+                Régression linéaire : log(ROL) = intercept + slope×log(midpoints)
+                  → slope     = -b   (négatif car ROL décroit avec midpoint)
+                  → intercept = log(a)
+                  → a = exp(intercept), b = -slope
+                """
+                log_x     = np.log(x)
+                log_y     = np.log(y)
+                coeffs    = np.polyfit(log_x, log_y, 1)
+                slope     = coeffs[0]        # = -b
+                intercept = coeffs[1]        # = log(a)
+                a         = np.exp(intercept)
+                b         = -slope           # b > 0
+                log_y_pred = np.polyval(coeffs, log_x)
+                ss_res    = np.sum((log_y - log_y_pred)**2)
+                ss_tot    = np.sum((log_y - log_y.mean())**2)
+                r2        = 1 - ss_res / ss_tot
                 return a, b, r2
 
             def predict_rol(mid, a, b):
-                return np.exp(b) * (mid ** a)
+                """ROL = a × mid^(-b)"""
+                return a * (mid ** (-b))
 
             resultats_mkt = []
             for q in [0.10,0.20,0.30,0.40,0.50,0.60,0.70,0.80,0.90,1.0]:
@@ -1289,15 +1304,26 @@ with tab5:
                 if len(df_q) < 5: continue
                 try:
                     a, b, r2 = fit_log_log(df_q['midpoints'].values, df_q['ROLs'].values)
-                    taux_tranches = [{"tranche":t["nom"],"type":t["type"],
-                        "rol": predict_rol(t['priorite']+t['portee']/2, a, b),
-                        "taux": predict_rol(t['priorite']+t['portee']/2, a, b)*(t['portee']/gnpi)}
-                        for t in tranches_input]
+                    # b doit être positif pour une courbe décroissante
+                    if b <= 0: continue
+                    taux_tranches = [{
+                        "tranche": t["nom"],
+                        "type"   : t["type"],
+                        "rol"    : predict_rol(t['priorite'] + t['portee']/2, a, b),
+                        "taux"   : predict_rol(t['priorite'] + t['portee']/2, a, b) * (t['portee']/gnpi)
+                    } for t in tranches_input]
                     taux_vals   = [tt["taux"] for tt in taux_tranches]
                     median_taux = np.median(taux_vals)
                     cv_taux     = np.std(taux_vals)/median_taux if median_taux > 0 else 99
-                    resultats_mkt.append({"quantile":q,"n_points":len(df_q),"a":a,"b":b,
-                        "r2":r2,"cv_taux":cv_taux,"taux_tranches":taux_tranches})
+                    resultats_mkt.append({
+                        "quantile"     : q,
+                        "n_points"     : len(df_q),
+                        "a"            : a,
+                        "b"            : b,
+                        "r2"           : r2,
+                        "cv_taux"      : cv_taux,
+                        "taux_tranches": taux_tranches
+                    })
                 except: continue
 
             if resultats_mkt:
@@ -1307,7 +1333,11 @@ with tab5:
                 r2min, r2max = min(r2v), max(r2v)
                 for r in resultats_mkt:
                     tm = np.mean([tt["taux"] for tt in r["taux_tranches"]])
-                    r["score"] = 0.5*(r["r2"]-r2min)/(r2max-r2min+1e-10) - 0.3*abs(tm-med_g)/(med_g+1e-10) - 0.2*r["cv_taux"]
+                    r["score"] = (
+                        0.5 * (r["r2"] - r2min) / (r2max - r2min + 1e-10)
+                        - 0.3 * abs(tm - med_g) / (med_g + 1e-10)
+                        - 0.2 * r["cv_taux"]
+                    )
                 resultats_mkt = sorted(resultats_mkt, key=lambda x: x['score'], reverse=True)
 
             st.session_state["resultats_mkt"] = resultats_mkt
@@ -1317,42 +1347,76 @@ with tab5:
         rmt = st.session_state["resultats_mkt"]
         dmc = st.session_state["df_mkt_clean"]
 
-        def predict_rol(mid, a, b): return np.exp(b) * (mid ** a)
+        def predict_rol(mid, a, b):
+            return a * (mid ** (-b))
 
         rows_recap = []
         for r in rmt:
-            row = {"Q":f"Q{int(r['quantile']*100)}","N":r["n_points"],
-                   "a":f"{r['a']:.4f}","b":f"{r['b']:.4f}","R²":f"{r['r2']:.4f}","Score":f"{r['score']:.4f}"}
-            for tt in r["taux_tranches"]: row[tt["tranche"]] = f"{tt['taux']:.4%}"
+            row = {
+                "Q"    : f"Q{int(r['quantile']*100)}",
+                "N"    : r["n_points"],
+                "a"    : f"{r['a']:.5f}",
+                "b"    : f"{r['b']:.4f}",
+                "R²"   : f"{r['r2']:.4f}",
+                "Score": f"{r['score']:.4f}",
+            }
+            for tt in r["taux_tranches"]:
+                row[tt["tranche"]] = f"{tt['taux']:.4%}"
             rows_recap.append(row)
 
-        st.subheader("📊 Comparaison des ajustements")
+        st.subheader("📊 Comparaison des ajustements — ROL = a × mid^(−b)")
         st.dataframe(pd.DataFrame(rows_recap), use_container_width=True)
+
         best = rmt[0]
-        st.success(f"✅ Meilleur : Q{int(best['quantile']*100)} — R²={best['r2']:.4f} | Score={best['score']:.4f}")
+        st.success(
+            f"✅ Meilleur : Q{int(best['quantile']*100)} — "
+            f"ROL = {best['a']:.5f} × mid^(−{best['b']:.4f}) | "
+            f"R²={best['r2']:.4f} | Score={best['score']:.4f}"
+        )
 
-        choix_q   = st.selectbox("Choisir la combinaison",
-            options=[f"Q{int(r['quantile']*100)} — R²={r['r2']:.4f} | Score={r['score']:.4f}" for r in rmt], index=0)
-        idx_choix = [f"Q{int(r['quantile']*100)} — R²={r['r2']:.4f} | Score={r['score']:.4f}" for r in rmt].index(choix_q)
-        choix     = rmt[idx_choix]
+        choix_q = st.selectbox(
+            "Choisir la combinaison",
+            options=[
+                f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} R²={r['r2']:.4f} Score={r['score']:.4f}"
+                for r in rmt
+            ],
+            index=0
+        )
+        idx_choix = [
+            f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} R²={r['r2']:.4f} Score={r['score']:.4f}"
+            for r in rmt
+        ].index(choix_q)
+        choix = rmt[idx_choix]
 
-        x_all   = dmc['midpoints'].values; y_all = dmc['ROLs'].values
+        # ── Graphique ──
+        x_all   = dmc['midpoints'].values
+        y_all   = dmc['ROLs'].values
         x_range = np.linspace(min(x_all), max(x_all), 300)
+        y_fit   = predict_rol(x_range, choix['a'], choix['b'])
 
         fig, ax = plt.subplots(figsize=(10,5))
-        fig.patch.set_facecolor('#f5f5f5'); ax.set_facecolor('#fafafa')
+        fig.patch.set_facecolor('#f5f5f5')
+        ax.set_facecolor('#fafafa')
         ax.scatter(x_all, y_all, color='#2d8a4e', s=60, zorder=5, alpha=0.7, label='Données marché')
-        ax.plot(x_range, np.exp(choix['b'])*(x_range**choix['a']), color='#1a1a1a', lw=2.5,
-                label=f"log(ROL)={choix['a']:.3f}×log(mid)+{choix['b']:.3f} | R²={choix['r2']:.4f}")
+        ax.plot(
+            x_range, y_fit,
+            color='#1a1a1a', lw=2.5,
+            label=f"ROL = {choix['a']:.5f} × mid^(−{choix['b']:.4f}) | R²={choix['r2']:.4f}"
+        )
         ax.set_xlabel('Midpoints'); ax.set_ylabel('ROL')
-        ax.set_title('Market Curve — Modèle log-log', fontweight='bold', color='#1a1a1a')
+        ax.set_title('Market Curve — Modèle puissance  ROL = a × mid^(−b)', fontweight='bold', color='#1a1a1a')
         ax.legend(); ax.grid(alpha=0.3, linestyle='--')
         st.pyplot(fig)
 
+        # ── Taux retenus ──
         st.subheader("📊 Taux marché retenus")
-        st.dataframe(pd.DataFrame([{"Tranche":tt["tranche"],"Type":tt["type"],
-            "ROL estimé":f"{tt['rol']:.4%}","Taux marché":f"{tt['taux']:.4%}"}
-            for tt in choix["taux_tranches"]]), use_container_width=True)
+        st.dataframe(pd.DataFrame([{
+            "Tranche"    : tt["tranche"],
+            "Type"       : tt["type"],
+            "ROL estimé" : f"{tt['rol']:.4%}",
+            "Taux marché": f"{tt['taux']:.4%}"
+        } for tt in choix["taux_tranches"]]), use_container_width=True)
+
         st.session_state["taux_mkt_final"] = choix["taux_tranches"]
 
         st.divider()
@@ -1370,13 +1434,15 @@ with tab5:
                 prompt = build_prompt(
                     role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
                     task="""Analyse les ajustements de market curve et recommande le meilleur.
-Modèle : log(ROL) = a × log(midpoints) + b
+Modèle : ROL = a × midpoints^(-b), soit log(ROL) = log(a) - b×log(midpoints)
+- a > 0 : niveau de la courbe
+- b > 0 : vitesse de décroissance du ROL avec la priorité
 Pour chaque ajustement :
-1. Évalue la qualité du R² (log-log)
-2. Vérifie la cohérence des taux obtenus vs normes marché
-3. Tiens compte du nombre de points (robustesse statistique)
-4. Identifie les ajustements aberrants (taux trop élevés ou trop bas)
-Conclusion : recommande UN seul ajustement avec justification complète.""",
+1. Évalue la qualité du R² en log-log
+2. Vérifie la cohérence des taux vs normes marché
+3. Tiens compte du nombre de points (robustesse)
+4. Identifie les ajustements aberrants
+Recommande UN seul ajustement avec justification complète.""",
                     data=f"""Ajustements :
 {json.dumps(rows_recap, indent=2)}
 Programme : {json.dumps(tranches_input, indent=2)}
@@ -1384,20 +1450,21 @@ GNPI : {gnpi:,} MAD""",
                     contexte=ctx_mkt, instructions=inst_mkt,
                     input_data=inp_mkt, output_instructions=out_mkt,
                     contexte_global=st.session_state.get("instructions_globales",""),
-                    contraintes="""- R² < 0.3 = ajustement médiocre, à éviter sauf absence d'alternative
-- N < 10 points = faible robustesse, signaler
-- Taux marché > 3x taux simulation = suspect, investiguer
-- Ne jamais recommander un taux basé sur un seul point de données
-- Le score composite (R² + cohérence) prime sur le R² seul"""
+                    contraintes="""- b doit être positif (ROL décroît avec la priorité)
+- R² < 0.3 = ajustement médiocre
+- N < 10 points = faible robustesse
+- Taux marché > 3× taux simulation = suspect
+- Le score composite prime sur le R² seul"""
                 )
                 client = anthropic.Anthropic(api_key=api_key)
-                reco   = client.messages.create(model="claude-opus-4-5", max_tokens=1500,
-                    messages=[{"role":"user","content":prompt}])
+                reco   = client.messages.create(
+                    model="claude-opus-4-5", max_tokens=1500,
+                    messages=[{"role":"user","content":prompt}]
+                )
                 st.session_state["analyse_mkt"] = reco.content[0].text
 
         if "analyse_mkt" in st.session_state:
             st.markdown(st.session_state["analyse_mkt"])
-
 # ════════════════════════════════════════════
 # TAB 6 — RAPPORT FINAL
 # ════════════════════════════════════════════
