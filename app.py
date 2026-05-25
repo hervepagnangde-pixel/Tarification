@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import json
 
-st.set_page_config(page_title="Herve IA — Tarification XL", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Herve IA — Tarification XL", layout="wide", page_icon="TarifieMoi")
 
 # ─── CSS ───
 st.markdown("""
