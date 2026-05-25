@@ -75,22 +75,291 @@ except:
 
 st.markdown("""
 <style>
-.stApp { background-color: #f5f5f5; }
-h1 { color: #1a1a1a; }
-h2 { color: #1a1a1a; border-bottom: 2px solid #2d8a4e; padding-bottom: 8px; }
-h3 { color: #2d8a4e; }
+/* ── BASE ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+* { font-family: 'Inter', sans-serif; }
+.stApp { background-color: #f4f6f4; }
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f1f1; }
+::-webkit-scrollbar-thumb { background: #2d8a4e; border-radius: 3px; }
+
+/* ── TITRES ── */
+h1 { color: #1a1a1a; font-weight: 700; letter-spacing: -0.5px; }
+h2 { color: #1a1a1a; border-bottom: 3px solid #2d8a4e;
+     padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; }
+h3 { color: #2d8a4e; font-weight: 600; }
+
+/* ── BOUTONS ── */
 .stButton > button {
-    background-color: #1a1a1a; color: white;
-    border: none; border-radius: 8px;
-    padding: 8px 20px; font-weight: 600; transition: all 0.3s;
+    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+    color: white; border: none; border-radius: 8px;
+    padding: 10px 24px; font-weight: 600; font-size: 14px;
+    letter-spacing: 0.3px; transition: all 0.25s ease;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 }
-.stButton > button:hover { background-color: #2d8a4e; transform: translateY(-1px); }
-.stTabs [data-baseweb="tab-list"] { background-color: #1a1a1a; border-radius: 10px; padding: 4px; }
-.stTabs [data-baseweb="tab"] { color: #aaa; font-weight: 500; }
-.stTabs [aria-selected="true"] { background-color: #2d8a4e !important; color: white !important; border-radius: 8px; }
-.instruction-box { background: #f0fff4; border: 1px solid #2d8a4e; border-radius: 8px; padding: 12px; margin: 8px 0; }
+.stButton > button:hover {
+    background: linear-gradient(135deg, #2d8a4e 0%, #25a85e 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(45,138,78,0.35);
+}
+.stButton > button:active { transform: translateY(0px); }
+
+/* Bouton primary (type="primary") */
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #2d8a4e 0%, #25a85e 100%);
+    box-shadow: 0 2px 8px rgba(45,138,78,0.3);
+}
+.stButton > button[kind="primary"]:hover {
+    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+}
+
+/* ── TABS ── */
+.stTabs [data-baseweb="tab-list"] {
+    background: #1a1a1a; border-radius: 12px;
+    padding: 6px; gap: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+.stTabs [data-baseweb="tab"] {
+    color: #888; font-weight: 500; font-size: 13px;
+    border-radius: 8px; padding: 8px 16px;
+    transition: all 0.2s ease;
+}
+.stTabs [data-baseweb="tab"]:hover { color: white; background: rgba(255,255,255,0.1); }
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, #2d8a4e, #25a85e) !important;
+    color: white !important; border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(45,138,78,0.4);
+}
+
+/* ── SIDEBAR ── */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1a1a1a 0%, #2a2a2a 100%);
+    border-right: 1px solid #2d8a4e;
+}
+[data-testid="stSidebar"] * { color: #e0e0e0 !important; }
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: #2d8a4e !important;
+    border-bottom: 1px solid #333 !important;
+}
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stNumberInput input {
+    background: #2a2a2a; border: 1px solid #444;
+    color: white !important; border-radius: 6px;
+}
+[data-testid="stSidebar"] .stTextInput input:focus,
+[data-testid="stSidebar"] .stNumberInput input:focus {
+    border-color: #2d8a4e;
+    box-shadow: 0 0 0 2px rgba(45,138,78,0.3);
+}
+
+/* ── METRICS ── */
+[data-testid="stMetric"] {
+    background: white; border-radius: 12px;
+    padding: 16px 20px; border: 1px solid #e8e8e8;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border-left: 4px solid #2d8a4e;
+    transition: transform 0.2s ease;
+}
+[data-testid="stMetric"]:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.1); }
+[data-testid="stMetricLabel"] { color: #666 !important; font-size: 13px !important; font-weight: 500 !important; }
+[data-testid="stMetricValue"] { color: #1a1a1a !important; font-weight: 700 !important; }
+
+/* ── DATAFRAMES ── */
+[data-testid="stDataFrame"] {
+    border-radius: 12px; overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    border: 1px solid #e8e8e8;
+}
+
+/* ── INPUTS ── */
+.stTextInput input, .stNumberInput input, .stTextArea textarea {
+    border: 1.5px solid #e0e0e0; border-radius: 8px;
+    padding: 10px 14px; font-size: 14px;
+    transition: all 0.2s ease; background: white;
+}
+.stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
+    border-color: #2d8a4e;
+    box-shadow: 0 0 0 3px rgba(45,138,78,0.15);
+    outline: none;
+}
+
+/* ── SELECTBOX ── */
+.stSelectbox > div > div {
+    border: 1.5px solid #e0e0e0; border-radius: 8px;
+    transition: border-color 0.2s;
+}
+.stSelectbox > div > div:hover { border-color: #2d8a4e; }
+
+/* ── EXPANDER ── */
+.streamlit-expanderHeader {
+    background: white; border-radius: 10px;
+    border: 1px solid #e8e8e8; font-weight: 500;
+    color: #1a1a1a; padding: 12px 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    transition: all 0.2s ease;
+}
+.streamlit-expanderHeader:hover { border-color: #2d8a4e; color: #2d8a4e; }
+.streamlit-expanderContent {
+    border: 1px solid #e8e8e8; border-top: none;
+    border-radius: 0 0 10px 10px;
+    background: #fafafa; padding: 16px;
+}
+
+/* ── ALERTS ── */
+.stSuccess { background: #f0fff4; border-left: 4px solid #2d8a4e; border-radius: 8px; }
+.stWarning { background: #fffbf0; border-left: 4px solid #f59e0b; border-radius: 8px; }
+.stError   { background: #fff0f0; border-left: 4px solid #ef4444; border-radius: 8px; }
+.stInfo    { background: #f0f8ff; border-left: 4px solid #3b82f6; border-radius: 8px; }
+
+/* ── DIVIDER ── */
+hr { border: none; border-top: 2px solid #e8e8e8; margin: 20px 0; }
+
+/* ── PROGRESS BAR ── */
+.stProgress > div > div { background: linear-gradient(90deg, #2d8a4e, #25a85e); border-radius: 4px; }
+.stProgress > div { background: #e8e8e8; border-radius: 4px; }
+
+/* ── CHECKBOX & RADIO ── */
+.stCheckbox label, .stRadio label { font-weight: 500; color: #333; }
 </style>
 """, unsafe_allow_html=True)
+
+def card(titre, valeur, couleur="#2d8a4e", icone="📊"):
+    st.markdown(f"""
+    <div style="
+        background: white; border-radius: 12px;
+        padding: 20px 24px; border: 1px solid #e8e8e8;
+        border-left: 5px solid {couleur};
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        margin-bottom: 12px;
+    ">
+        <div style="font-size:12px; color:#888; font-weight:500; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px">
+            {icone} {titre}
+        </div>
+        <div style="font-size:24px; font-weight:700; color:#1a1a1a">{valeur}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def badge(texte, couleur="green"):
+    couleurs = {
+        "green" : ("rgba(45,138,78,0.12)",  "#2d8a4e"),
+        "black" : ("rgba(26,26,26,0.08)",   "#1a1a1a"),
+        "orange": ("rgba(245,158,11,0.12)", "#f59e0b"),
+        "red"   : ("rgba(239,68,68,0.12)",  "#ef4444"),
+        "blue"  : ("rgba(59,130,246,0.12)", "#3b82f6"),
+    }
+    bg, fg = couleurs.get(couleur, couleurs["green"])
+    st.markdown(f"""
+    <span style="
+        background:{bg}; color:{fg};
+        padding: 4px 12px; border-radius: 20px;
+        font-size: 12px; font-weight: 600;
+        display: inline-block; margin: 2px;
+    ">{texte}</span>
+    """, unsafe_allow_html=True)
+
+
+def section_header(titre, sous_titre="", icone=""):
+    st.markdown(f"""
+    <div style="
+        background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+        border-radius: 12px; padding: 20px 24px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    ">
+        <div style="font-size:20px; font-weight:700; color:white">
+            {icone} {titre}
+        </div>
+        {f'<div style="font-size:13px; color:#aaa; margin-top:4px">{sous_titre}</div>' if sous_titre else ''}
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def alerte_box(message, type_alerte="info"):
+    configs = {
+        "info"   : ("ℹ️", "#3b82f6", "rgba(59,130,246,0.08)"),
+        "success": ("✅", "#2d8a4e", "rgba(45,138,78,0.08)"),
+        "warning": ("⚠️", "#f59e0b", "rgba(245,158,11,0.08)"),
+        "error"  : ("❌", "#ef4444", "rgba(239,68,68,0.08)"),
+    }
+    icon, color, bg = configs.get(type_alerte, configs["info"])
+    st.markdown(f"""
+    <div style="
+        background:{bg}; border-left: 4px solid {color};
+        border-radius: 0 8px 8px 0; padding: 14px 18px;
+        margin: 8px 0; font-size: 14px; color: #333;
+    ">
+        {icon} {message}
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def tableau_resultats(donnees, titre=""):
+    """Affiche un tableau HTML stylisé"""
+    if not donnees: return
+    if titre:
+        st.markdown(f"<h4 style='color:#1a1a1a; margin-bottom:12px'>{titre}</h4>", unsafe_allow_html=True)
+    colonnes = list(donnees[0].keys())
+    html = """
+    <div style="overflow-x:auto; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead>
+    <tr style="background:linear-gradient(135deg,#1a1a1a,#2d2d2d)">
+    """
+    for col in colonnes:
+        html += f'<th style="padding:12px 16px; text-align:left; color:white; font-weight:600; letter-spacing:0.3px">{col}</th>'
+    html += "</tr></thead><tbody>"
+    for i, row in enumerate(donnees):
+        bg = "white" if i % 2 == 0 else "#f9fafb"
+        html += f'<tr style="background:{bg}; transition:background 0.15s" onmouseover="this.style.background=\'#f0fff4\'" onmouseout="this.style.background=\'{bg}\'">'
+        for col in colonnes:
+            val = row.get(col, "")
+            color = "#1a1a1a"
+            if "%" in str(val) and any(c.isdigit() for c in str(val)):
+                try:
+                    num = float(str(val).replace("%",""))
+                    if num > 5: color = "#ef4444"
+                    elif num > 2: color = "#f59e0b"
+                    else: color = "#2d8a4e"
+                except: pass
+            if "✅" in str(val): color = "#2d8a4e"
+            if "⚠️" in str(val): color = "#f59e0b"
+            html += f'<td style="padding:11px 16px; border-bottom:1px solid #f0f0f0; color:{color}; font-weight:500">{val}</td>'
+        html += "</tr>"
+    html += "</tbody></table></div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def progress_steps(steps, current):
+    """Barre de progression par étapes"""
+    html = '<div style="display:flex; align-items:center; gap:0; margin:16px 0; overflow-x:auto">'
+    for i, (label, done) in enumerate(steps):
+        is_current = (i == current)
+        if done:
+            bg, fg, border = "#2d8a4e", "white", "#2d8a4e"
+        elif is_current:
+            bg, fg, border = "#1a1a1a", "white", "#1a1a1a"
+        else:
+            bg, fg, border = "white", "#999", "#ddd"
+        html += f"""
+        <div style="display:flex; align-items:center; flex:1; min-width:80px">
+            <div style="
+                background:{bg}; color:{fg}; border: 2px solid {border};
+                border-radius:20px; padding:6px 12px;
+                font-size:11px; font-weight:600; white-space:nowrap;
+                text-align:center; width:100%;
+            ">{'✓ ' if done else ''}{label}</div>
+            {'<div style="height:2px; background:#ddd; flex:1; min-width:8px"></div>' if i < len(steps)-1 else ''}
+        </div>
+        """
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 # ════════════════════════════════════════════
 # PROMPT ENGINEERING
@@ -231,8 +500,8 @@ Si incertain → le dire plutôt qu'inventer.
 # HEADER + SIDEBAR
 # ════════════════════════════════════════════
 
-st.title("🎯 Herve IA — Tarification Réassurance Non-Proportionnelle")
-st.caption(f"Connecté : {st.session_state.get('user_email','')} | Burning Cost · Simulation · Market Curve · IA")
+st.title("Atlantic Re")
+st.caption(f"Connecté : {st.session_state.get('user_email','')} | Burning cost · Simulation · Market curve · IA")
 
 with st.sidebar:
     if st.button("🚪 Déconnexion"):
@@ -244,8 +513,8 @@ with st.sidebar:
     st.divider()
     st.markdown("### 📊 Statut des étapes")
     for nom, key in [("Programme","df_prog"),("Données","df_liq"),
-                     ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
-                     ("Market Curve","resultats_mkt")]:
+                     ("Burning cost","resultats_bc"),("Simulation","resultats_sim"),
+                     ("Market curve","resultats_mkt")]:
         st.markdown(f"{'✅' if key in st.session_state else '⬜'} {nom}")
     st.divider()
     st.markdown("### 🌍 Contexte global")
@@ -265,6 +534,15 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab_admin = st.tabs([
     "🔥 Burning Cost", "🎲 Simulation",
     "📈 Market Curve", "📋 Rapport Final", "🔐 Admin"
 ])
+
+etapes_progress = [
+    ("Programme",    "df_prog"       in st.session_state),
+    ("Triangle",     "df_liq"        in st.session_state),
+    ("Burning Cost", "resultats_bc"  in st.session_state),
+    ("Simulation",   "resultats_sim" in st.session_state),
+    ("Market Curve", "resultats_mkt" in st.session_state),
+]
+progress_steps(etapes_progress, current=0)  # 0=Programme, 1=Triangle, etc.
 
 # ════════════════════════════════════════════
 # TAB 1 — PROGRAMME
@@ -564,7 +842,7 @@ with tab2:
 # ════════════════════════════════════════════
 
 with tab3:
-    st.header("Burning Cost")
+    section_header("Burning Cost", "Charges historiques réassurance par tranche", "🔥")
     st.caption("Ck = min(max(S'k_ultime − D, 0), L) × (Sk/S'k)")
 
     if "df_proj" not in st.session_state:
@@ -614,16 +892,16 @@ with tab3:
                     })
                 st.session_state["resultats_bc"] = resultats_bc
 
-    if "resultats_bc" in st.session_state:
-        st.subheader("📊 Résultats")
-        st.dataframe(pd.DataFrame([{
-            "Tranche"       : r["tranche"], "Type": r["type"],
+       if "resultats_bc" in st.session_state:
+        tableau_resultats([{
+            "Tranche"       : r["tranche"],
+            "Type"          : r["type"],
             "Charge moy."   : f"{r['charge_moy']:,.0f} MAD",
             "Taux pur"      : f"{r['taux_pur']:.4%}",
             "Taux risque"   : f"{r['taux_risque']:.4%}",
             "Taux technique": f"{r['taux_technique']:.4%}",
             "Taux final"    : f"{r['taux_final']:.4%}",
-        } for r in st.session_state["resultats_bc"]]), use_container_width=True)
+        } for r in st.session_state["resultats_bc"]], titre="📊 Résultats Burning Cost")
 
         st.divider()
         st.markdown("### 🤖 Analyse Claude — Burning Cost")
@@ -962,6 +1240,7 @@ GNPI : {gnpi:,} MAD""",
 # TAB 6 — RAPPORT FINAL
 # ════════════════════════════════════════════
 
+
 with tab6:
     st.header("Rapport Final de Tarification")
 
@@ -1003,9 +1282,9 @@ with tab6:
         st.subheader("📊 Synthèse de tarification")
         st.dataframe(st.session_state["df_rapport"], use_container_width=True)
         c1, c2, c3 = st.columns(3)
-        c1.metric("💰 Prime totale", f"{prime_totale:,.0f} MAD")
-        c2.metric("📊 Taux global",  f"{prime_totale/gnpi:.4%}")
-        c3.metric("📋 Tranches",     len(tranches_input))
+        with c1: card("Prime totale", f"{prime_totale:,.0f} MAD", couleur="#2d8a4e", icone="💰")
+        with c2: card("Taux global",  f"{prime_totale/gnpi:.4%}", couleur="#1a1a1a",  icone="📊")
+        with c3: card("Tranches",     str(len(tranches_input)),   couleur="#2d8a4e",  icone="📋")
 
         st.divider()
         st.markdown("### 🤖 Rapport Claude — Analyse finale")
@@ -1124,3 +1403,14 @@ Sauvegardez — l'app se recharge automatiquement.""")
 
     elif admin_pwd:
         st.error("❌ Mot de passe incorrect")
+
+
+
+
+
+
+
+
+
+
+
