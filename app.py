@@ -842,108 +842,272 @@ with tab2:
 # ════════════════════════════════════════════
 
 with tab3:
-    section_header("Burning Cost", "Charges historiques réassurance par tranche", "🔥")
-    st.caption("Ck = min(max(S'k_ultime − D, 0), L) × (Sk/S'k)")
+
+    section_header(
+        "Burning Cost",
+        "Charges historiques réassurance par tranche",
+        "🔥"
+    )
+
+    st.caption(
+        "Ck = min(max(S'k_ultime − D, 0), L) × (Sk/S'k)"
+    )
 
     if "df_proj" not in st.session_state:
+
         st.warning("⚠️ Transformez d'abord le triangle")
+
     else:
-        if st.button("▶ Calculer le Burning Cost", type="primary"):
+
+        if st.button(
+            "▶ Calculer le Burning Cost",
+            type="primary"
+        ):
+
             with st.spinner("Calcul en cours..."):
+
                 df_proj      = st.session_state["df_proj"]
                 resultats_bc = []
 
                 for t_info in tranches_input:
+
                     D   = t_info["priorite"]
                     P   = t_info["portee"]
                     aal = t_info["AAL"]
                     aad = t_info["AAD"]
                     r   = t_info["nb_reconstitutions"]
+
                     cap = (r + 1) * P
 
-                    df_proj['Ck'] = df_proj.apply(
-                        lambda row: min(max(row['Sprime_ultime'] - D, 0), P) * row['coeff_stab'],
+                    df_proj["Ck"] = df_proj.apply(
+                        lambda row:
+                            min(
+                                max(row["Sprime_ultime"] - D, 0),
+                                P
+                            ) * row["coeff_stab"],
                         axis=1
                     )
 
-                    charges_ann     = df_proj.groupby('annee_surv')['Ck'].sum()
-                    charges_finales = []
-                    for ann, ch in charges_ann.items():
-                        if aad: ch = max(ch - aad, 0)
-                        if aal: ch = min(ch, aal)
-                        ch = min(ch, cap)
-                        charges_finales.append({'annee': ann, 'charge': ch})
+                    charges_ann = (
+                        df_proj
+                        .groupby("annee_surv")["Ck"]
+                        .sum()
+                    )
 
-                    df_ch          = pd.DataFrame(charges_finales)
-                    charge_moy     = df_ch['charge'].mean()
+                    charges_finales = []
+
+                    for ann, ch in charges_ann.items():
+
+                        if aad:
+                            ch = max(ch - aad, 0)
+
+                        if aal:
+                            ch = min(ch, aal)
+
+                        ch = min(ch, cap)
+
+                        charges_finales.append({
+                            "annee" : ann,
+                            "charge": ch
+                        })
+
+                    df_ch = pd.DataFrame(charges_finales)
+
+                    charge_moy     = df_ch["charge"].mean()
                     taux_pur       = charge_moy / gnpi
                     taux_risque    = taux_pur * 1.20
-                    taux_technique = taux_risque / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
-                    taux_final     = taux_technique * (1 + t_info["marge"] + t_info["retrocession"])
+                    taux_technique = taux_risque / (
+                        1
+                        - t_info["brokage"]
+                        - t_info["frais"]
+                        - 0.0021
+                    )
+
+                    taux_final = taux_technique * (
+                        1
+                        + t_info["marge"]
+                        + t_info["retrocession"]
+                    )
 
                     resultats_bc.append({
-                        "tranche"       : t_info["nom"], "type": t_info["type"],
-                        "charge_moy"    : charge_moy,
-                        "taux_pur"      : taux_pur,
-                        "taux_risque"   : taux_risque,
-                        "taux_technique": taux_technique,
-                        "taux_final"    : taux_final,
-                        "detail_annuel" : df_ch.to_dict('records')
+
+                        "tranche"        : t_info["nom"],
+                        "type"           : t_info["type"],
+
+                        "charge_moy"     : charge_moy,
+                        "taux_pur"       : taux_pur,
+                        "taux_risque"    : taux_risque,
+                        "taux_technique" : taux_technique,
+                        "taux_final"     : taux_final,
+
+                        "detail_annuel"  : df_ch.to_dict("records")
+
                     })
+
                 st.session_state["resultats_bc"] = resultats_bc
 
     if "resultats_bc" in st.session_state:
-    tableau_resultats([{
-        "Tranche"       : r["tranche"],
-        "Type"          : r["type"],
-        "Charge moy."   : f"{r['charge_moy']:,.0f} MAD",
-        "Taux pur"      : f"{r['taux_pur']:.4%}",
-        "Taux risque"   : f"{r['taux_risque']:.4%}",
-        "Taux technique": f"{r['taux_technique']:.4%}",
-        "Taux final"    : f"{r['taux_final']:.4%}",
-    } for r in st.session_state["resultats_bc"]], titre="📊 Résultats Burning Cost")
 
-        st.divider()
-        st.markdown("### 🤖 Analyse Claude — Burning Cost")
-        ctx_bc, inst_bc, inp_bc, out_bc = prompt_inputs(
-            key_prefix="bc",
-            placeholder_contexte="Ex: Sinistralité exceptionnelle 2020, portefeuille en croissance...",
-            placeholder_instructions="Ex: Comparer avec taux marché de référence 3-4%...",
-            placeholder_input="Ex: Taux BC année précédente : R&C=2.5%",
-            placeholder_output="Ex: Tableau par tranche + verdict OK/ALERTE/RÉVISER"
+        tableau_resultats(
+
+            [{
+
+                "Tranche"        : r["tranche"],
+                "Type"           : r["type"],
+                "Charge moy."    : f"{r['charge_moy']:,.0f} MAD",
+                "Taux pur"       : f"{r['taux_pur']:.4%}",
+                "Taux risque"    : f"{r['taux_risque']:.4%}",
+                "Taux technique" : f"{r['taux_technique']:.4%}",
+                "Taux final"     : f"{r['taux_final']:.4%}",
+
+            } for r in st.session_state["resultats_bc"]],
+
+            titre="📊 Résultats Burning Cost"
+
         )
 
-        if api_key and st.button("🤖 Recommandations Claude — BC"):
+        st.divider()
+
+        st.markdown(
+            "### 🤖 Analyse Claude — Burning Cost"
+        )
+
+        ctx_bc, inst_bc, inp_bc, out_bc = prompt_inputs(
+
+            key_prefix="bc",
+
+            placeholder_contexte=(
+                "Ex: Sinistralité exceptionnelle 2020, "
+                "portefeuille en croissance..."
+            ),
+
+            placeholder_instructions=(
+                "Ex: Comparer avec taux marché "
+                "de référence 3-4%..."
+            ),
+
+            placeholder_input=(
+                "Ex: Taux BC année précédente : "
+                "R&C=2.5%"
+            ),
+
+            placeholder_output=(
+                "Ex: Tableau par tranche + "
+                "verdict OK/ALERTE/RÉVISER"
+            )
+
+        )
+
+        if api_key and st.button(
+            "🤖 Recommandations Claude — BC"
+        ):
+
             with st.spinner("Claude analyse..."):
+
                 prompt = build_prompt(
-                    role="Expert actuaire senior en réassurance non-proportionnelle automobile, 15 ans d'expérience en tarification XL et cat.",
-                    task="""Analyse les résultats de Burning Cost par tranche.
+
+                    role="""
+Expert actuaire senior en réassurance
+non-proportionnelle automobile,
+15 ans d'expérience en tarification XL et cat.
+""",
+
+                    task="""
+Analyse les résultats de Burning Cost par tranche.
+
 Pour chaque tranche :
-1. Évalue le niveau du taux (élevé/normal/faible vs normes marché)
-2. Vérifie la cohérence entre tranches (progression logique priorité/taux)
-3. Identifie les anomalies ou données suspectes
-4. Donne un verdict : ✅ Cohérent | ⚠️ À vérifier | ❌ Problème""",
-                    data=f"""Résultats BC :
-{json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}
-Programme : {json.dumps(tranches_input, indent=2)}
+
+1. Évalue le niveau du taux
+   (élevé/normal/faible vs normes marché)
+
+2. Vérifie la cohérence entre tranches
+   (progression logique priorité/taux)
+
+3. Identifie les anomalies
+   ou données suspectes
+
+4. Donne un verdict :
+   ✅ Cohérent
+   ⚠️ À vérifier
+   ❌ Problème
+""",
+
+                    data=f"""
+Résultats BC :
+
+{json.dumps(
+    [
+        {k: v for k, v in r.items()
+         if k != 'detail_annuel'}
+        for r in st.session_state['resultats_bc']
+    ],
+    indent=2
+)}
+
+Programme :
+
+{json.dumps(tranches_input, indent=2)}
+
 GNPI : {gnpi:,} MAD
-Formule : Ck = min(max(S'k_ultime−D,0),L) × (Sk/S'k)""",
-                    contexte=ctx_bc, instructions=inst_bc,
-                    input_data=inp_bc, output_instructions=out_bc,
-                    contexte_global=st.session_state.get("instructions_globales",""),
-                    contraintes="""- Taux pur BC négatif = erreur de calcul à signaler
-- BC = 0 pour tranche cat est NORMAL
-- Vérifier hiérarchie : taux_pur < taux_risque < taux_technique < taux_final
-- Ne jamais inventer de comparatifs marché non fournis"""
+
+Formule :
+Ck = min(max(S'k_ultime−D,0),L) × (Sk/S'k)
+""",
+
+                    contexte=ctx_bc,
+                    instructions=inst_bc,
+                    input_data=inp_bc,
+                    output_instructions=out_bc,
+
+                    contexte_global=st.session_state.get(
+                        "instructions_globales",
+                        ""
+                    ),
+
+                    contraintes="""
+- Taux pur BC négatif
+  = erreur de calcul à signaler
+
+- BC = 0 pour tranche cat
+  est NORMAL
+
+- Vérifier hiérarchie :
+  taux_pur < taux_risque
+  < taux_technique < taux_final
+
+- Ne jamais inventer
+  de comparatifs marché non fournis
+"""
+
                 )
-                client  = anthropic.Anthropic(api_key=api_key)
-                analyse = client.messages.create(model="claude-opus-4-5", max_tokens=2000,
-                    messages=[{"role":"user","content":prompt}])
-                st.session_state["analyse_bc"] = analyse.content[0].text
+
+                client = anthropic.Anthropic(
+                    api_key=api_key
+                )
+
+                analyse = client.messages.create(
+
+                    model="claude-opus-4-5",
+                    max_tokens=2000,
+
+                    messages=[
+                        {
+                            "role"   : "user",
+                            "content": prompt
+                        }
+                    ]
+
+                )
+
+                st.session_state["analyse_bc"] = (
+                    analyse.content[0].text
+                )
 
         if "analyse_bc" in st.session_state:
-            st.markdown(st.session_state["analyse_bc"])
 
+            st.markdown(
+                st.session_state["analyse_bc"]
+            )
 # ════════════════════════════════════════════
 # TAB 4 — SIMULATION
 # ════════════════════════════════════════════
