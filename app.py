@@ -8,7 +8,7 @@ import json
 st.set_page_config(
     page_title="Herve IA — Tarification XL",
     layout="wide",
-    page_icon="icon.png"
+    page_icon="icon.jpg"
 )
 # ─── CSS ───
 st.markdown("""
