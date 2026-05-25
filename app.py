@@ -69,9 +69,9 @@ if not st.session_state["authenticated"]:
 # ════════════════════════════════════════════
 try:
     icon = Image.open("icon.png")
-    st.set_page_config(page_title="Herve IA — Tarification XL", layout="wide", page_icon=icon)
+    st.set_page_config(page_title="Atlantic Re", layout="wide", page_icon=icon)
 except:
-    st.set_page_config(page_title="Herve IA — Tarification XL", layout="wide", page_icon="🎯")
+    st.set_page_config(page_title="Atlantic Re", layout="wide", page_icon="🎯")
 
 st.markdown("""
 <style>
