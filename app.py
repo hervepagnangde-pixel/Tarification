@@ -68,7 +68,7 @@ if not st.session_state["authenticated"]:
 # APP CONFIG
 # ════════════════════════════════════════════
 try:
-    icon = Image.open("icon.jpg")
+    icon = Image.open("icon.png")
     st.set_page_config(page_title="Herve IA — Tarification XL", layout="wide", page_icon=icon)
 except:
     st.set_page_config(page_title="Herve IA — Tarification XL", layout="wide", page_icon="🎯")
