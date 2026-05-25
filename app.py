@@ -5,8 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import json
 
-st.set_page_config(page_title="Herve IA — Tarification XL", layout="wide", page_icon="TarifieMoi")
-
+st.set_page_config(
+    page_title="Herve IA — Tarification XL",
+    layout="wide",
+    page_icon="TarifieMoi.png"
+)
 # ─── CSS ───
 st.markdown("""
 <style>
