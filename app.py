@@ -892,7 +892,7 @@ with tab3:
                     })
                 st.session_state["resultats_bc"] = resultats_bc
 
-      if "resultats_bc" in st.session_state:
+    if "resultats_bc" in st.session_state:
     tableau_resultats([{
         "Tranche"       : r["tranche"],
         "Type"          : r["type"],
