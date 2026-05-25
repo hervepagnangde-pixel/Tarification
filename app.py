@@ -73,161 +73,161 @@ try:
 except:
     st.set_page_config(page_title="Atlantic Re", layout="wide", page_icon="🎯")
 
-st.markdown("""
-<style>
-/* ── BASE ── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-* { font-family: 'Inter', sans-serif; }
-.stApp { background-color: #f4f6f4; }
-
-/* ── SCROLLBAR ── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #f1f1f1; }
-::-webkit-scrollbar-thumb { background: #2d8a4e; border-radius: 3px; }
-
-/* ── TITRES ── */
-h1 { color: #1a1a1a; font-weight: 700; letter-spacing: -0.5px; }
-h2 { color: #1a1a1a; border-bottom: 3px solid #2d8a4e;
-     padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; }
-h3 { color: #2d8a4e; font-weight: 600; }
-
-/* ── BOUTONS ── */
-.stButton > button {
-    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-    color: white; border: none; border-radius: 8px;
-    padding: 10px 24px; font-weight: 600; font-size: 14px;
-    letter-spacing: 0.3px; transition: all 0.25s ease;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-}
-.stButton > button:hover {
-    background: linear-gradient(135deg, #2d8a4e 0%, #25a85e 100%);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(45,138,78,0.35);
-}
-.stButton > button:active { transform: translateY(0px); }
-
-/* Bouton primary (type="primary") */
-.stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #2d8a4e 0%, #25a85e 100%);
-    box-shadow: 0 2px 8px rgba(45,138,78,0.3);
-}
-.stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-    box-shadow: 0 6px 16px rgba(0,0,0,0.25);
-}
-
-/* ── TABS ── */
-.stTabs [data-baseweb="tab-list"] {
-    background: #1a1a1a; border-radius: 12px;
-    padding: 6px; gap: 4px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-}
-.stTabs [data-baseweb="tab"] {
-    color: #888; font-weight: 500; font-size: 13px;
-    border-radius: 8px; padding: 8px 16px;
-    transition: all 0.2s ease;
-}
-.stTabs [data-baseweb="tab"]:hover { color: white; background: rgba(255,255,255,0.1); }
-.stTabs [aria-selected="true"] {
-    background: linear-gradient(135deg, #2d8a4e, #25a85e) !important;
-    color: white !important; border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(45,138,78,0.4);
-}
-
-/* ── SIDEBAR ── */
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #1a1a1a 0%, #2a2a2a 100%);
-    border-right: 1px solid #2d8a4e;
-}
-[data-testid="stSidebar"] * { color: #e0e0e0 !important; }
-[data-testid="stSidebar"] h1,
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {
-    color: #2d8a4e !important;
-    border-bottom: 1px solid #333 !important;
-}
-[data-testid="stSidebar"] .stTextInput input,
-[data-testid="stSidebar"] .stNumberInput input {
-    background: #2a2a2a; border: 1px solid #444;
-    color: white !important; border-radius: 6px;
-}
-[data-testid="stSidebar"] .stTextInput input:focus,
-[data-testid="stSidebar"] .stNumberInput input:focus {
-    border-color: #2d8a4e;
-    box-shadow: 0 0 0 2px rgba(45,138,78,0.3);
-}
-
-/* ── METRICS ── */
-[data-testid="stMetric"] {
-    background: white; border-radius: 12px;
-    padding: 16px 20px; border: 1px solid #e8e8e8;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    border-left: 4px solid #2d8a4e;
-    transition: transform 0.2s ease;
-}
-[data-testid="stMetric"]:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.1); }
-[data-testid="stMetricLabel"] { color: #666 !important; font-size: 13px !important; font-weight: 500 !important; }
-[data-testid="stMetricValue"] { color: #1a1a1a !important; font-weight: 700 !important; }
-
-/* ── DATAFRAMES ── */
-[data-testid="stDataFrame"] {
-    border-radius: 12px; overflow: hidden;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-    border: 1px solid #e8e8e8;
-}
-
-/* ── INPUTS ── */
-.stTextInput input, .stNumberInput input, .stTextArea textarea {
-    border: 1.5px solid #e0e0e0; border-radius: 8px;
-    padding: 10px 14px; font-size: 14px;
-    transition: all 0.2s ease; background: white;
-}
-.stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
-    border-color: #2d8a4e;
-    box-shadow: 0 0 0 3px rgba(45,138,78,0.15);
-    outline: none;
-}
-
-/* ── SELECTBOX ── */
-.stSelectbox > div > div {
-    border: 1.5px solid #e0e0e0; border-radius: 8px;
-    transition: border-color 0.2s;
-}
-.stSelectbox > div > div:hover { border-color: #2d8a4e; }
-
-/* ── EXPANDER ── */
-.streamlit-expanderHeader {
-    background: white; border-radius: 10px;
-    border: 1px solid #e8e8e8; font-weight: 500;
-    color: #1a1a1a; padding: 12px 16px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-    transition: all 0.2s ease;
-}
-.streamlit-expanderHeader:hover { border-color: #2d8a4e; color: #2d8a4e; }
-.streamlit-expanderContent {
-    border: 1px solid #e8e8e8; border-top: none;
-    border-radius: 0 0 10px 10px;
-    background: #fafafa; padding: 16px;
-}
-
-/* ── ALERTS ── */
-.stSuccess { background: #f0fff4; border-left: 4px solid #2d8a4e; border-radius: 8px; }
-.stWarning { background: #fffbf0; border-left: 4px solid #f59e0b; border-radius: 8px; }
-.stError   { background: #fff0f0; border-left: 4px solid #ef4444; border-radius: 8px; }
-.stInfo    { background: #f0f8ff; border-left: 4px solid #3b82f6; border-radius: 8px; }
-
-/* ── DIVIDER ── */
-hr { border: none; border-top: 2px solid #e8e8e8; margin: 20px 0; }
-
-/* ── PROGRESS BAR ── */
-.stProgress > div > div { background: linear-gradient(90deg, #2d8a4e, #25a85e); border-radius: 4px; }
-.stProgress > div { background: #e8e8e8; border-radius: 4px; }
-
-/* ── CHECKBOX & RADIO ── */
-.stCheckbox label, .stRadio label { font-weight: 500; color: #333; }
-</style>
-""", unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+    /* ── BASE ── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    * { font-family: 'Inter', sans-serif; }
+    .stApp { background-color: #f4f6f4; }
+    
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f1f1; }
+    ::-webkit-scrollbar-thumb { background: #2d8a4e; border-radius: 3px; }
+    
+    /* ── TITRES ── */
+    h1 { color: #1a1a1a; font-weight: 700; letter-spacing: -0.5px; }
+    h2 { color: #1a1a1a; border-bottom: 3px solid #2d8a4e;
+         padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; }
+    h3 { color: #2d8a4e; font-weight: 600; }
+    
+    /* ── BOUTONS ── */
+    .stButton > button {
+        background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+        color: white; border: none; border-radius: 8px;
+        padding: 10px 24px; font-weight: 600; font-size: 14px;
+        letter-spacing: 0.3px; transition: all 0.25s ease;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #2d8a4e 0%, #25a85e 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(45,138,78,0.35);
+    }
+    .stButton > button:active { transform: translateY(0px); }
+    
+    /* Bouton primary (type="primary") */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #2d8a4e 0%, #25a85e 100%);
+        box-shadow: 0 2px 8px rgba(45,138,78,0.3);
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+    }
+    
+    /* ── TABS ── */
+    .stTabs [data-baseweb="tab-list"] {
+        background: #1a1a1a; border-radius: 12px;
+        padding: 6px; gap: 4px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: #888; font-weight: 500; font-size: 13px;
+        border-radius: 8px; padding: 8px 16px;
+        transition: all 0.2s ease;
+    }
+    .stTabs [data-baseweb="tab"]:hover { color: white; background: rgba(255,255,255,0.1); }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #2d8a4e, #25a85e) !important;
+        color: white !important; border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(45,138,78,0.4);
+    }
+    
+    /* ── SIDEBAR ── */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1a1a1a 0%, #2a2a2a 100%);
+        border-right: 1px solid #2d8a4e;
+    }
+    [data-testid="stSidebar"] * { color: #e0e0e0 !important; }
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {
+        color: #2d8a4e !important;
+        border-bottom: 1px solid #333 !important;
+    }
+    [data-testid="stSidebar"] .stTextInput input,
+    [data-testid="stSidebar"] .stNumberInput input {
+        background: #2a2a2a; border: 1px solid #444;
+        color: white !important; border-radius: 6px;
+    }
+    [data-testid="stSidebar"] .stTextInput input:focus,
+    [data-testid="stSidebar"] .stNumberInput input:focus {
+        border-color: #2d8a4e;
+        box-shadow: 0 0 0 2px rgba(45,138,78,0.3);
+    }
+    
+    /* ── METRICS ── */
+    [data-testid="stMetric"] {
+        background: white; border-radius: 12px;
+        padding: 16px 20px; border: 1px solid #e8e8e8;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        border-left: 4px solid #2d8a4e;
+        transition: transform 0.2s ease;
+    }
+    [data-testid="stMetric"]:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.1); }
+    [data-testid="stMetricLabel"] { color: #666 !important; font-size: 13px !important; font-weight: 500 !important; }
+    [data-testid="stMetricValue"] { color: #1a1a1a !important; font-weight: 700 !important; }
+    
+    /* ── DATAFRAMES ── */
+    [data-testid="stDataFrame"] {
+        border-radius: 12px; overflow: hidden;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        border: 1px solid #e8e8e8;
+    }
+    
+    /* ── INPUTS ── */
+    .stTextInput input, .stNumberInput input, .stTextArea textarea {
+        border: 1.5px solid #e0e0e0; border-radius: 8px;
+        padding: 10px 14px; font-size: 14px;
+        transition: all 0.2s ease; background: white;
+    }
+    .stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
+        border-color: #2d8a4e;
+        box-shadow: 0 0 0 3px rgba(45,138,78,0.15);
+        outline: none;
+    }
+    
+    /* ── SELECTBOX ── */
+    .stSelectbox > div > div {
+        border: 1.5px solid #e0e0e0; border-radius: 8px;
+        transition: border-color 0.2s;
+    }
+    .stSelectbox > div > div:hover { border-color: #2d8a4e; }
+    
+    /* ── EXPANDER ── */
+    .streamlit-expanderHeader {
+        background: white; border-radius: 10px;
+        border: 1px solid #e8e8e8; font-weight: 500;
+        color: #1a1a1a; padding: 12px 16px;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        transition: all 0.2s ease;
+    }
+    .streamlit-expanderHeader:hover { border-color: #2d8a4e; color: #2d8a4e; }
+    .streamlit-expanderContent {
+        border: 1px solid #e8e8e8; border-top: none;
+        border-radius: 0 0 10px 10px;
+        background: #fafafa; padding: 16px;
+    }
+    
+    /* ── ALERTS ── */
+    .stSuccess { background: #f0fff4; border-left: 4px solid #2d8a4e; border-radius: 8px; }
+    .stWarning { background: #fffbf0; border-left: 4px solid #f59e0b; border-radius: 8px; }
+    .stError   { background: #fff0f0; border-left: 4px solid #ef4444; border-radius: 8px; }
+    .stInfo    { background: #f0f8ff; border-left: 4px solid #3b82f6; border-radius: 8px; }
+    
+    /* ── DIVIDER ── */
+    hr { border: none; border-top: 2px solid #e8e8e8; margin: 20px 0; }
+    
+    /* ── PROGRESS BAR ── */
+    .stProgress > div > div { background: linear-gradient(90deg, #2d8a4e, #25a85e); border-radius: 4px; }
+    .stProgress > div { background: #e8e8e8; border-radius: 4px; }
+    
+    /* ── CHECKBOX & RADIO ── */
+    .stCheckbox label, .stRadio label { font-weight: 500; color: #333; }
+    </style>
+    """, unsafe_allow_html=True)
 
 def card(titre, valeur, couleur="#2d8a4e", icone="📊"):
     st.markdown(f"""
