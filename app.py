@@ -27,7 +27,7 @@ if "authenticated" not in st.session_state:
 
 if not st.session_state["authenticated"]:
     try:
-        icon = Image.open("icon.jpg")
+        icon = Image.open("icon.png")
         st.set_page_config(page_title="Herve IA", layout="centered", page_icon=icon)
     except:
         st.set_page_config(page_title="Herve IA", layout="centered", page_icon="🎯")
