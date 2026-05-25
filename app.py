@@ -892,16 +892,16 @@ with tab3:
                     })
                 st.session_state["resultats_bc"] = resultats_bc
 
-       if "resultats_bc" in st.session_state:
-        tableau_resultats([{
-            "Tranche"       : r["tranche"],
-            "Type"          : r["type"],
-            "Charge moy."   : f"{r['charge_moy']:,.0f} MAD",
-            "Taux pur"      : f"{r['taux_pur']:.4%}",
-            "Taux risque"   : f"{r['taux_risque']:.4%}",
-            "Taux technique": f"{r['taux_technique']:.4%}",
-            "Taux final"    : f"{r['taux_final']:.4%}",
-        } for r in st.session_state["resultats_bc"]], titre="📊 Résultats Burning Cost")
+      if "resultats_bc" in st.session_state:
+    tableau_resultats([{
+        "Tranche"       : r["tranche"],
+        "Type"          : r["type"],
+        "Charge moy."   : f"{r['charge_moy']:,.0f} MAD",
+        "Taux pur"      : f"{r['taux_pur']:.4%}",
+        "Taux risque"   : f"{r['taux_risque']:.4%}",
+        "Taux technique": f"{r['taux_technique']:.4%}",
+        "Taux final"    : f"{r['taux_final']:.4%}",
+    } for r in st.session_state["resultats_bc"]], titre="📊 Résultats Burning Cost")
 
         st.divider()
         st.markdown("### 🤖 Analyse Claude — Burning Cost")
