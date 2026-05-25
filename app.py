@@ -336,7 +336,6 @@ def tableau_resultats(donnees, titre=""):
 
 
 def progress_steps(steps, current):
-    """Barre de progression par étapes"""
     html = '<div style="display:flex; align-items:center; gap:0; margin:16px 0; overflow-x:auto">'
     for i, (label, done) in enumerate(steps):
         is_current = (i == current)
@@ -346,18 +345,16 @@ def progress_steps(steps, current):
             bg, fg, border = "#1a1a1a", "white", "#1a1a1a"
         else:
             bg, fg, border = "white", "#999", "#ddd"
-        html += f"""
-        <div style="display:flex; align-items:center; flex:1; min-width:80px">
-            <div style="
-                background:{bg}; color:{fg}; border: 2px solid {border};
-                border-radius:20px; padding:6px 12px;
-                font-size:11px; font-weight:600; white-space:nowrap;
-                text-align:center; width:100%;
-            ">{'✓ ' if done else ''}{label}</div>
-            {'<div style="height:2px; background:#ddd; flex:1; min-width:8px"></div>' if i < len(steps)-1 else ''}
-        </div>
-        """
-    html += "</div>"
+
+        check     = "✓ " if done else ""
+        connector = '<div style="height:2px;background:#ddd;flex:1;min-width:8px"></div>' if i < len(steps)-1 else ""
+
+        html += '<div style="display:flex;align-items:center;flex:1;min-width:80px">'
+        html += f'<div style="background:{bg};color:{fg};border:2px solid {border};border-radius:20px;padding:6px 12px;font-size:11px;font-weight:600;white-space:nowrap;text-align:center;width:100%">{check}{label}</div>'
+        html += connector
+        html += '</div>'
+
+    html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
 # ════════════════════════════════════════════
@@ -541,8 +538,10 @@ etapes_progress = [
     ("Simulation",   "resultats_sim" in st.session_state),
     ("Market Curve", "resultats_mkt" in st.session_state),
 ]
-progress_steps(etapes_progress, current=0)  # 0=Programme, 1=Triangle, etc.
+progress_steps(etapes_progress, current=0) 
 
+
+    
 # ════════════════════════════════════════════
 # TAB 1 — PROGRAMME
 # ════════════════════════════════════════════
