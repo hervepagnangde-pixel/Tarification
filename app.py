@@ -646,242 +646,462 @@ with tab1:
         c1.metric("Travaillantes", sum(1 for t in tranches_input if t["type"]=="travaillante"))
         c2.metric("Cat",           sum(1 for t in tranches_input if t["type"]=="cat"))
         c3.metric("Non-trav.",     sum(1 for t in tranches_input if t["type"]=="non_travaillante"))
-
 # ════════════════════════════════════════════
-# TAB 2 — DONNÉES & TRIANGLE
+# TAB 2 — DONNÉES & TRIANGLE (VERSION CORRIGÉE)
 # ════════════════════════════════════════════
 
 with tab2:
+
     st.header("Données de base & Transformation triangle")
 
     type_branche = st.radio(
         "Type de branche",
-        ["Développement long (As-If + Stabilisation + Projection CL)",
-         "Développement court (As-If uniquement, pas de projection)"],
-        key="type_branche", horizontal=True
+        [
+            "Développement long (As-If + Stabilisation + Projection CL)",
+            "Développement court (As-If uniquement, pas de projection)"
+        ],
+        key="type_branche",
+        horizontal=True
     )
+
     is_long = "long" in type_branche
 
     c1, c2, c3 = st.columns(3)
-    with c1: f_triangle = st.file_uploader("📁 Triangle développement", type=["xlsx","csv"], key="f_tri")
-    with c2: f_gnpis    = st.file_uploader("📁 Base GNPIs",             type=["xlsx","csv"], key="f_gnp")
-    with c3: f_indices  = st.file_uploader("📁 Table indices",          type=["xlsx","csv"], key="f_idx")
 
-    annee_cotation = st.number_input("Année de cotation (n)", value=2026, step=1,
-                                      help="I_cotation fixe pour la stabilisation")
+    with c1:
+        f_triangle = st.file_uploader(
+            "📁 Triangle développement",
+            type=["xlsx", "csv"],
+            key="f_tri"
+        )
 
-    if st.button("▶ Transformer le triangle", type="primary") and f_triangle and f_gnpis and f_indices:
-        with st.spinner("🔄 Transformation en cours..."):
-            progress = st.progress(0, text="Lecture des fichiers...")
+    with c2:
+        f_gnpis = st.file_uploader(
+            "📁 Base GNPIs",
+            type=["xlsx", "csv"],
+            key="f_gnp"
+        )
 
-            df_gnpis_df = pd.read_excel(f_gnpis)  if f_gnpis.name.endswith('xlsx')   else pd.read_csv(f_gnpis)
-            df_idx_df   = pd.read_excel(f_indices) if f_indices.name.endswith('xlsx') else pd.read_csv(f_indices)
-            df_gnpis_df.columns = [c.strip() for c in df_gnpis_df.columns]
-            df_idx_df.columns   = [c.strip() for c in df_idx_df.columns]
+    with c3:
+        f_indices = st.file_uploader(
+            "📁 Table indices",
+            type=["xlsx", "csv"],
+            key="f_idx"
+        )
 
-            progress.progress(15, text="Parsing du triangle...")
-            df_raw       = pd.read_excel(f_triangle, header=None)
-            ligne_annees = df_raw.iloc[0].tolist()
-            ligne_types  = df_raw.iloc[1].tolist()
+    annee_cotation = st.number_input(
+        "Année de cotation (n)",
+        value=2026,
+        step=1,
+        help="I_cotation fixe pour la stabilisation"
+    )
 
-            annee_courante = None
-            col_info = []
-            for i, (ann, typ) in enumerate(zip(ligne_annees, ligne_types)):
-                if i == 0: col_info.append(('UW_YEAR', '')); continue
-                try:
-                    a = int(float(str(ann)))
-                    if 2010 <= a <= 2035: annee_courante = a
-                except: pass
-                typ_clean = str(typ).strip().upper() if pd.notna(typ) else ''
-                col_info.append((annee_courante, typ_clean))
+    if st.button("▶ Transformer le triangle", type="primary"):
 
-            df_data = df_raw.iloc[2:].reset_index(drop=True)
-            df_data.iloc[:, 0] = df_data.iloc[:, 0].ffill()
+        if f_triangle and f_gnpis and f_indices:
 
-            progress.progress(30, text="Extraction des TOTAL...")
-            records = []
-            for idx_row, row in df_data.iterrows():
-                try:
-                    annee_surv = int(float(str(row.iloc[0])))
-                    if not (2010 <= annee_surv <= 2035): continue
-                except: continue
-                sinistre_id = f"{annee_surv}_{idx_row}"
-                for col_idx, (annee_reg, typ) in enumerate(col_info):
-                    if typ != 'TOTAL' or annee_reg is None: continue
-                    val = row.iloc[col_idx]
-                    try:
-                        if isinstance(val, str):
-                            val = val.strip().replace(',','.').replace(' ','')
-                            if any(c.isalpha() for c in val) or '#' in val: continue
-                        val = float(val)
-                        if val <= 0 or np.isnan(val): continue
-                    except: continue
-                    dev = annee_reg - annee_surv
-                    if dev < 0 or dev > 9: continue
-                    records.append({'sinistre_id': sinistre_id, 'annee_surv': annee_surv,
-                                    'annee_reg': annee_reg, 'dev': dev, 'total': val})
+            with st.spinner("🔄 Transformation en cours..."):
 
-            df_liq = pd.DataFrame(records)
+                progress = st.progress(0, text="Lecture des fichiers...")
 
-            progress.progress(45, text="Calcul As-If...")
-            df_idx_set     = df_idx_df.set_index('Annee')['Coefficients']
-            df_idx_set.index = df_idx_set.index.astype(int)
-            I_cotation_val = float(df_idx_set.get(annee_cotation, 1.0))
+                # =========================================================
+                # LECTURE FICHIERS
+                # =========================================================
 
-            def get_indice(annee):
-                try:
-                    return float(df_idx_set[int(annee)])
-                except:
-                    # Interpolation linéaire si année absente
+                if f_gnpis.name.endswith("xlsx"):
+                    df_gnpis_df = pd.read_excel(f_gnpis)
+                else:
+                    df_gnpis_df = pd.read_csv(f_gnpis)
+
+                if f_indices.name.endswith("xlsx"):
+                    df_idx_df = pd.read_excel(f_indices)
+                else:
+                    df_idx_df = pd.read_csv(f_indices)
+
+                # Nettoyage noms colonnes
+                df_gnpis_df.columns = [str(c).strip() for c in df_gnpis_df.columns]
+                df_idx_df.columns   = [str(c).strip() for c in df_idx_df.columns]
+
+                # =========================================================
+                # NETTOYAGE TABLE INDICES
+                # =========================================================
+
+                progress.progress(10, text="Nettoyage table indices...")
+
+                # Nettoyage années
+                df_idx_df["Annee"] = (
+                    df_idx_df["Annee"]
+                    .astype(str)
+                    .str.strip()
+                    .str.replace(".0", "", regex=False)
+                )
+
+                df_idx_df["Annee"] = pd.to_numeric(
+                    df_idx_df["Annee"],
+                    errors="coerce"
+                )
+
+                # Nettoyage coefficients
+                df_idx_df["Coefficients"] = (
+                    df_idx_df["Coefficients"]
+                    .astype(str)
+                    .str.strip()
+                    .str.replace(",", ".", regex=False)
+                    .str.replace(" ", "", regex=False)
+                )
+
+                df_idx_df["Coefficients"] = pd.to_numeric(
+                    df_idx_df["Coefficients"],
+                    errors="coerce"
+                )
+
+                # Suppression NA
+                df_idx_df = df_idx_df.dropna(
+                    subset=["Annee", "Coefficients"]
+                )
+
+                # Types propres
+                df_idx_df["Annee"] = df_idx_df["Annee"].astype(int)
+
+                # Tri
+                df_idx_df = df_idx_df.sort_values("Annee")
+
+                # Série finale
+                df_idx_set = (
+                    df_idx_df
+                    .set_index("Annee")["Coefficients"]
+                )
+
+                # DEBUG
+                st.write("Indices chargés")
+                st.dataframe(df_idx_df)
+
+                # =========================================================
+                # FONCTION INDICE ROBUSTE
+                # =========================================================
+
+                def get_indice(annee):
+
+                    annee = int(annee)
+
                     idx_sorted = df_idx_set.sort_index()
-                    annees     = idx_sorted.index.tolist()
-                    if int(annee) < annees[0]:  return float(idx_sorted.iloc[0])
-                    if int(annee) > annees[-1]: return float(idx_sorted.iloc[-1])
-                    return float(idx_sorted.interpolate(method='index')[int(annee)])
 
-            # As-If : Sk = total × (I_ultime / I_reg)
-            df_liq['annee_ultime'] = df_liq['annee_surv'] + 9
-            df_liq['I_ultime']     = df_liq['annee_ultime'].apply(get_indice)
-            df_liq['I_reg']        = df_liq['annee_reg'].apply(get_indice)
-            df_liq['I_surv']       = df_liq['annee_surv'].apply(get_indice)
-            df_liq['Sk']           = df_liq['total'] * (df_liq['I_ultime'] / df_liq['I_reg'])
+                    annees  = idx_sorted.index.values.astype(int)
+                    valeurs = idx_sorted.values.astype(float)
 
-            if is_long:
-                progress.progress(50, text="Stabilisation...")
-                # S'k = Sk × (I_surv / I_cotation) si (I_cotation/I_surv - 1) > 10%
-                df_liq['ratio_check'] = I_cotation_val / df_liq['I_surv']
-                df_liq['S_prime_k']   = np.where(
-                    (df_liq['ratio_check'] - 1) > 0.10,
-                    df_liq['Sk'] * (df_liq['I_surv'] / I_cotation_val),
-                    df_liq['Sk']
+                    # valeur exacte
+                    if annee in annees:
+                        return float(idx_sorted.loc[annee])
+
+                    # extrapolation basse
+                    if annee < annees[0]:
+
+                        pente = valeurs[1] - valeurs[0]
+
+                        return float(
+                            valeurs[0]
+                            - pente * (annees[0] - annee)
+                        )
+
+                    # extrapolation haute
+                    if annee > annees[-1]:
+
+                        pente = valeurs[-1] - valeurs[-2]
+
+                        return float(
+                            valeurs[-1]
+                            + pente * (annee - annees[-1])
+                        )
+
+                    # interpolation
+                    return float(
+                        np.interp(
+                            annee,
+                            annees,
+                            valeurs
+                        )
+                    )
+
+                # =========================================================
+                # INDICE COTATION
+                # =========================================================
+
+                I_cotation_val = get_indice(annee_cotation)
+
+                # =========================================================
+                # TRIANGLE
+                # =========================================================
+
+                progress.progress(20, text="Lecture triangle...")
+
+                df_raw = pd.read_excel(
+                    f_triangle,
+                    header=None
                 )
-                df_liq['coeff_stab'] = np.where(
-                    df_liq['S_prime_k'] > 0,
-                    df_liq['Sk'] / df_liq['S_prime_k'],
-                    1.0
+
+                ligne_annees = df_raw.iloc[0].tolist()
+                ligne_types  = df_raw.iloc[1].tolist()
+
+                annee_courante = None
+
+                col_info = []
+
+                for i, (ann, typ) in enumerate(
+                    zip(ligne_annees, ligne_types)
+                ):
+
+                    if i == 0:
+                        col_info.append(("UW_YEAR", ""))
+                        continue
+
+                    try:
+
+                        ann_clean = (
+                            str(ann)
+                            .strip()
+                            .replace(".0", "")
+                        )
+
+                        a = int(float(ann_clean))
+
+                        if 2010 <= a <= 2050:
+                            annee_courante = a
+
+                    except:
+                        pass
+
+                    typ_clean = (
+                        str(typ).strip().upper()
+                        if pd.notna(typ)
+                        else ""
+                    )
+
+                    col_info.append(
+                        (annee_courante, typ_clean)
+                    )
+
+                df_data = (
+                    df_raw
+                    .iloc[2:]
+                    .reset_index(drop=True)
                 )
 
-                progress.progress(60, text="Chain Ladder individuel sur S'k...")
-                facteurs = {k: [] for k in range(9)}
-                for sin_id, grp in df_liq.groupby('sinistre_id'):
-                    grp = grp.sort_values('dev').set_index('dev')
-                    for k in range(9):
-                        if k in grp.index and (k+1) in grp.index:
-                            t_k  = grp.loc[k,   'S_prime_k']
-                            t_k1 = grp.loc[k+1, 'S_prime_k']
-                            if t_k > 0:
-                                f = t_k1 / t_k
-                                if 0.9 <= f <= 2.5: facteurs[k].append(f)
+                df_data.iloc[:, 0] = (
+                    df_data.iloc[:, 0]
+                    .ffill()
+                )
 
-                f_moyens = {k: np.mean(facteurs[k]) if facteurs[k] else 1.0 for k in range(9)}
+                # =========================================================
+                # EXTRACTION
+                # =========================================================
 
-                progress.progress(75, text="Projection S'k à l'ultime...")
-                projections = []
-                for sin_id, grp in df_liq.groupby('sinistre_id'):
-                    grp = grp.sort_values('dev').set_index('dev')
-                    annee_surv_p   = grp['annee_surv'].iloc[0]
-                    dev_max        = grp.index.max()
-                    Sprime_actuel  = grp.loc[dev_max, 'S_prime_k']
-                    coeff_sin      = grp.loc[dev_max, 'coeff_stab']
-                    Sprime_ultime  = Sprime_actuel
-                    for k in range(dev_max, 9):
-                        Sprime_ultime *= f_moyens[k]
-                    Sk_ultime = Sprime_ultime * coeff_sin
-                    projections.append({
-                        'sinistre_id'  : sin_id,
-                        'annee_surv'   : annee_surv_p,
-                        'dev_max'      : dev_max,
-                        'Sprime_ultime': Sprime_ultime,
-                        'Sk_ultime'    : Sk_ultime,
-                        'coeff_stab'   : coeff_sin
-                    })
-                df_facteurs_df = pd.DataFrame({
-                    'Dev.'           : [f"{k}→{k+1}" for k in range(9)],
-                    'Facteur moyen'  : [round(f_moyens[k], 4) for k in range(9)],
-                    'Nb observations': [len(facteurs[k]) for k in range(9)]
-                })
+                progress.progress(35, text="Extraction TOTAL...")
 
-            else:
-                progress.progress(60, text="Branche courte — As-If direct...")
-                df_liq['S_prime_k']  = df_liq['Sk']
-                df_liq['coeff_stab'] = 1.0
-                f_moyens = {k: 1.0 for k in range(9)}
-                projections = []
-                for sin_id, grp in df_liq.groupby('sinistre_id'):
-                    grp = grp.sort_values('dev').set_index('dev')
-                    annee_surv_p = grp['annee_surv'].iloc[0]
-                    dev_max      = grp.index.max()
-                    Sk_actuel    = grp.loc[dev_max, 'Sk']
-                    projections.append({
-                        'sinistre_id'  : sin_id,
-                        'annee_surv'   : annee_surv_p,
-                        'dev_max'      : dev_max,
-                        'Sprime_ultime': Sk_actuel,
-                        'Sk_ultime'    : Sk_actuel,
-                        'coeff_stab'   : 1.0
-                    })
-                df_facteurs_df = pd.DataFrame({'Info': ['Branche courte — pas de projection CL']})
+                records = []
 
-            df_proj = pd.DataFrame(projections)
+                for idx_row, row in df_data.iterrows():
 
-            progress.progress(88, text="Estimation alpha & lambda...")
-            X       = df_proj['Sprime_ultime'].values
-            X       = X[X > 0]
-            seuil   = np.percentile(X, 85)
-            X_above = X[X >= seuil]
-            t_min   = np.min(X_above)
-            n_above = len(X_above)
-            alpha_est = n_above / np.sum(np.log(X_above / t_min))
+                    try:
 
-            df_gnpis_idx = df_gnpis_df.set_index(df_gnpis_df.columns[0])
-            gnpi_col     = df_gnpis_df.columns[1]
-            N_obs        = df_proj[df_proj['Sprime_ultime'] >= seuil].groupby('annee_surv').size()
-            N_asif_vals  = []
-            for ann, cnt in N_obs.items():
-                try:
-                    gnpi_ann = float(df_gnpis_idx.loc[ann, gnpi_col])
-                    N_asif_vals.append(cnt * gnpi / gnpi_ann)
-                except: N_asif_vals.append(cnt)
-            lambda_est = float(np.mean(N_asif_vals)) if N_asif_vals else 5.0
+                        ann_surv = (
+                            str(row.iloc[0])
+                            .strip()
+                            .replace(".0", "")
+                        )
 
-            coeffs_raw = df_proj['coeff_stab'].values
-            coeffs     = coeffs_raw[(coeffs_raw > 0) & np.isfinite(coeffs_raw)]
+                        annee_surv = int(float(ann_surv))
 
-            progress.progress(100, text="Terminé !")
+                        if not (2010 <= annee_surv <= 2050):
+                            continue
 
-            st.session_state.update({
-                "df_liq"        : df_liq,
-                "df_proj"       : df_proj,
-                "f_moyens"      : f_moyens,
-                "alpha_est"     : float(alpha_est),
-                "lambda_est"    : float(lambda_est),
-                "seuil_est"     : float(seuil),
-                "coeffs"        : coeffs,
-                "is_long"       : is_long,
-                "I_cotation"    : I_cotation_val,
-                "annee_cotation": annee_cotation,
-                "df_gnpis_df"   : df_gnpis_df,
-                "df_facteurs"   : df_facteurs_df
-            })
+                    except:
+                        continue
 
-    if "df_liq" in st.session_state:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Observations", len(st.session_state['df_liq']))
-        c2.metric("Sinistres",    st.session_state['df_liq']['sinistre_id'].nunique())
-        c3.metric("Années",       st.session_state['df_liq']['annee_surv'].nunique())
+                    sinistre_id = f"{annee_surv}_{idx_row}"
 
-        branch_label = "Longue (As-If + Stab + CL)" if st.session_state.get("is_long") else "Courte (As-If uniquement)"
-        st.info(f"🌿 Branche : **{branch_label}** | I_cotation({st.session_state.get('annee_cotation')}) = {st.session_state.get('I_cotation',1):.4f}")
-        st.info(f"🔢 Seuil P85: {st.session_state['seuil_est']:,.0f} | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f}")
+                    for col_idx, (annee_reg, typ) in enumerate(col_info):
 
-        with st.expander("📊 Triangle de liquidation (Sk & S'k)"):
-            cols_show = ['sinistre_id','annee_surv','annee_reg','dev','total','Sk','S_prime_k','coeff_stab']
-            st.dataframe(st.session_state["df_liq"][[c for c in cols_show if c in st.session_state["df_liq"].columns]].head(30), use_container_width=True)
-        with st.expander("📊 Facteurs Chain Ladder"):
-            st.dataframe(st.session_state["df_facteurs"], use_container_width=True)
-        with st.expander("📊 Projections"):
-            st.dataframe(st.session_state["df_proj"].head(20), use_container_width=True)
+                        if typ != "TOTAL":
+                            continue
 
+                        if annee_reg is None:
+                            continue
+
+                        val = row.iloc[col_idx]
+
+                        try:
+
+                            if isinstance(val, str):
+
+                                val = (
+                                    val
+                                    .strip()
+                                    .replace(",", ".")
+                                    .replace(" ", "")
+                                )
+
+                                if (
+                                    any(c.isalpha() for c in val)
+                                    or "#" in val
+                                ):
+                                    continue
+
+                            val = float(val)
+
+                            if np.isnan(val):
+                                continue
+
+                            if val <= 0:
+                                continue
+
+                        except:
+                            continue
+
+                        dev = annee_reg - annee_surv
+
+                        if dev < 0 or dev > 9:
+                            continue
+
+                        records.append({
+
+                            "sinistre_id": sinistre_id,
+                            "annee_surv": annee_surv,
+                            "annee_reg": annee_reg,
+                            "dev": dev,
+                            "total": val
+
+                        })
+
+                df_liq = pd.DataFrame(records)
+
+                # =========================================================
+                # AS IF
+                # =========================================================
+
+                progress.progress(50, text="Calcul As-If...")
+
+                df_liq["annee_ultime"] = (
+                    df_liq["annee_surv"] + 9
+                )
+
+                df_liq["I_ultime"] = (
+                    df_liq["annee_ultime"]
+                    .apply(get_indice)
+                )
+
+                df_liq["I_reg"] = (
+                    df_liq["annee_reg"]
+                    .apply(get_indice)
+                )
+
+                df_liq["I_surv"] = (
+                    df_liq["annee_surv"]
+                    .apply(get_indice)
+                )
+
+                # DEBUG
+                st.write(
+                    df_liq[
+                        [
+                            "annee_surv",
+                            "annee_reg",
+                            "annee_ultime",
+                            "I_reg",
+                            "I_ultime"
+                        ]
+                    ].head(20)
+                )
+
+                # As If
+                df_liq["Sk"] = (
+                    df_liq["total"]
+                    * (
+                        df_liq["I_ultime"]
+                        / df_liq["I_reg"]
+                    )
+                )
+
+                # =========================================================
+                # STABILISATION
+                # =========================================================
+
+                if is_long:
+
+                    progress.progress(
+                        65,
+                        text="Stabilisation..."
+                    )
+
+                    df_liq["ratio_check"] = (
+                        I_cotation_val
+                        / df_liq["I_surv"]
+                    )
+
+                    df_liq["S_prime_k"] = np.where(
+
+                        (df_liq["ratio_check"] - 1) > 0.10,
+
+                        df_liq["Sk"]
+                        * (
+                            df_liq["I_surv"]
+                            / I_cotation_val
+                        ),
+
+                        df_liq["Sk"]
+
+                    )
+
+                    df_liq["coeff_stab"] = np.where(
+
+                        df_liq["S_prime_k"] > 0,
+
+                        df_liq["Sk"]
+                        / df_liq["S_prime_k"],
+
+                        1.0
+                    )
+
+                else:
+
+                    df_liq["S_prime_k"] = df_liq["Sk"]
+                    df_liq["coeff_stab"] = 1.0
+
+                # =========================================================
+                # DEBUG FINAL
+                # =========================================================
+
+                st.write("DEBUG COEFFS")
+                st.dataframe(
+
+                    df_liq[
+                        [
+                            "annee_surv",
+                            "annee_reg",
+                            "dev",
+                            "I_reg",
+                            "I_ultime",
+                            "I_surv",
+                            "Sk",
+                            "S_prime_k",
+                            "coeff_stab"
+                        ]
+                    ].head(50)
+
+                )
+
+                progress.progress(
+                    100,
+                    text="Transformation terminée"
+                )
+
+                # =========================================================
+                # SESSION
+                # =========================================================
+
+                st.session_state["df_liq"] = df_liq
+                st.session_state["I_cotation"] = I_cotation_val
+
+                st.success("Transformation OK")
 # ════════════════════════════════════════════
 # TAB 3 — BURNING COST
 # ════════════════════════════════════════════
