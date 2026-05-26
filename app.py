@@ -49,7 +49,7 @@ if not st.session_state["authenticated"]:
     with col2:
         st.markdown("<div style='text-align:center; padding:40px 0 20px 0'>", unsafe_allow_html=True)
         st.markdown("# 🎯")
-        st.markdown("### Herve IA")
+        st.markdown("### AtlanticRe IA")
         st.caption("Tarification réassurance non-proportionnelle")
         st.markdown("</div>", unsafe_allow_html=True)
         st.divider()
@@ -157,16 +157,16 @@ if not st.session_state["authenticated"]:
             """, unsafe_allow_html=True)
         
             col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🚀  Lancer l'outil de tarification", type="primary", use_container_width=True):
-            st.session_state["page"] = "app"
-            st.rerun()
-        st.markdown("""
-        <p style="text-align:center;color:#555;font-size:12px;margin-top:12px;font-family:Inter,sans-serif">
-            Connecté en tant que """ + st.session_state.get('user_email','') + """
-        </p>""", unsafe_allow_html=True)
-
-    st.stop()
+        with col2:
+            if st.button("🚀  Lancer l'outil de tarification", type="primary", use_container_width=True):
+                st.session_state["page"] = "app"
+                st.rerun()
+            st.markdown("""
+            <p style="text-align:center;color:#555;font-size:12px;margin-top:12px;font-family:Inter,sans-serif">
+                Connecté en tant que """ + st.session_state.get('user_email','') + """
+            </p>""", unsafe_allow_html=True)
+    
+        st.stop()
 # ════════════════════════════════════════════
 # APP CONFIG
 # ════════════════════════════════════════════
