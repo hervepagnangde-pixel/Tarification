@@ -1560,7 +1560,7 @@ with tab5:
             placeholder_input="Ex: Taux marché de référence secteur : Cat L1=1.5%",
             placeholder_output="Ex: Recommandation unique avec justification R² et cohérence"
         )
-        if api_key and st.button("🤖 Recommandations Claude — Market Curve"):
+    if api_key and st.button("🤖 Recommandations Claude — Market Curve"):
                     with st.spinner("Claude analyse..."):
                         prompt = build_prompt(
                             role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
