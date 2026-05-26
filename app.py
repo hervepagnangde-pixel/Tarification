@@ -1560,40 +1560,41 @@ with tab5:
             placeholder_input="Ex: Taux marché de référence secteur : Cat L1=1.5%",
             placeholder_output="Ex: Recommandation unique avec justification R² et cohérence"
         )
-
         if api_key and st.button("🤖 Recommandations Claude — Market Curve"):
-            with st.spinner("Claude analyse..."):
-                prompt = build_prompt(
-                    role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
-                    task=f"""Analyse les ajustements de market curve et recommande le meilleur.
-        Modèle : ROL = a × midpoints^(-b), b > 0 (ROL décroit avec la priorité)
-        Critère prioritaire : R²≥{r2_min*100:.0f}% avec taux non nuls > R² plus élevé avec taux nuls.
-        Pour chaque ajustement :
-        1. Évalue R² et sa significativité (seuil {r2_min*100:.0f}%)
-        2. Vérifie que tous les taux sont positifs et cohérents
-        3. Tiens compte du N (robustesse statistique)
-        4. Signale les taux nuls ou aberrants
-        Recommande UN seul ajustement avec justification.""",
-                            data=f"""Ajustements :
-        {json.dumps(rows_recap, indent=2)}
-        Programme : {json.dumps(tranches_input, indent=2)}
-        GNPI : {gnpi:,} MAD
-        Filtres appliqués : ROL∈[{rol_min*100:.0f}%,{rol_max*100:.0f}%], tolérance proximité {tolerance*100:.0f}%""",
-                            contexte=ctx_mkt, instructions=inst_mkt,
-                            input_data=inp_mkt, output_instructions=out_mkt,
-                            contexte_global=st.session_state.get("instructions_globales",""),
-                            contraintes=f"""- b > 0 obligatoire (ROL décroit avec priorité)
-        - R²≥{r2_min*100:.0f}% avec taux non nuls = préférable à R² plus élevé avec taux nuls
-        - Taux nul = rejet immédiat de l'ajustement
-        - N < 10 = faible robustesse à signaler
-        - Taux marché > 3× simulation = suspect"""
-                        )
-                        client = anthropic.Anthropic(api_key=api_key)
-                        reco   = client.messages.create(
-                            model="claude-opus-4-5", max_tokens=1500,
-                            messages=[{"role":"user","content":prompt}]
-                        )
-                        st.session_state["analyse_mkt"] = reco.content[0].text
+                    with st.spinner("Claude analyse..."):
+                        prompt = build_prompt(
+                            role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
+                            task=f"""Analyse les ajustements de market curve et recommande le meilleur.
+Modèle : ROL = a × midpoints^(-b), b > 0 (ROL décroit avec la priorité)
+Critère prioritaire : R²≥{r2_min*100:.0f}% avec taux non nuls > R² plus élevé avec taux nuls.
+Pour chaque ajustement :
+1. Évalue R² et sa significativité (seuil {r2_min*100:.0f}%)
+2. Vérifie que tous les taux sont positifs et cohérents
+3. Tiens compte du N (robustesse statistique)
+4. Signale les taux nuls ou aberrants
+Recommande UN seul ajustement avec justification.""",
+                    data=f"""Ajustements :
+{json.dumps(rows_recap, indent=2)}
+Programme : {json.dumps(tranches_input, indent=2)}
+GNPI : {gnpi:,} MAD
+Filtres appliqués : ROL∈[{rol_min*100:.0f}%,{rol_max*100:.0f}%], tolérance proximité {tolerance*100:.0f}%""",
+                    contexte=ctx_mkt,
+                    instructions=inst_mkt,
+                    input_data=inp_mkt,
+                    output_instructions=out_mkt,
+                    contexte_global=st.session_state.get("instructions_globales",""),
+                    contraintes=f"""- b > 0 obligatoire (ROL décroit avec priorité)
+- R²≥{r2_min*100:.0f}% avec taux non nuls = préférable à R² plus élevé avec taux nuls
+- Taux nul = rejet immédiat de l'ajustement
+- N < 10 = faible robustesse à signaler
+- Taux marché > 3× simulation = suspect"""
+                )
+                client = anthropic.Anthropic(api_key=api_key)
+                reco   = client.messages.create(
+                    model="claude-opus-4-5", max_tokens=1500,
+                    messages=[{"role":"user","content":prompt}]
+                )
+                st.session_state["analyse_mkt"] = reco.content[0].text
 
         if "analyse_mkt" in st.session_state:
             st.markdown(st.session_state["analyse_mkt"])
