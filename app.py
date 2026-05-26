@@ -1022,16 +1022,7 @@ with tab2:
                 )
 
                 # ── Stabilisation — formule exacte clause de stabilisation ──
-                # P0 = Pn × (I_surv / I_reg)  → ramène en monnaie de survenance
-                # S'k = Sk × (I_surv / I_reg)
-                # coeff_stab = I_reg / I_surv  (varie par sinistre ET développement)
-                #
-                # Déclenchement : pas de seuil sur ratio
-                # La clause s'applique TOUJOURS — c'est le contrat qui décide
-                # (on peut ajouter un seuil atteint ou seuil déduit si prévu)
-                #
-                # Option seuil atteint : stabilisation seulement si I_reg/I_surv >= 1 + seuil
-                
+       
                 seuil_stabilisation = st.number_input(
                     "Seuil de déclenchement stabilisation (% inflation, 0 = toujours)",
                     value=0.0, min_value=0.0, max_value=50.0, step=5.0,
