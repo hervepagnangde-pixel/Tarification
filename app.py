@@ -28,9 +28,9 @@ if "authenticated" not in st.session_state:
 if not st.session_state["authenticated"]:
     try:
         icon = Image.open("icon.png")
-        st.set_page_config(page_title="Herve IA", layout="centered", page_icon=icon)
+        st.set_page_config(page_title="AtlanticRe IA", layout="centered", page_icon=icon)
     except:
-        st.set_page_config(page_title="Herve IA", layout="centered", page_icon="🎯")
+        st.set_page_config(page_title="AtlanticRe IA", layout="centered", page_icon="🎯")
 
     st.markdown("""
     <style>
@@ -64,6 +64,108 @@ if not st.session_state["authenticated"]:
         st.caption("Accès réservé. Contactez l'administrateur.")
     st.stop()
 
+# ════════════════════════════════════════════
+# LANDING PAGE
+# ════════════════════════════════════════════
+
+if "page" not in st.session_state:
+    st.session_state["page"] = "landing"
+
+if st.session_state["page"] == "landing":
+    st.markdown("""
+    <style>
+    .stApp { background: linear-gradient(135deg, #0d0d0d 0%, #1a1a1a 50%, #0d2b1a 100%) !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── Avatar IA animé ──
+    st.markdown("""
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+        min-height:85vh;text-align:center;padding:40px 20px">
+
+        <!-- Avatar SVG -->
+        <div style="width:160px;height:160px;margin-bottom:32px;position:relative">
+            <svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+                <!-- Halo -->
+                <circle cx="80" cy="80" r="75" fill="none" stroke="#2d8a4e" stroke-width="2" opacity="0.3"/>
+                <circle cx="80" cy="80" r="65" fill="none" stroke="#2d8a4e" stroke-width="1" opacity="0.2"/>
+                <!-- Corps principal -->
+                <circle cx="80" cy="80" r="55" fill="#1a1a1a" stroke="#2d8a4e" stroke-width="2"/>
+                <!-- Visage -->
+                <circle cx="80" cy="75" r="32" fill="#2d2d2d"/>
+                <!-- Yeux -->
+                <circle cx="68" cy="70" r="6" fill="#2d8a4e"/>
+                <circle cx="92" cy="70" r="6" fill="#2d8a4e"/>
+                <circle cx="70" cy="69" r="2" fill="white"/>
+                <circle cx="94" cy="69" r="2" fill="white"/>
+                <!-- Sourire -->
+                <path d="M 67 83 Q 80 93 93 83" stroke="#2d8a4e" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                <!-- Antennes -->
+                <line x1="80" y1="43" x2="80" y2="30" stroke="#2d8a4e" stroke-width="2"/>
+                <circle cx="80" cy="27" r="5" fill="#2d8a4e"/>
+                <line x1="68" y1="45" x2="58" y2="33" stroke="#2d8a4e" stroke-width="1.5"/>
+                <circle cx="55" cy="30" r="3" fill="#2d8a4e" opacity="0.6"/>
+                <line x1="92" y1="45" x2="102" y2="33" stroke="#2d8a4e" stroke-width="1.5"/>
+                <circle cx="105" cy="30" r="3" fill="#2d8a4e" opacity="0.6"/>
+                <!-- Badge IA -->
+                <rect x="58" y="100" width="44" height="18" rx="9" fill="#2d8a4e"/>
+                <text x="80" y="113" text-anchor="middle" fill="white" font-size="10" font-weight="bold">IA</text>
+            </svg>
+        </div>
+
+        <!-- Titre -->
+        <h1 style="color:white;font-size:42px;font-weight:800;margin:0 0 8px 0;
+            letter-spacing:-1px;font-family:Inter,sans-serif">
+            Herve <span style="color:#2d8a4e">IA</span>
+        </h1>
+        <p style="color:#aaa;font-size:16px;margin:0 0 8px 0;font-family:Inter,sans-serif">
+            Agent de tarification · Réassurance Non-Proportionnelle
+        </p>
+        <p style="color:#666;font-size:13px;margin:0 0 40px 0;font-family:Inter,sans-serif">
+            Atlantic Re · Automobile · Maroc
+        </p>
+
+        <!-- Features -->
+        <div style="display:flex;gap:16px;margin-bottom:48px;flex-wrap:wrap;justify-content:center">
+            <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);
+                border-radius:12px;padding:16px 20px;min-width:140px">
+                <div style="font-size:24px;margin-bottom:6px">🔥</div>
+                <div style="color:white;font-size:13px;font-weight:600">Burning Cost</div>
+                <div style="color:#888;font-size:11px">As-If · Stabilisation · CL</div>
+            </div>
+            <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);
+                border-radius:12px;padding:16px 20px;min-width:140px">
+                <div style="font-size:24px;margin-bottom:6px">🎲</div>
+                <div style="color:white;font-size:13px;font-weight:600">Simulation</div>
+                <div style="color:#888;font-size:11px">Pareto · Poisson · TVE</div>
+            </div>
+            <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);
+                border-radius:12px;padding:16px 20px;min-width:140px">
+                <div style="font-size:24px;margin-bottom:6px">📈</div>
+                <div style="color:white;font-size:13px;font-weight:600">Market Curve</div>
+                <div style="color:#888;font-size:11px">Modèle puissance log-log</div>
+            </div>
+            <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);
+                border-radius:12px;padding:16px 20px;min-width:140px">
+                <div style="font-size:24px;margin-bottom:6px">🤖</div>
+                <div style="color:white;font-size:13px;font-weight:600">Agent Claude</div>
+                <div style="color:#888;font-size:11px">Analyse · Recommandations</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🚀  Lancer l'outil de tarification", type="primary", use_container_width=True):
+            st.session_state["page"] = "app"
+            st.rerun()
+        st.markdown("""
+        <p style="text-align:center;color:#555;font-size:12px;margin-top:12px;font-family:Inter,sans-serif">
+            Connecté en tant que """ + st.session_state.get('user_email','') + """
+        </p>""", unsafe_allow_html=True)
+
+    st.stop()
 # ════════════════════════════════════════════
 # APP CONFIG
 # ════════════════════════════════════════════
@@ -390,6 +492,40 @@ def claude_stream(api_key, prompt, max_tokens=2000, session_key=""):
     return full_text
 
 
+
+def guide_prompt(etape, exemples_contexte, exemples_instructions, exemples_input, exemples_output):
+    """Affiche des recommandations de prompt pour chaque étape"""
+    with st.expander("💡 Conseils pour bien prompter Claude sur cette étape", expanded=False):
+        st.markdown(f"""
+        <div style="background:#f0fff4;border-left:4px solid #2d8a4e;border-radius:0 8px 8px 0;
+            padding:14px 18px;margin-bottom:12px">
+            <b style="color:#2d8a4e">🎯 Comment obtenir la meilleure analyse pour : {etape}</b>
+        </div>
+        """, unsafe_allow_html=True)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**📌 Contexte — quoi mettre**")
+            for ex in exemples_contexte:
+                st.markdown(f"- {ex}")
+            st.markdown("**📋 Instructions — quoi demander**")
+            for ex in exemples_instructions:
+                st.markdown(f"- {ex}")
+        with c2:
+            st.markdown("**📥 Données supplémentaires — quoi ajouter**")
+            for ex in exemples_input:
+                st.markdown(f"- {ex}")
+            st.markdown("**📤 Format de sortie — comment structurer**")
+            for ex in exemples_output:
+                st.markdown(f"- {ex}")
+
+        st.markdown("""
+        <div style="background:#fff8f0;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;
+            padding:10px 14px;margin-top:8px;font-size:12px">
+            ⚠️ <b>Règle d'or :</b> Plus vous donnez de contexte métier (portefeuille, historique, objectif),
+            plus l'analyse Claude sera pertinente et actionnelle.
+        </div>
+        """, unsafe_allow_html=True)
 # ════════════════════════════════════════════
 # FONCTIONS ACTUARIELLES — PORTAGE CODE R
 # ════════════════════════════════════════════
