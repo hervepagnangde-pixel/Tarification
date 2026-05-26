@@ -1560,11 +1560,11 @@ with tab5:
             placeholder_input="Ex: Taux marché de référence secteur : Cat L1=1.5%",
             placeholder_output="Ex: Recommandation unique avec justification R² et cohérence"
         )
-    if api_key and st.button("🤖 Recommandations Claude — Market Curve"):
-                    with st.spinner("Claude analyse..."):
-                        prompt = build_prompt(
-                            role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
-                            task=f"""Analyse les ajustements de market curve et recommande le meilleur.
+        if api_key and st.button("🤖 Recommandations Claude — Market Curve"):
+            with st.spinner("Claude analyse..."):
+                prompt = build_prompt(
+                    role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
+                    task=f"""Analyse les ajustements de market curve et recommande le meilleur.
 Modèle : ROL = a × midpoints^(-b), b > 0 (ROL décroit avec la priorité)
 Critère prioritaire : R²≥{r2_min*100:.0f}% avec taux non nuls > R² plus élevé avec taux nuls.
 Pour chaque ajustement :
@@ -1598,6 +1598,7 @@ Filtres appliqués : ROL∈[{rol_min*100:.0f}%,{rol_max*100:.0f}%], tolérance p
 
         if "analyse_mkt" in st.session_state:
             st.markdown(st.session_state["analyse_mkt"])
+    
 # ════════════════════════════════════════════
 # TAB 6 — RAPPORT FINAL
 # ════════════════════════════════════════════
