@@ -1032,45 +1032,30 @@ with tab2:
                         text="Stabilisation..."
                     )
 
-                # =========================================================
-                # STABILISATION CORRIGÉE
-                # =========================================================
+                # ── Stabilisation corrigée ──
+                # ratio = I_cotation / I_reg  (varie par développement)
+                # Condition : ratio >= 1.10
+                # Si oui : S'k = Sk × (I_reg / I_cotation)
+                # coeff_stab = Sk / S'k = I_cotation / I_reg
                 
-                df_liq['ratio_check'] = (
-                    I_cotation_val
-                    / df_liq['I_surv']
-                )
+                df_liq['ratio_check'] = I_cotation_val / df_liq['I_reg']
+                mask_stab             = df_liq['ratio_check'] >= 1.10
                 
-                # déclenchement stabilisation
-                mask_stab = (
-                    df_liq['ratio_check'] >= 1.10
-                )
-                
-                # S'k
                 df_liq['S_prime_k'] = np.where(
-                
                     mask_stab,
-                
-                    df_liq['Sk']
-                    * (
-                        df_liq['I_surv']
-                        / I_cotation_val
-                    ),
-                
+                    df_liq['Sk'] * (df_liq['I_reg'] / I_cotation_val),
                     df_liq['Sk']
                 )
-                
-                # coefficient stabilisation
                 df_liq['coeff_stab'] = np.where(
-                
                     df_liq['S_prime_k'] > 0,
-                
-                    df_liq['Sk']
-                    / df_liq['S_prime_k'],
-                
+                    df_liq['Sk'] / df_liq['S_prime_k'],
                     1.0
                 )
                 
+                # Résumé stabilisation
+                n_stab      = mask_stab.sum()
+                annees_stab = sorted(df_liq[mask_stab]['annee_reg'].unique().tolist())
+                st.info(f"📊 Stabilisation déclenchée pour {n_stab} obs | Années règlement concernées : {annees_stab}")  
                 # DEBUG
                 st.write(
                     df_liq[
