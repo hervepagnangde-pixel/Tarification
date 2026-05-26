@@ -1284,6 +1284,7 @@ with tab5:
     if f_mkt and st.button("▶ Construire la market curve", type="primary"):
         with st.spinner("📈 Construction en cours..."):
             df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
+            df_mkt.columns = [c.strip() for c in df_mkt.columns]
             st.write("Colonnes :", df_mkt.columns.tolist())
             st.write("Valeurs INT_BUSINESS uniques :", df_mkt['INT_BUSINESS'].unique().tolist() if 'INT_BUSINESS' in df_mkt.columns else "Colonne absente")
             st.write("Nb lignes avant filtrage :", len(df_mkt))
