@@ -552,11 +552,11 @@ with tab1:
     nb_tranches = st.number_input("Nombre de tranches", min_value=1, max_value=10, value=3)
     tranches_input = []
 
-defaults = {
-        0: {"type": "travaillante", "priorite": 2_000_000,  "portee": 13_000_000},
-        1: {"type": "cat",          "priorite": 15_000_000, "portee": 10_000_000},
-        2: {"type": "cat",          "priorite": 25_000_000, "portee": 15_000_000},
-    }
+    defaults = {
+            0: {"type": "travaillante", "priorite": 2_000_000,  "portee": 13_000_000},
+            1: {"type": "cat",          "priorite": 15_000_000, "portee": 10_000_000},
+            2: {"type": "cat",          "priorite": 25_000_000, "portee": 15_000_000},
+        }
 
     for i in range(nb_tranches):
         d = defaults.get(i, {"type": "travaillante", "priorite": 2_000_000, "portee": 13_000_000})
