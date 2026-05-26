@@ -399,6 +399,36 @@ def build_prompt(role, task, data, contexte="", instructions="",
                  input_data="", output_instructions="",
                  contexte_global="", exemples="", contraintes=""):
     prompt = f"""
+    
+def claude_stream(api_key, prompt, max_tokens=2000, session_key=""):
+    """Streaming Claude avec animation agentique"""
+    client      = anthropic.Anthropic(api_key=api_key)
+    placeholder = st.empty()
+    full_text   = ""
+
+    with st.status("🤖 Agent Claude en cours...", expanded=True) as status:
+        st.write("🔗 Connexion au modèle...")
+        st.write("📊 Chargement des données actuarielles...")
+        try:
+            with client.messages.stream(
+                model="claude-opus-4-5",
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}]
+            ) as stream:
+                st.write("✍️ Génération de l'analyse...")
+                for text in stream.text_stream:
+                    full_text += text
+                    placeholder.markdown(full_text + "▌")
+            status.update(label="✅ Analyse terminée", state="complete", expanded=False)
+        except Exception as e:
+            status.update(label="❌ Erreur", state="error")
+            st.error(f"Erreur API : {e}")
+            return ""
+
+    placeholder.markdown(full_text)
+    if session_key:
+        st.session_state[session_key] = full_text
+    return full_text
 ════════════════════════════════════════════
 RÔLE
 ════════════════════════════════════════════
@@ -694,11 +724,19 @@ with tab2:
 
             progress.progress(45, text="Calcul As-If...")
             df_idx_set     = df_idx_df.set_index('Annee')['Coefficients']
+            df_idx_set.index = df_idx_set.index.astype(int)
             I_cotation_val = float(df_idx_set.get(annee_cotation, 1.0))
 
             def get_indice(annee):
-                try: return float(df_idx_set[annee])
-                except: return 1.0
+                try:
+                    return float(df_idx_set[int(annee)])
+                except:
+                    # Interpolation linéaire si année absente
+                    idx_sorted = df_idx_set.sort_index()
+                    annees     = idx_sorted.index.tolist()
+                    if int(annee) < annees[0]:  return float(idx_sorted.iloc[0])
+                    if int(annee) > annees[-1]: return float(idx_sorted.iloc[-1])
+                    return float(idx_sorted.interpolate(method='index')[int(annee)])
 
             # As-If : Sk = total × (I_ultime / I_reg)
             df_liq['annee_ultime'] = df_liq['annee_surv'] + 9
