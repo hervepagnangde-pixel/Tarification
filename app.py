@@ -75,24 +75,15 @@ except:
 
 st.markdown("""
 <style>
-/* ── BASE ── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
 * { font-family: 'Inter', sans-serif; }
 .stApp { background-color: #f4f6f4; }
-
-/* ── SCROLLBAR ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #f1f1f1; }
 ::-webkit-scrollbar-thumb { background: #2d8a4e; border-radius: 3px; }
-
-/* ── TITRES ── */
 h1 { color: #1a1a1a; font-weight: 700; letter-spacing: -0.5px; }
-h2 { color: #1a1a1a; border-bottom: 3px solid #2d8a4e;
-     padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; }
+h2 { color: #1a1a1a; border-bottom: 3px solid #2d8a4e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; }
 h3 { color: #2d8a4e; font-weight: 600; }
-
-/* ── BOUTONS ── */
 .stButton > button {
     background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
     color: white; border: none; border-radius: 8px;
@@ -106,8 +97,6 @@ h3 { color: #2d8a4e; font-weight: 600; }
     box-shadow: 0 6px 16px rgba(45,138,78,0.35);
 }
 .stButton > button:active { transform: translateY(0px); }
-
-/* Bouton primary (type="primary") */
 .stButton > button[kind="primary"] {
     background: linear-gradient(135deg, #2d8a4e 0%, #25a85e 100%);
     box-shadow: 0 2px 8px rgba(45,138,78,0.3);
@@ -116,133 +105,50 @@ h3 { color: #2d8a4e; font-weight: 600; }
     background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
     box-shadow: 0 6px 16px rgba(0,0,0,0.25);
 }
-
-/* ── TABS ── */
 .stTabs [data-baseweb="tab-list"] {
-    background: #1a1a1a; border-radius: 12px;
-    padding: 6px; gap: 4px;
+    background: #1a1a1a; border-radius: 12px; padding: 6px; gap: 4px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
-.stTabs [data-baseweb="tab"] {
-    color: #888; font-weight: 500; font-size: 13px;
-    border-radius: 8px; padding: 8px 16px;
-    transition: all 0.2s ease;
-}
+.stTabs [data-baseweb="tab"] { color: #888; font-weight: 500; font-size: 13px; border-radius: 8px; padding: 8px 16px; transition: all 0.2s ease; }
 .stTabs [data-baseweb="tab"]:hover { color: white; background: rgba(255,255,255,0.1); }
-.stTabs [aria-selected="true"] {
-    background: linear-gradient(135deg, #2d8a4e, #25a85e) !important;
-    color: white !important; border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(45,138,78,0.4);
-}
-
-/* ── SIDEBAR ── */
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #1a1a1a 0%, #2a2a2a 100%);
-    border-right: 1px solid #2d8a4e;
-}
+.stTabs [aria-selected="true"] { background: linear-gradient(135deg, #2d8a4e, #25a85e) !important; color: white !important; border-radius: 8px; box-shadow: 0 2px 8px rgba(45,138,78,0.4); }
+[data-testid="stSidebar"] { background: linear-gradient(180deg, #1a1a1a 0%, #2a2a2a 100%); border-right: 1px solid #2d8a4e; }
 [data-testid="stSidebar"] * { color: #e0e0e0 !important; }
-[data-testid="stSidebar"] h1,
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {
-    color: #2d8a4e !important;
-    border-bottom: 1px solid #333 !important;
-}
-[data-testid="stSidebar"] .stTextInput input,
-[data-testid="stSidebar"] .stNumberInput input {
-    background: #2a2a2a; border: 1px solid #444;
-    color: white !important; border-radius: 6px;
-}
-[data-testid="stSidebar"] .stTextInput input:focus,
-[data-testid="stSidebar"] .stNumberInput input:focus {
-    border-color: #2d8a4e;
-    box-shadow: 0 0 0 2px rgba(45,138,78,0.3);
-}
-
-/* ── METRICS ── */
-[data-testid="stMetric"] {
-    background: white; border-radius: 12px;
-    padding: 16px 20px; border: 1px solid #e8e8e8;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    border-left: 4px solid #2d8a4e;
-    transition: transform 0.2s ease;
-}
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color: #2d8a4e !important; border-bottom: 1px solid #333 !important; }
+[data-testid="stSidebar"] .stTextInput input, [data-testid="stSidebar"] .stNumberInput input { background: #2a2a2a; border: 1px solid #444; color: white !important; border-radius: 6px; }
+[data-testid="stSidebar"] .stTextInput input:focus, [data-testid="stSidebar"] .stNumberInput input:focus { border-color: #2d8a4e; box-shadow: 0 0 0 2px rgba(45,138,78,0.3); }
+[data-testid="stMetric"] { background: white; border-radius: 12px; padding: 16px 20px; border: 1px solid #e8e8e8; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #2d8a4e; transition: transform 0.2s ease; }
 [data-testid="stMetric"]:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.1); }
 [data-testid="stMetricLabel"] { color: #666 !important; font-size: 13px !important; font-weight: 500 !important; }
 [data-testid="stMetricValue"] { color: #1a1a1a !important; font-weight: 700 !important; }
-
-/* ── DATAFRAMES ── */
-[data-testid="stDataFrame"] {
-    border-radius: 12px; overflow: hidden;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-    border: 1px solid #e8e8e8;
-}
-
-/* ── INPUTS ── */
-.stTextInput input, .stNumberInput input, .stTextArea textarea {
-    border: 1.5px solid #e0e0e0; border-radius: 8px;
-    padding: 10px 14px; font-size: 14px;
-    transition: all 0.2s ease; background: white;
-}
-.stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
-    border-color: #2d8a4e;
-    box-shadow: 0 0 0 3px rgba(45,138,78,0.15);
-    outline: none;
-}
-
-/* ── SELECTBOX ── */
-.stSelectbox > div > div {
-    border: 1.5px solid #e0e0e0; border-radius: 8px;
-    transition: border-color 0.2s;
-}
+[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.08); border: 1px solid #e8e8e8; }
+.stTextInput input, .stNumberInput input, .stTextArea textarea { border: 1.5px solid #e0e0e0; border-radius: 8px; padding: 10px 14px; font-size: 14px; transition: all 0.2s ease; background: white; }
+.stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus { border-color: #2d8a4e; box-shadow: 0 0 0 3px rgba(45,138,78,0.15); outline: none; }
+.stSelectbox > div > div { border: 1.5px solid #e0e0e0; border-radius: 8px; transition: border-color 0.2s; }
 .stSelectbox > div > div:hover { border-color: #2d8a4e; }
-
-/* ── EXPANDER ── */
-.streamlit-expanderHeader {
-    background: white; border-radius: 10px;
-    border: 1px solid #e8e8e8; font-weight: 500;
-    color: #1a1a1a; padding: 12px 16px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-    transition: all 0.2s ease;
-}
+.streamlit-expanderHeader { background: white; border-radius: 10px; border: 1px solid #e8e8e8; font-weight: 500; color: #1a1a1a; padding: 12px 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s ease; }
 .streamlit-expanderHeader:hover { border-color: #2d8a4e; color: #2d8a4e; }
-.streamlit-expanderContent {
-    border: 1px solid #e8e8e8; border-top: none;
-    border-radius: 0 0 10px 10px;
-    background: #fafafa; padding: 16px;
-}
-
-/* ── ALERTS ── */
+.streamlit-expanderContent { border: 1px solid #e8e8e8; border-top: none; border-radius: 0 0 10px 10px; background: #fafafa; padding: 16px; }
 .stSuccess { background: #f0fff4; border-left: 4px solid #2d8a4e; border-radius: 8px; }
 .stWarning { background: #fffbf0; border-left: 4px solid #f59e0b; border-radius: 8px; }
 .stError   { background: #fff0f0; border-left: 4px solid #ef4444; border-radius: 8px; }
 .stInfo    { background: #f0f8ff; border-left: 4px solid #3b82f6; border-radius: 8px; }
-
-/* ── DIVIDER ── */
 hr { border: none; border-top: 2px solid #e8e8e8; margin: 20px 0; }
-
-/* ── PROGRESS BAR ── */
 .stProgress > div > div { background: linear-gradient(90deg, #2d8a4e, #25a85e); border-radius: 4px; }
 .stProgress > div { background: #e8e8e8; border-radius: 4px; }
-
-/* ── CHECKBOX & RADIO ── */
 .stCheckbox label, .stRadio label { font-weight: 500; color: #333; }
 </style>
 """, unsafe_allow_html=True)
+
+
 def card(titre, valeur, couleur="#2d8a4e", icone="📊"):
     st.markdown(f"""
-    <div style="
-        background: white; border-radius: 12px;
-        padding: 20px 24px; border: 1px solid #e8e8e8;
-        border-left: 5px solid {couleur};
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        margin-bottom: 12px;
-    ">
-        <div style="font-size:12px; color:#888; font-weight:500; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px">
-            {icone} {titre}
-        </div>
-        <div style="font-size:24px; font-weight:700; color:#1a1a1a">{valeur}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    <div style="background:white;border-radius:12px;padding:20px 24px;border:1px solid #e8e8e8;
+        border-left:5px solid {couleur};box-shadow:0 2px 8px rgba(0,0,0,0.06);margin-bottom:12px;">
+        <div style="font-size:12px;color:#888;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">
+            {icone} {titre}</div>
+        <div style="font-size:24px;font-weight:700;color:#1a1a1a">{valeur}</div>
+    </div>""", unsafe_allow_html=True)
 
 
 def badge(texte, couleur="green"):
@@ -254,30 +160,18 @@ def badge(texte, couleur="green"):
         "blue"  : ("rgba(59,130,246,0.12)", "#3b82f6"),
     }
     bg, fg = couleurs.get(couleur, couleurs["green"])
-    st.markdown(f"""
-    <span style="
-        background:{bg}; color:{fg};
-        padding: 4px 12px; border-radius: 20px;
-        font-size: 12px; font-weight: 600;
-        display: inline-block; margin: 2px;
-    ">{texte}</span>
-    """, unsafe_allow_html=True)
+    st.markdown(f"""<span style="background:{bg};color:{fg};padding:4px 12px;border-radius:20px;
+        font-size:12px;font-weight:600;display:inline-block;margin:2px">{texte}</span>""",
+        unsafe_allow_html=True)
 
 
 def section_header(titre, sous_titre="", icone=""):
     st.markdown(f"""
-    <div style="
-        background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-        border-radius: 12px; padding: 20px 24px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    ">
-        <div style="font-size:20px; font-weight:700; color:white">
-            {icone} {titre}
-        </div>
-        {f'<div style="font-size:13px; color:#aaa; margin-top:4px">{sous_titre}</div>' if sous_titre else ''}
-    </div>
-    """, unsafe_allow_html=True)
+    <div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d2d2d 100%);border-radius:12px;
+        padding:20px 24px;margin-bottom:20px;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+        <div style="font-size:20px;font-weight:700;color:white">{icone} {titre}</div>
+        {f'<div style="font-size:13px;color:#aaa;margin-top:4px">{sous_titre}</div>' if sous_titre else ''}
+    </div>""", unsafe_allow_html=True)
 
 
 def alerte_box(message, type_alerte="info"):
@@ -288,35 +182,25 @@ def alerte_box(message, type_alerte="info"):
         "error"  : ("❌", "#ef4444", "rgba(239,68,68,0.08)"),
     }
     icon, color, bg = configs.get(type_alerte, configs["info"])
-    st.markdown(f"""
-    <div style="
-        background:{bg}; border-left: 4px solid {color};
-        border-radius: 0 8px 8px 0; padding: 14px 18px;
-        margin: 8px 0; font-size: 14px; color: #333;
-    ">
-        {icon} {message}
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"""<div style="background:{bg};border-left:4px solid {color};border-radius:0 8px 8px 0;
+        padding:14px 18px;margin:8px 0;font-size:14px;color:#333">{icon} {message}</div>""",
+        unsafe_allow_html=True)
 
 
 def tableau_resultats(donnees, titre=""):
-    """Affiche un tableau HTML stylisé"""
     if not donnees: return
     if titre:
-        st.markdown(f"<h4 style='color:#1a1a1a; margin-bottom:12px'>{titre}</h4>", unsafe_allow_html=True)
+        st.markdown(f"<h4 style='color:#1a1a1a;margin-bottom:12px'>{titre}</h4>", unsafe_allow_html=True)
     colonnes = list(donnees[0].keys())
-    html = """
-    <div style="overflow-x:auto; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,0.08);">
-    <table style="width:100%; border-collapse:collapse; font-size:13px;">
-    <thead>
-    <tr style="background:linear-gradient(135deg,#1a1a1a,#2d2d2d)">
-    """
+    html = """<div style="overflow-x:auto;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+    <thead><tr style="background:linear-gradient(135deg,#1a1a1a,#2d2d2d)">"""
     for col in colonnes:
-        html += f'<th style="padding:12px 16px; text-align:left; color:white; font-weight:600; letter-spacing:0.3px">{col}</th>'
+        html += f'<th style="padding:12px 16px;text-align:left;color:white;font-weight:600;letter-spacing:0.3px">{col}</th>'
     html += "</tr></thead><tbody>"
     for i, row in enumerate(donnees):
         bg = "white" if i % 2 == 0 else "#f9fafb"
-        html += f'<tr style="background:{bg}; transition:background 0.15s" onmouseover="this.style.background=\'#f0fff4\'" onmouseout="this.style.background=\'{bg}\'">'
+        html += f'<tr style="background:{bg};transition:background 0.15s" onmouseover="this.style.background=\'#f0fff4\'" onmouseout="this.style.background=\'{bg}\'">'
         for col in colonnes:
             val = row.get(col, "")
             color = "#1a1a1a"
@@ -329,33 +213,28 @@ def tableau_resultats(donnees, titre=""):
                 except: pass
             if "✅" in str(val): color = "#2d8a4e"
             if "⚠️" in str(val): color = "#f59e0b"
-            html += f'<td style="padding:11px 16px; border-bottom:1px solid #f0f0f0; color:{color}; font-weight:500">{val}</td>'
+            html += f'<td style="padding:11px 16px;border-bottom:1px solid #f0f0f0;color:{color};font-weight:500">{val}</td>'
         html += "</tr>"
     html += "</tbody></table></div>"
     st.markdown(html, unsafe_allow_html=True)
 
 
 def progress_steps(steps, current):
-    html = '<div style="display:flex; align-items:center; gap:0; margin:16px 0; overflow-x:auto">'
+    html = '<div style="display:flex;align-items:center;gap:0;margin:16px 0;overflow-x:auto">'
     for i, (label, done) in enumerate(steps):
         is_current = (i == current)
-        if done:
-            bg, fg, border = "#2d8a4e", "white", "#2d8a4e"
-        elif is_current:
-            bg, fg, border = "#1a1a1a", "white", "#1a1a1a"
-        else:
-            bg, fg, border = "white", "#999", "#ddd"
-
+        if done:        bg, fg, border = "#2d8a4e", "white", "#2d8a4e"
+        elif is_current: bg, fg, border = "#1a1a1a", "white", "#1a1a1a"
+        else:            bg, fg, border = "white", "#999", "#ddd"
         check     = "✓ " if done else ""
         connector = '<div style="height:2px;background:#ddd;flex:1;min-width:8px"></div>' if i < len(steps)-1 else ""
-
         html += '<div style="display:flex;align-items:center;flex:1;min-width:80px">'
         html += f'<div style="background:{bg};color:{fg};border:2px solid {border};border-radius:20px;padding:6px 12px;font-size:11px;font-weight:600;white-space:nowrap;text-align:center;width:100%">{check}{label}</div>'
         html += connector
         html += '</div>'
-
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
+
 
 # ════════════════════════════════════════════
 # PROMPT ENGINEERING
@@ -367,31 +246,23 @@ def prompt_inputs(key_prefix, placeholder_contexte="", placeholder_instructions=
         st.markdown("##### 🎯 Prompt Engineering")
         c1, c2 = st.columns(2)
         with c1:
-            contexte = st.text_area(
-                "📌 Contexte",
+            contexte = st.text_area("📌 Contexte",
                 placeholder=placeholder_contexte or "Ex: Portefeuille automobile Maroc 2026...",
                 height=80, key=f"{key_prefix}_contexte",
-                help="Informations de contexte sur le portefeuille, le marché, l'historique"
-            )
-            instructions = st.text_area(
-                "📋 Instructions spécifiques",
+                help="Informations de contexte sur le portefeuille, le marché, l'historique")
+            instructions = st.text_area("📋 Instructions spécifiques",
                 placeholder=placeholder_instructions or "Ex: Être attentif à la tranche Cat L1...",
                 height=80, key=f"{key_prefix}_instructions",
-                help="Directives spécifiques pour cette analyse"
-            )
+                help="Directives spécifiques pour cette analyse")
         with c2:
-            input_data = st.text_area(
-                "📥 Données supplémentaires",
+            input_data = st.text_area("📥 Données supplémentaires",
                 placeholder=placeholder_input or "Ex: Taux marché de référence : 3.2%...",
                 height=80, key=f"{key_prefix}_input",
-                help="Données additionnelles non présentes dans les fichiers"
-            )
-            output_instructions = st.text_area(
-                "📤 Format de sortie souhaité",
+                help="Données additionnelles non présentes dans les fichiers")
+            output_instructions = st.text_area("📤 Format de sortie souhaité",
                 placeholder=placeholder_output or "Ex: Tableau structuré + recommandation chiffrée...",
                 height=80, key=f"{key_prefix}_output",
-                help="Comment structurer la réponse de Claude"
-            )
+                help="Comment structurer la réponse de Claude")
     return contexte, instructions, input_data, output_instructions
 
 
@@ -399,8 +270,6 @@ def build_prompt(role, task, data, contexte="", instructions="",
                  input_data="", output_instructions="",
                  contexte_global="", exemples="", contraintes=""):
     prompt = f"""
-    
-
 ════════════════════════════════════════════
 RÔLE
 ════════════════════════════════════════════
@@ -465,9 +334,7 @@ TÂCHE
 DONNÉES D'ENTRÉE
 ════════════════════════════════════════════
 {data}
-{f"""
-DONNÉES SUPPLÉMENTAIRES :
-{input_data}""" if input_data else ""}
+{f"DONNÉES SUPPLÉMENTAIRES :{chr(10)}{input_data}" if input_data else ""}
 
 ════════════════════════════════════════════
 INSTRUCTIONS SPÉCIFIQUES
@@ -493,12 +360,12 @@ Si incertain → le dire plutôt qu'inventer.
 """
     return prompt.strip()
 
+
 def claude_stream(api_key, prompt, max_tokens=2000, session_key=""):
     """Streaming Claude avec animation agentique"""
     client      = anthropic.Anthropic(api_key=api_key)
     placeholder = st.empty()
     full_text   = ""
-
     with st.status("🤖 Agent Claude en cours...", expanded=True) as status:
         st.write("🔗 Connexion au modèle...")
         st.write("📊 Chargement des données actuarielles...")
@@ -517,11 +384,73 @@ def claude_stream(api_key, prompt, max_tokens=2000, session_key=""):
             status.update(label="❌ Erreur", state="error")
             st.error(f"Erreur API : {e}")
             return ""
-
     placeholder.markdown(full_text)
     if session_key:
         st.session_state[session_key] = full_text
     return full_text
+
+
+# ════════════════════════════════════════════
+# FONCTIONS ACTUARIELLES — PORTAGE CODE R
+# ════════════════════════════════════════════
+
+def selectionner_seuil_pareto(X, D, nb_candidats=9):
+    X = np.array(X); X = X[X > 0]
+    k_hill   = min(59, len(X) - 1)
+    k_gerten = min(43, len(X) - 1)
+    X_sorted_desc = np.sort(X)[::-1]
+    seuils = {
+        "MLE"    : np.min(X),
+        "Hill"   : X_sorted_desc[k_hill - 1]   if k_hill   > 0 else np.min(X),
+        "Gerten" : X_sorted_desc[k_gerten - 1] if k_gerten > 0 else np.min(X),
+        "MeanExc": 1_800_000,
+        "p50"    : 0.50 * D, "p75": 0.75 * D,
+        "p80"    : 0.80 * D, "p85": 0.85 * D, "p90": 0.90 * D,
+    }
+    resultats = []
+    for nom, s in seuils.items():
+        Xs = X[X >= s]
+        if len(Xs) < 5: continue
+        t_min     = np.min(Xs); n = len(Xs)
+        alpha_hat = n / np.sum(np.log(Xs / t_min))
+        Xs_sorted = np.sort(Xs)
+        cdf_emp   = np.arange(1, n + 1) / n
+        cdf_par   = 1 - (t_min / Xs_sorted) ** alpha_hat
+        ks_stat   = np.max(np.abs(cdf_emp - cdf_par))
+        ks_pval   = np.exp(-2 * n * ks_stat ** 2)
+        resultats.append({"Seuil": nom, "t": round(s), "n": n,
+                           "alpha": round(alpha_hat, 4), "KS_pval": round(ks_pval, 4)})
+    return pd.DataFrame(resultats), seuils.get("p80", 0.80 * D)
+
+
+def identifier_sinistres_majeurs(df_proj, gnpi, D, C_tranche,
+                                  nb_annees_obs=10, retour_ans=20, percentile_seuil=99.5):
+    X = df_proj['Sprime_ultime'].values; X = X[X > 0]
+    Pm        = np.percentile(X, percentile_seuil)
+    mask_maj  = df_proj['Sprime_ultime'] >= Pm
+    df_majeurs = df_proj[mask_maj].copy()
+    df_courants= df_proj[~mask_maj].copy()
+    seuil_model = 0.80 * D
+    X_model     = X[(X >= seuil_model) & (X < Pm)]
+    if len(X_model) < 3: X_model = X[X >= seuil_model]
+    t_min     = np.min(X_model) if len(X_model) > 0 else seuil_model
+    n_model   = len(X_model)
+    alpha_hat = n_model / np.sum(np.log(X_model / t_min)) if n_model > 0 else 1.5
+    freq_annuelle = len(X) / nb_annees_obs
+    def charge_nette(x): return min(max(x - D, 0), C_tranche)
+    rows_charg = []
+    for _, row in df_majeurs.iterrows():
+        x = row['Sprime_ultime']; cn = charge_nette(x); chg = (1 / retour_ans) * cn / gnpi
+        rows_charg.append({"Annee": row.get('annee_surv','—'), "Montant_stab": round(x),
+                            "Charge_nette": round(cn), "p_j": round(1/retour_ans, 4),
+                            "Chargement": round(chg, 6)})
+    df_chargements   = pd.DataFrame(rows_charg)
+    chargement_total = df_chargements['Chargement'].sum() if len(df_chargements) > 0 else 0.0
+    return {"df_majeurs": df_majeurs, "df_courants": df_courants, "Pm": Pm,
+            "chargement": chargement_total, "df_chargements": df_chargements,
+            "alpha": alpha_hat, "lambda_obs": freq_annuelle,
+            "n_majeurs": len(df_majeurs), "n_courants": len(df_courants)}
+
 
 # ════════════════════════════════════════════
 # HEADER + SIDEBAR
@@ -545,12 +474,10 @@ with st.sidebar:
         st.markdown(f"{'✅' if key in st.session_state else '⬜'} {nom}")
     st.divider()
     st.markdown("### 🌍 Contexte global")
-    instructions_globales = st.text_area(
-        "Contexte portefeuille",
+    instructions_globales = st.text_area("Contexte portefeuille",
         placeholder="Ex: Portefeuille automobile Maroc, forte croissance 2023...",
         height=120, key="instructions_globales",
-        help="Inclus dans TOUS les prompts Claude"
-    )
+        help="Inclus dans TOUS les prompts Claude")
 
 # ════════════════════════════════════════════
 # TABS
@@ -569,10 +496,8 @@ etapes_progress = [
     ("Simulation",   "resultats_sim" in st.session_state),
     ("Market Curve", "resultats_mkt" in st.session_state),
 ]
-progress_steps(etapes_progress, current=0) 
+progress_steps(etapes_progress, current=0)
 
-
-    
 # ════════════════════════════════════════════
 # TAB 1 — PROGRAMME
 # ════════════════════════════════════════════
@@ -584,10 +509,10 @@ with tab1:
     tranches_input = []
 
     defaults = {
-            0: {"type": "travaillante", "priorite": 2_000_000,  "portee": 13_000_000},
-            1: {"type": "cat",          "priorite": 15_000_000, "portee": 10_000_000},
-            2: {"type": "cat",          "priorite": 25_000_000, "portee": 15_000_000},
-        }
+        0: {"type": "travaillante", "priorite": 2_000_000,  "portee": 13_000_000},
+        1: {"type": "cat",          "priorite": 15_000_000, "portee": 10_000_000},
+        2: {"type": "cat",          "priorite": 25_000_000, "portee": 15_000_000},
+    }
 
     for i in range(nb_tranches):
         d = defaults.get(i, {"type": "travaillante", "priorite": 2_000_000, "portee": 13_000_000})
@@ -595,9 +520,9 @@ with tab1:
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown("**Identification**")
-                nom      = st.text_input("Nom",              value=f"Tranche {i+1}", key=f"nom_{i}")
+                nom      = st.text_input("Nom", value=f"Tranche {i+1}", key=f"nom_{i}")
                 type_idx = ["travaillante","non_travaillante","cat"].index(d["type"])
-                type_t   = st.selectbox("Type",              ["travaillante","non_travaillante","cat"], index=type_idx, key=f"type_{i}")
+                type_t   = st.selectbox("Type", ["travaillante","non_travaillante","cat"], index=type_idx, key=f"type_{i}")
                 priorite = st.number_input("Priorité (MAD)", value=d["priorite"], step=500_000, key=f"prio_{i}", format="%d")
                 portee   = st.number_input("Portée (MAD)",   value=d["portee"],   step=500_000, key=f"port_{i}", format="%d")
             with c2:
@@ -630,7 +555,7 @@ with tab1:
     if st.button("💾 Valider le programme", type="primary"):
         st.session_state["tranches_input"] = tranches_input
         st.session_state["df_prog"] = pd.DataFrame([{
-            "Tranche"  : t["nom"], "Type"    : t["type"],
+            "Tranche"  : t["nom"], "Type": t["type"],
             "Priorité" : f"{t['priorite']:,}", "Portée": f"{t['portee']:,}",
             "AAL"      : f"{t['AAL']:,}" if t["AAL"] else "—",
             "AAD"      : f"{t['AAD']:,}" if t["AAD"] else "—",
@@ -646,6 +571,7 @@ with tab1:
         c1.metric("Travaillantes", sum(1 for t in tranches_input if t["type"]=="travaillante"))
         c2.metric("Cat",           sum(1 for t in tranches_input if t["type"]=="cat"))
         c3.metric("Non-trav.",     sum(1 for t in tranches_input if t["type"]=="non_travaillante"))
+
 # ════════════════════════════════════════════
 # TAB 2 — DONNÉES & TRIANGLE
 # ════════════════════════════════════════════
@@ -653,12 +579,10 @@ with tab1:
 with tab2:
     st.header("Données de base & Transformation triangle")
 
-    type_branche = st.radio(
-        "Type de branche",
+    type_branche = st.radio("Type de branche",
         ["Développement long (As-If + Stabilisation + Projection CL)",
          "Développement court (As-If uniquement, pas de projection)"],
-        key="type_branche", horizontal=True
-    )
+        key="type_branche", horizontal=True)
     is_long = "long" in type_branche
 
     c1, c2, c3 = st.columns(3)
@@ -672,21 +596,17 @@ with tab2:
     seuil_stabilisation = st.number_input(
         "Seuil de déclenchement stabilisation (% inflation, 0 = toujours)",
         value=0.0, min_value=0.0, max_value=50.0, step=5.0,
-        help="0% = clause s'applique toujours | 10% = seuil atteint 10%"
-    ) / 100
+        help="0% = clause s'applique toujours | 10% = seuil atteint 10%") / 100
 
     pct_seuil = st.number_input(
         "Percentile seuil Pareto (p80 par défaut)",
         value=0.80, min_value=0.50, max_value=0.99, step=0.05, format="%.2f",
-        help="seuil = pct × D_travaillante — cohérent avec le code R"
-    )
+        help="seuil = pct × D_travaillante — cohérent avec le code R")
 
     if st.button("▶ Transformer le triangle", type="primary") and f_triangle and f_gnpis and f_indices:
         with st.spinner("🔄 Transformation en cours..."):
-
             progress = st.progress(0, text="Lecture des fichiers...")
 
-            # ── Lecture fichiers ──
             df_gnpis_df = pd.read_excel(f_gnpis)  if f_gnpis.name.endswith('xlsx')   else pd.read_csv(f_gnpis)
             df_idx_df   = pd.read_excel(f_indices) if f_indices.name.endswith('xlsx') else pd.read_csv(f_indices)
             df_gnpis_df.columns = [str(c).strip() for c in df_gnpis_df.columns]
@@ -694,28 +614,21 @@ with tab2:
 
             progress.progress(10, text="Nettoyage table indices...")
 
-            # ── Nettoyage indices ──
             df_idx_df['Annee'] = pd.to_numeric(
-                df_idx_df['Annee'].astype(str).str.strip().str.replace('.0','',regex=False),
-                errors='coerce'
-            )
+                df_idx_df['Annee'].astype(str).str.strip().str.replace('.0','',regex=False), errors='coerce')
             df_idx_df['Coefficients'] = pd.to_numeric(
                 df_idx_df['Coefficients'].astype(str).str.strip()
-                .str.replace(',','.',regex=False).str.replace(' ','',regex=False),
-                errors='coerce'
-            )
+                .str.replace(',','.',regex=False).str.replace(' ','',regex=False), errors='coerce')
             df_idx_df = df_idx_df.dropna(subset=['Annee','Coefficients'])
             df_idx_df['Annee'] = df_idx_df['Annee'].astype(int)
             df_idx_df = df_idx_df.sort_values('Annee')
             df_idx_set = df_idx_df.set_index('Annee')['Coefficients']
 
-            # ── Fonction indice robuste ──
             def get_indice(annee):
                 annee   = int(annee)
                 annees  = df_idx_set.index.values.astype(int)
                 valeurs = df_idx_set.values.astype(float)
-                if annee in annees:
-                    return float(df_idx_set.loc[annee])
+                if annee in annees: return float(df_idx_set.loc[annee])
                 if annee < annees[0]:
                     pente = valeurs[1] - valeurs[0]
                     return float(valeurs[0] - pente * (annees[0] - annee))
@@ -729,7 +642,6 @@ with tab2:
 
             progress.progress(20, text="Parsing du triangle...")
 
-            # ── Parsing triangle ──
             df_raw       = pd.read_excel(f_triangle, header=None)
             ligne_annees = df_raw.iloc[0].tolist()
             ligne_types  = df_raw.iloc[1].tolist()
@@ -774,7 +686,6 @@ with tab2:
 
             df_liq = pd.DataFrame(records)
 
-            # ── As-If ──
             progress.progress(50, text="Calcul As-If...")
 
             df_liq['annee_ultime'] = df_liq['annee_surv'] + 9
@@ -784,9 +695,9 @@ with tab2:
             df_liq['Sk']           = df_liq['total'] * (df_liq['I_ultime'] / df_liq['I_reg'])
 
             # ── Stabilisation ──
-            # P0 = Pn × (I_surv / I_reg) → monnaie constante de survenance
             # ratio = I_reg / I_surv (varie par sinistre ET par développement)
             # Déclenchement si ratio >= 1 + seuil
+            # S'k = Sk × (I_surv / I_reg)  → ramène en monnaie constante de survenance
             progress.progress(55, text="Stabilisation...")
 
             df_liq['ratio_check'] = df_liq['I_reg'] / df_liq['I_surv']
@@ -841,12 +752,9 @@ with tab2:
                         Sprime_ultime *= f_moyens[k]
                     Sk_ultime = Sprime_ultime * coeff_sin
                     projections.append({
-                        'sinistre_id'  : sin_id,
-                        'annee_surv'   : annee_surv_p,
-                        'dev_max'      : dev_max,
-                        'Sprime_ultime': Sprime_ultime,
-                        'Sk_ultime'    : Sk_ultime,
-                        'coeff_stab'   : coeff_sin
+                        'sinistre_id'  : sin_id, 'annee_surv'   : annee_surv_p,
+                        'dev_max'      : dev_max, 'Sprime_ultime': Sprime_ultime,
+                        'Sk_ultime'    : Sk_ultime, 'coeff_stab' : coeff_sin
                     })
 
                 df_facteurs_df = pd.DataFrame({
@@ -867,12 +775,9 @@ with tab2:
                     dev_max      = grp.index.max()
                     Sk_actuel    = grp.loc[dev_max, 'Sk']
                     projections.append({
-                        'sinistre_id'  : sin_id,
-                        'annee_surv'   : annee_surv_p,
-                        'dev_max'      : dev_max,
-                        'Sprime_ultime': Sk_actuel,
-                        'Sk_ultime'    : Sk_actuel,
-                        'coeff_stab'   : 1.0
+                        'sinistre_id'  : sin_id, 'annee_surv'   : annee_surv_p,
+                        'dev_max'      : dev_max, 'Sprime_ultime': Sk_actuel,
+                        'Sk_ultime'    : Sk_actuel, 'coeff_stab' : 1.0
                     })
                 df_facteurs_df = pd.DataFrame({'Info': ['Branche courte — pas de projection CL']})
 
@@ -880,7 +785,6 @@ with tab2:
 
             progress.progress(85, text="Estimation alpha & lambda (seuil p80×D)...")
 
-            # ── Seuil de modélisation : pct × D_travaillante ──
             D_trav      = next((t['priorite'] for t in tranches_input if t['type'] == 'travaillante'), 2_000_000)
             seuil_model = pct_seuil * D_trav
             X_all       = df_proj['Sprime_ultime'].values
@@ -888,8 +792,7 @@ with tab2:
             Pm_proxy    = np.percentile(X_all, 99.5)
 
             X_model = X_all[(X_all >= seuil_model) & (X_all < Pm_proxy)]
-            if len(X_model) < 5:
-                X_model = X_all[X_all >= seuil_model]
+            if len(X_model) < 5: X_model = X_all[X_all >= seuil_model]
 
             t_min     = np.min(X_model)
             n_model   = len(X_model)
@@ -897,8 +800,7 @@ with tab2:
 
             df_gnpis_idx  = df_gnpis_df.set_index(df_gnpis_df.columns[0])
             gnpi_col      = df_gnpis_df.columns[1]
-            df_proj_model = df_proj[(df_proj['Sprime_ultime'] >= seuil_model) &
-                                     (df_proj['Sprime_ultime'] <  Pm_proxy)]
+            df_proj_model = df_proj[(df_proj['Sprime_ultime'] >= seuil_model) & (df_proj['Sprime_ultime'] < Pm_proxy)]
             N_obs         = df_proj_model.groupby('annee_surv').size()
             N_asif_vals   = []
             for ann, cnt in N_obs.items():
@@ -911,23 +813,33 @@ with tab2:
             coeffs_raw = df_proj['coeff_stab'].values
             coeffs     = coeffs_raw[(coeffs_raw > 0) & np.isfinite(coeffs_raw)]
 
+            # ── Analyse sinistres majeurs (portage code R) ──
+            C_trav  = next((t['portee'] for t in tranches_input if t['type'] == 'travaillante'), 13_000_000)
+            res_maj = identifier_sinistres_majeurs(
+                df_proj=df_proj, gnpi=gnpi, D=D_trav, C_tranche=C_trav,
+                nb_annees_obs=df_proj['annee_surv'].nunique(), retour_ans=20)
+            df_seuils, _ = selectionner_seuil_pareto(X=df_proj['Sprime_ultime'].values, D=D_trav)
+
             progress.progress(100, text="Terminé !")
 
             st.session_state.update({
-                "df_liq"               : df_liq,
-                "df_proj"              : df_proj,
-                "f_moyens"             : f_moyens,
-                "alpha_est"            : float(alpha_est),
-                "lambda_est"           : float(lambda_est),
-                "seuil_est"            : float(seuil_model),
-                "Pm_proxy"             : float(Pm_proxy),
-                "coeffs"               : coeffs,
-                "is_long"              : is_long,
-                "I_cotation"           : I_cotation_val,
-                "annee_cotation"       : annee_cotation,
-                "seuil_stabilisation"  : seuil_stabilisation,
-                "df_gnpis_df"          : df_gnpis_df,
-                "df_facteurs"          : df_facteurs_df
+                "df_liq"              : df_liq,
+                "df_proj"             : df_proj,
+                "f_moyens"            : f_moyens,
+                "alpha_est"           : float(alpha_est),
+                "lambda_est"          : float(lambda_est),
+                "seuil_est"           : float(seuil_model),
+                "Pm_proxy"            : float(Pm_proxy),
+                "coeffs"              : coeffs,
+                "is_long"             : is_long,
+                "I_cotation"          : I_cotation_val,
+                "annee_cotation"      : annee_cotation,
+                "seuil_stabilisation" : seuil_stabilisation,
+                "df_gnpis_df"         : df_gnpis_df,
+                "df_facteurs"         : df_facteurs_df,
+                "res_majeurs"         : res_maj,
+                "df_seuils_pareto"    : df_seuils,
+                "chargement_majeurs"  : res_maj["chargement"],
             })
             st.success("✅ Transformation terminée !")
 
@@ -946,44 +858,43 @@ with tab2:
             f"Lambda : {st.session_state.get('lambda_est',0):.4f}"
         )
 
+        if "res_majeurs" in st.session_state:
+            res = st.session_state["res_majeurs"]
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Sinistres majeurs",  res["n_majeurs"])
+            c2.metric("Sinistres courants", res["n_courants"])
+            c3.metric("Pm (niveau retour)", f"{res['Pm']:,.0f} MAD")
+            c4.metric("Chargement majeurs", f"{res['chargement']:.4%}")
+            with st.expander("📊 Détail chargements sinistres majeurs"):
+                st.dataframe(res["df_chargements"], use_container_width=True)
+            with st.expander("📊 Sélection seuil Pareto (TVE)"):
+                st.dataframe(st.session_state["df_seuils_pareto"], use_container_width=True)
+                st.caption("Seuil retenu : p80 × D | Critère : KS_pval > 0.05")
+
         with st.expander("📊 Triangle de liquidation — vérification stabilisation"):
             cols_show = ['sinistre_id','annee_surv','annee_reg','dev','total',
                          'I_surv','I_reg','ratio_check','Sk','S_prime_k','coeff_stab']
             st.dataframe(
                 st.session_state["df_liq"][[c for c in cols_show if c in st.session_state["df_liq"].columns]].head(50),
-                use_container_width=True
-            )
+                use_container_width=True)
         with st.expander("📊 Facteurs Chain Ladder"):
             st.dataframe(st.session_state["df_facteurs"], use_container_width=True)
         with st.expander("📊 Projections"):
             st.dataframe(st.session_state["df_proj"].head(20), use_container_width=True)
+
 # ════════════════════════════════════════════
 # TAB 3 — BURNING COST
 # ════════════════════════════════════════════
 
 with tab3:
 
-    section_header(
-        "Burning Cost",
-        "Charges historiques réassurance par tranche",
-        "🔥"
-    )
-
-    st.caption(
-        "Ck = min(max(S'k_ultime − D, 0), L) × (Sk/S'k)"
-    )
+    section_header("Burning Cost", "Charges historiques réassurance par tranche", "🔥")
+    st.caption("Ck = min(max(S'k_ultime − D, 0), L) × coeff_stab")
 
     if "df_proj" not in st.session_state:
-
         st.warning("⚠️ Transformez d'abord le triangle")
-
     else:
-
-        if st.button(
-            "▶ Calculer le Burning Cost",
-            type="primary"
-        ):
-
+        if st.button("▶ Calculer le Burning Cost", type="primary"):
             with st.spinner("Calcul en cours..."):
 
                 df_proj      = st.session_state["df_proj"]
@@ -991,243 +902,120 @@ with tab3:
 
                 for t_info in tranches_input:
 
-                    D   = t_info["priorite"]
-                    P   = t_info["portee"]
-                    aal = t_info["AAL"]
-                    aad = t_info["AAD"]
-                    r   = t_info["nb_reconstitutions"]
+                    D     = t_info["priorite"]
+                    L     = t_info["portee"]
+                    aal   = t_info["AAL"]
+                    aad   = t_info["AAD"]
+                    n_rec = t_info["nb_reconstitutions"]
+                    t_r   = t_info["taux_reconstitution"] / 100  # taux par reconstitution
+                    cap   = (n_rec + 1) * L
 
-                    cap = (r + 1) * P
-
+                    # ── Charges par sinistre ──
                     df_proj["Ck"] = df_proj.apply(
-                        lambda row:
-                            min(
-                                max(row["Sprime_ultime"] - D, 0),
-                                P
-                            ) * row["coeff_stab"],
-                        axis=1
-                    )
+                        lambda row: min(max(row["Sprime_ultime"] - D, 0), L) * row["coeff_stab"],
+                        axis=1)
 
-                    charges_ann = (
-                        df_proj
-                        .groupby("annee_surv")["Ck"]
-                        .sum()
-                    )
+                    charges_ann = df_proj.groupby("annee_surv")["Ck"].sum()
 
                     charges_finales = []
-
                     for ann, ch in charges_ann.items():
-
-                        if aad:
-                            ch = max(ch - aad, 0)
-
-                        if aal:
-                            ch = min(ch, aal)
-
+                        if aad: ch = max(ch - aad, 0)
+                        if aal: ch = min(ch, aal)
                         ch = min(ch, cap)
-
-                        charges_finales.append({
-                            "annee" : ann,
-                            "charge": ch
-                        })
+                        charges_finales.append({"annee": ann, "charge": ch})
 
                     df_ch = pd.DataFrame(charges_finales)
+                    N     = len(df_ch)  # nombre d'années historique
 
-                    charge_moy     = df_ch["charge"].mean()
-                    taux_pur       = charge_moy / gnpi
-                    taux_risque    = taux_pur * 1.20
-                    taux_technique = taux_risque / (
-                        1
-                        - t_info["brokage"]
-                        - t_info["frais"]
-                        - 0.0021
-                    )
+                    # ── Pr_Rec : formule exacte ──
+                    # Pr_Rec = (1/L) × Σ_n Σ_r [ t_r × min(L, max(C_n - (r-1)×L, 0)) ]
+                    # Rec    = Pr_Rec / (Pr_Rec + N)
+                    Pr_Rec = 0.0
+                    for C_n in df_ch["charge"].values:
+                        for r in range(1, n_rec + 1):
+                            contrib = t_r * min(L, max(C_n - (r - 1) * L, 0))
+                            Pr_Rec += contrib
+                    Pr_Rec /= L if L > 0 else 1
 
-                    taux_final = taux_technique * (
-                        1
-                        + t_info["marge"]
-                        + t_info["retrocession"]
-                    )
+                    Rec = Pr_Rec / (Pr_Rec + N) if (Pr_Rec + N) > 0 else 0.0
+
+                    # ── Taux ──
+                    charge_moy  = df_ch["charge"].mean()
+                    taux_pur    = charge_moy / gnpi
+                    taux_risque = taux_pur * 1.20
+
+                    # τ_tech = τ_risque × (1 - Rec) / (1 - BK - FG - AF)
+                    taux_technique = (taux_risque * (1 - Rec)) / (
+                        1 - t_info["brokage"] - t_info["frais"] - 0.0021)
+
+                    taux_final = taux_technique * (1 + t_info["marge"] + t_info["retrocession"])
 
                     resultats_bc.append({
-
-                        "tranche"        : t_info["nom"],
-                        "type"           : t_info["type"],
-
-                        "charge_moy"     : charge_moy,
-                        "taux_pur"       : taux_pur,
-                        "taux_risque"    : taux_risque,
-                        "taux_technique" : taux_technique,
-                        "taux_final"     : taux_final,
-
-                        "detail_annuel"  : df_ch.to_dict("records")
-
+                        "tranche"       : t_info["nom"],
+                        "type"          : t_info["type"],
+                        "charge_moy"    : charge_moy,
+                        "Pr_Rec"        : Pr_Rec,
+                        "Rec"           : Rec,
+                        "taux_pur"      : taux_pur,
+                        "taux_risque"   : taux_risque,
+                        "taux_technique": taux_technique,
+                        "taux_final"    : taux_final,
+                        "detail_annuel" : df_ch.to_dict("records")
                     })
 
                 st.session_state["resultats_bc"] = resultats_bc
 
     if "resultats_bc" in st.session_state:
-
-        tableau_resultats(
-
-            [{
-
-                "Tranche"        : r["tranche"],
-                "Type"           : r["type"],
-                "Charge moy."    : f"{r['charge_moy']:,.0f} MAD",
-                "Taux pur"       : f"{r['taux_pur']:.4%}",
-                "Taux risque"    : f"{r['taux_risque']:.4%}",
-                "Taux technique" : f"{r['taux_technique']:.4%}",
-                "Taux final"     : f"{r['taux_final']:.4%}",
-
-            } for r in st.session_state["resultats_bc"]],
-
-            titre="📊 Résultats Burning Cost"
-
-        )
+        tableau_resultats([{
+            "Tranche"        : r["tranche"],
+            "Type"           : r["type"],
+            "Charge moy."    : f"{r['charge_moy']:,.0f} MAD",
+            "Pr_Rec"         : f"{r['Pr_Rec']:.4f}",
+            "Rec"            : f"{r['Rec']:.4%}",
+            "Taux pur"       : f"{r['taux_pur']:.4%}",
+            "Taux risque"    : f"{r['taux_risque']:.4%}",
+            "Taux technique" : f"{r['taux_technique']:.4%}",
+            "Taux final"     : f"{r['taux_final']:.4%}",
+        } for r in st.session_state["resultats_bc"]], titre="📊 Résultats Burning Cost")
 
         st.divider()
-
-        st.markdown(
-            "### 🤖 Analyse Claude — Burning Cost"
-        )
-
+        st.markdown("### 🤖 Analyse Claude — Burning Cost")
         ctx_bc, inst_bc, inp_bc, out_bc = prompt_inputs(
-
             key_prefix="bc",
+            placeholder_contexte="Ex: Sinistralité exceptionnelle 2020, portefeuille en croissance...",
+            placeholder_instructions="Ex: Comparer avec taux marché de référence 3-4%...",
+            placeholder_input="Ex: Taux BC année précédente : R&C=2.5%",
+            placeholder_output="Ex: Tableau par tranche + verdict OK/ALERTE/RÉVISER")
 
-            placeholder_contexte=(
-                "Ex: Sinistralité exceptionnelle 2020, "
-                "portefeuille en croissance..."
-            ),
-
-            placeholder_instructions=(
-                "Ex: Comparer avec taux marché "
-                "de référence 3-4%..."
-            ),
-
-            placeholder_input=(
-                "Ex: Taux BC année précédente : "
-                "R&C=2.5%"
-            ),
-
-            placeholder_output=(
-                "Ex: Tableau par tranche + "
-                "verdict OK/ALERTE/RÉVISER"
-            )
-
-        )
-
-        if api_key and st.button(
-            "🤖 Recommandations Claude — BC"
-        ):
-
-            with st.spinner("Claude analyse..."):
-
-                prompt = build_prompt(
-
-                    role="""
-Expert actuaire senior en réassurance
-non-proportionnelle automobile,
-15 ans d'expérience en tarification XL et cat.
-""",
-
-                    task="""
-Analyse les résultats de Burning Cost par tranche.
-
+        if api_key and st.button("🤖 Recommandations Claude — BC"):
+            prompt = build_prompt(
+                role="Expert actuaire senior en réassurance non-proportionnelle automobile, 15 ans d'expérience en tarification XL et cat.",
+                task="""Analyse les résultats de Burning Cost par tranche.
 Pour chaque tranche :
-
-1. Évalue le niveau du taux
-   (élevé/normal/faible vs normes marché)
-
-2. Vérifie la cohérence entre tranches
-   (progression logique priorité/taux)
-
-3. Identifie les anomalies
-   ou données suspectes
-
-4. Donne un verdict :
-   ✅ Cohérent
-   ⚠️ À vérifier
-   ❌ Problème
-""",
-
-                    data=f"""
-Résultats BC :
-
-{json.dumps(
-    [
-        {k: v for k, v in r.items()
-         if k != 'detail_annuel'}
-        for r in st.session_state['resultats_bc']
-    ],
-    indent=2
-)}
-
-Programme :
-
-{json.dumps(tranches_input, indent=2)}
-
+1. Évalue le niveau du taux (élevé/normal/faible vs normes marché)
+2. Vérifie la cohérence entre tranches (progression logique priorité/taux)
+3. Analyse l'impact du facteur Rec sur le taux technique
+4. Donne un verdict : ✅ Cohérent | ⚠️ À vérifier | ❌ Problème""",
+                data=f"""Résultats BC :
+{json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}
+Programme : {json.dumps(tranches_input, indent=2)}
 GNPI : {gnpi:,} MAD
-
-Formule :
-Ck = min(max(S'k_ultime−D,0),L) × (Sk/S'k)
-""",
-
-                    contexte=ctx_bc,
-                    instructions=inst_bc,
-                    input_data=inp_bc,
-                    output_instructions=out_bc,
-
-                    contexte_global=st.session_state.get(
-                        "instructions_globales",
-                        ""
-                    ),
-
-                    contraintes="""
-- Taux pur BC négatif
-  = erreur de calcul à signaler
-
-- BC = 0 pour tranche cat
-  est NORMAL
-
-- Vérifier hiérarchie :
-  taux_pur < taux_risque
-  < taux_technique < taux_final
-
-- Ne jamais inventer
-  de comparatifs marché non fournis
-"""
-
-                )
-
-                client = anthropic.Anthropic(
-                    api_key=api_key
-                )
-
-                analyse = client.messages.create(
-
-                    model="claude-opus-4-5",
-                    max_tokens=2000,
-
-                    messages=[
-                        {
-                            "role"   : "user",
-                            "content": prompt
-                        }
-                    ]
-
-                )
-
-                st.session_state["analyse_bc"] = (
-                    analyse.content[0].text
-                )
+Formule reconstitution :
+  Pr_Rec = (1/L) × Σ_n Σ_r [ t_r × min(L, max(C_n-(r-1)L, 0)) ]
+  Rec    = Pr_Rec / (Pr_Rec + N)
+  τ_tech = τ_risque × (1-Rec) / (1 - BK - FG - AF)""",
+                contexte=ctx_bc, instructions=inst_bc,
+                input_data=inp_bc, output_instructions=out_bc,
+                contexte_global=st.session_state.get("instructions_globales",""),
+                contraintes="""- Taux technique < taux risque car Rec réduit la base (NORMAL)
+- BC = 0 pour tranche cat est NORMAL
+- Rec > 0 seulement si des charges dépassent la portée L
+- Ne jamais inventer de comparatifs marché non fournis""")
+            claude_stream(api_key, prompt, max_tokens=2000, session_key="analyse_bc")
 
         if "analyse_bc" in st.session_state:
+            st.markdown(st.session_state["analyse_bc"])
 
-            st.markdown(
-                st.session_state["analyse_bc"]
-            )
 # ════════════════════════════════════════════
 # TAB 4 — SIMULATION
 # ════════════════════════════════════════════
@@ -1240,13 +1028,13 @@ with tab4:
         st.warning("⚠️ Transformez d'abord le triangle")
     else:
         is_long_sim = st.session_state.get("is_long", True)
-        st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | Seuil P85: {st.session_state['seuil_est']:,.0f} | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f}")
+        st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | Seuil : {st.session_state['seuil_est']:,.0f} | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f}")
 
         c1, c2, c3, c4 = st.columns(4)
-        with c1: alpha_final  = st.number_input("Alpha",          value=st.session_state["alpha_est"],  step=0.01,     format="%.4f", key="alpha_input")
-        with c2: lambda_final = st.number_input("Lambda",         value=st.session_state["lambda_est"], step=0.1,      format="%.4f", key="lambda_input")
-        with c3: seuil_final  = st.number_input("Seuil (MAD)",    value=st.session_state["seuil_est"],  step=50_000.0, format="%.0f", key="seuil_input")
-        with c4: n_sim        = st.number_input("Nb simulations",  value=10000, step=1000,               key="nsim_input")
+        with c1: alpha_final  = st.number_input("Alpha",         value=st.session_state["alpha_est"],  step=0.01,     format="%.4f", key="alpha_input")
+        with c2: lambda_final = st.number_input("Lambda",        value=st.session_state["lambda_est"], step=0.1,      format="%.4f", key="lambda_input")
+        with c3: seuil_final  = st.number_input("Seuil (MAD)",   value=st.session_state["seuil_est"],  step=50_000.0, format="%.0f", key="seuil_input")
+        with c4: n_sim        = st.number_input("Nb simulations", value=10000, step=1000,               key="nsim_input")
 
         if st.button("▶ Lancer la simulation", type="primary"):
             with st.spinner("🎲 Simulation en cours..."):
@@ -1320,8 +1108,7 @@ with tab4:
                 st.session_state["resultats_sim"] = resultats_sim
 
     if "resultats_sim" in st.session_state:
-        st.subheader("📊 Résultats")
-        st.dataframe(pd.DataFrame([{
+        tableau_resultats([{
             "Tranche"       : r["tranche"],
             "Taux pur"      : f"{r['taux_pur']:.4%}",
             "Taux risque"   : f"{r['taux_risque']:.4%}",
@@ -1330,7 +1117,7 @@ with tab4:
             "Sans AAL"      : f"{r['sans_aal']:.4%}",
             "Sans AAD"      : f"{r['sans_aad']:.4%}",
             "Sans reconst." : f"{r['sans_rec']:.4%}",
-        } for r in st.session_state["resultats_sim"]]), use_container_width=True)
+        } for r in st.session_state["resultats_sim"]], titre="📊 Résultats Simulation")
 
         st.divider()
         st.markdown("### 🤖 Analyse Claude — Simulation & Conditions")
@@ -1339,41 +1126,37 @@ with tab4:
             placeholder_contexte="Ex: Nouveau modèle cat, lambda revu à la hausse...",
             placeholder_instructions="Ex: Seuil d'alerte écart = 20% au lieu de 25%...",
             placeholder_input="Ex: Résultats simulation année précédente...",
-            placeholder_output="Ex: Verdict par condition + impact en points de taux"
-        )
+            placeholder_output="Ex: Verdict par condition + impact en points de taux")
 
         if api_key and st.button("🤖 Recommandations Claude — Simulation"):
-            with st.spinner("Claude analyse..."):
-                prompt = build_prompt(
-                    role="Expert en modélisation catastrophe et simulation stochastique réassurance.",
-                    task="""Analyse les résultats simulation et l'impact des conditions contractuelles.
+            prompt = build_prompt(
+                role="Expert en modélisation catastrophe et simulation stochastique réassurance.",
+                task="""Analyse les résultats simulation et l'impact des conditions contractuelles.
 Pour chaque tranche et chaque condition (AAL, AAD, Reconstitution) :
 1. Calcule l'impact en points de taux : taux_base - taux_sans_condition
 2. Classe : NÉCESSAIRE (impact >15%) | À AJUSTER (5-15%) | INUTILE (<5%)
 3. Recommande le montant optimal de chaque condition présente
 4. Compare BC vs Simulation — signale les écarts > 25% avec explication""",
-                    data=f"""Résultats simulation :
+                data=f"""Résultats simulation :
 {json.dumps(st.session_state['resultats_sim'], indent=2)}
 Programme : {json.dumps(tranches_input, indent=2)}""",
-                    contexte=ctx_sim, instructions=inst_sim,
-                    input_data=inp_sim, output_instructions=out_sim,
-                    contexte_global=st.session_state.get("instructions_globales",""),
-                    contraintes="""- Ne pas recommander la suppression d'une AAL sur tranche cat
+                contexte=ctx_sim, instructions=inst_sim,
+                input_data=inp_sim, output_instructions=out_sim,
+                contexte_global=st.session_state.get("instructions_globales",""),
+                contraintes="""- Ne pas recommander la suppression d'une AAL sur tranche cat
 - Un AAD trop élevé peut rendre la tranche inutile — le signaler
 - Reconstitution = 0 acceptable seulement si taux très bas
 - Écart BC/Sim > 50% = anomalie majeure à investiguer
-- Ne jamais comparer à des benchmarks non fournis"""
-                )
-                client  = anthropic.Anthropic(api_key=api_key)
-                analyse = client.messages.create(model="claude-opus-4-5", max_tokens=2000,
-                    messages=[{"role":"user","content":prompt}])
-                st.session_state["analyse_sim"] = analyse.content[0].text
+- Ne jamais comparer à des benchmarks non fournis""")
+            claude_stream(api_key, prompt, max_tokens=2000, session_key="analyse_sim")
 
         if "analyse_sim" in st.session_state:
             st.markdown(st.session_state["analyse_sim"])
+
 # ════════════════════════════════════════════
 # TAB 5 — MARKET CURVE
 # ════════════════════════════════════════════
+
 with tab5:
     st.header("Market Curve")
     st.caption("ROL = a × x^(−b)  |  x = (D + C/2) / GNPI  |  τ_pur = ROL × C / GNPI")
@@ -1398,19 +1181,15 @@ with tab5:
             df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
             df_mkt.columns = [c.strip() for c in df_mkt.columns]
 
-            # Nettoyage colonnes numériques
             for col in ['ROLs', 'midpoints', 'Garantie en MAD', 'Priorité en MAD']:
                 if col in df_mkt.columns and df_mkt[col].dtype == object:
                     df_mkt[col] = (df_mkt[col].astype(str)
-                                   .str.replace('%', '')
-                                   .str.replace(' ', '')
-                                   .str.replace(',', '.')
+                                   .str.replace('%', '').str.replace(' ', '').str.replace(',', '.')
                                    .apply(lambda x: float(x)/100 if x not in ['nan',''] and float(x) > 1.5
                                           else (float(x) if x not in ['nan',''] else np.nan)))
 
             df_mkt = df_mkt.dropna(subset=['ROLs', 'midpoints'])
 
-            # ── Filtre 1 : branche ──
             n_avant = len(df_mkt)
             if filtre_branche.strip():
                 col_business = next((c for c in df_mkt.columns if 'BUSINESS' in c.upper()), None)
@@ -1419,133 +1198,91 @@ with tab5:
                                     .str.contains(filtre_branche.strip().upper(), regex=False, na=False)]
             n_filtre = n_avant - len(df_mkt)
 
-            # ── Filtre 2 : bornes ROL ──
             mask_rol    = (df_mkt['ROLs'] >= rol_min) & (df_mkt['ROLs'] <= rol_max)
             df_excl_rol = df_mkt[~mask_rol].copy()
             df_mkt      = df_mkt[mask_rol].copy()
             n_rol       = len(df_excl_rol)
 
-            # ── Filtre 3 : proximité ROL ≈ Midpoint ──
-            # |ROL - x_i| / x_i >= tolerance  (50% par défaut)
             df_mkt['diff_rel'] = np.where(
                 df_mkt['midpoints'] != 0,
-                np.abs(df_mkt['ROLs'] - df_mkt['midpoints']) / np.abs(df_mkt['midpoints']),
-                1.0
-            )
+                np.abs(df_mkt['ROLs'] - df_mkt['midpoints']) / np.abs(df_mkt['midpoints']), 1.0)
             df_excl_prox = df_mkt[df_mkt['diff_rel'] < tolerance].copy()
             df_mkt       = df_mkt[df_mkt['diff_rel'] >= tolerance].copy()
             n_prox       = len(df_excl_prox)
-
-            # ── Filtre 4 : midpoints > 0 ──
-            df_mkt = df_mkt[df_mkt['midpoints'] > 0].copy()
+            df_mkt       = df_mkt[df_mkt['midpoints'] > 0].copy()
 
             st.markdown(f"""
-            <div style="background:#f0fff4; border-left:4px solid #2d8a4e;
-                        border-radius:0 8px 8px 0; padding:12px 16px; margin:8px 0">
+            <div style="background:#f0fff4;border-left:4px solid #2d8a4e;border-radius:0 8px 8px 0;padding:12px 16px;margin:8px 0">
                 ✅ <b>{len(df_mkt)} points retenus</b> sur {n_avant} &nbsp;|&nbsp;
                 Exclus filtre branche : {n_filtre} &nbsp;|&nbsp;
                 Exclus ROL hors [{rol_min*100:.0f}%–{rol_max*100:.0f}%] : {n_rol} &nbsp;|&nbsp;
                 Exclus ROL≈Midpoint : {n_prox}
-            </div>
-            """, unsafe_allow_html=True)
+            </div>""", unsafe_allow_html=True)
 
             if len(df_mkt) < 5:
                 st.error("❌ Moins de 5 points retenus — impossible d'ajuster la courbe.")
                 st.stop()
 
-            # ── Ajustement log-log ──
             def fit_power(x, y):
-                """
-                ROL = a × x^(-b)
-                log(ROL) = log(a) - b×log(x)
-                slope = -b  →  b = -slope  (b > 0)
-                intercept = log(a)  →  a = exp(intercept)
-                """
-                log_x      = np.log(x)
-                log_y      = np.log(y)
-                coeffs     = np.polyfit(log_x, log_y, 1)
-                slope      = coeffs[0]
-                intercept  = coeffs[1]
-                a          = np.exp(intercept)
-                b          = -slope
+                log_x = np.log(x); log_y = np.log(y)
+                coeffs = np.polyfit(log_x, log_y, 1)
+                slope = coeffs[0]; intercept = coeffs[1]
+                a = np.exp(intercept); b = -slope
                 log_y_pred = np.polyval(coeffs, log_x)
-                ss_res     = np.sum((log_y - log_y_pred) ** 2)
-                ss_tot     = np.sum((log_y - log_y.mean()) ** 2)
-                r2         = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+                ss_res = np.sum((log_y - log_y_pred)**2)
+                ss_tot = np.sum((log_y - log_y.mean())**2)
+                r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
                 return a, b, r2
 
             def predict_rol(x_norm, a, b):
-                """x_norm = (D + C/2) / GNPI — midpoint normalisé"""
                 return a * (x_norm ** (-b))
 
             def calc_taux_tranche(t, a, b):
-                """
-                x_i  = (D + C/2) / GNPI
-                ROL  = a × x_i^(-b)
-                τ_pur  = ROL × C / GNPI
-                τ_risque = τ_pur × 1.002
-                τ_tech   = τ_risque / (1 - brokage - frais - 0.0021)
-                τ_final  = τ_tech × (1 - Rec)
-                Rec = taux_reconstitution/100 × nb_reconstitutions × 0.22
-                """
                 x_norm      = (t['priorite'] + t['portee'] / 2) / gnpi
                 rol         = predict_rol(x_norm, a, b)
                 taux_pur    = rol * (t['portee'] / gnpi)
                 taux_risque = taux_pur * 1.002
                 taux_tech   = taux_risque / (1 - t['brokage'] - t['frais'] - 0.0021)
-                rec         = (t['taux_reconstitution'] / 100) * t['nb_reconstitutions'] * 0.22
-                taux_final  = taux_tech * (1 - rec)
-                return {
-                    "tranche"   : t["nom"],
-                    "type"      : t["type"],
-                    "x_norm"    : x_norm,
-                    "rol"       : rol,
-                    "taux_pur"  : taux_pur,
-                    "taux_tech" : taux_tech,
-                    "taux"      : taux_final
-                }
+                # Reconstitution : même formule que BC
+                n_rec = t['nb_reconstitutions']; t_r = t['taux_reconstitution'] / 100
+                L = t['portee']
+                # Proxy Pr_Rec avec taux_pur × GNPI comme charge annuelle représentative
+                C_rep  = taux_pur * gnpi
+                Pr_Rec = 0.0
+                for r in range(1, n_rec + 1):
+                    Pr_Rec += t_r * min(L, max(C_rep - (r - 1) * L, 0))
+                Pr_Rec /= L if L > 0 else 1
+                N_hist  = 10  # années historique par défaut
+                Rec     = Pr_Rec / (Pr_Rec + N_hist) if (Pr_Rec + N_hist) > 0 else 0
+                taux_final = taux_tech * (1 - Rec)
+                return {"tranche": t["nom"], "type": t["type"], "x_norm": x_norm,
+                        "rol": rol, "taux_pur": taux_pur, "taux_tech": taux_tech, "taux": taux_final}
 
-            # ── 10 combinaisons de quantiles ──
             resultats_mkt = []
             for q in [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]:
                 mid_max  = np.quantile(df_mkt['midpoints'], q)
                 port_max = np.quantile(df_mkt['Garantie en MAD'], q) if 'Garantie en MAD' in df_mkt.columns else np.inf
                 df_q     = df_mkt[
                     (df_mkt['midpoints'] <= mid_max) &
-                    (df_mkt['Garantie en MAD'] <= port_max if 'Garantie en MAD' in df_mkt.columns else True)
-                ]
+                    (df_mkt['Garantie en MAD'] <= port_max if 'Garantie en MAD' in df_mkt.columns else True)]
                 if len(df_q) < 5: continue
                 try:
                     a, b, r2 = fit_power(df_q['midpoints'].values, df_q['ROLs'].values)
                     if b <= 0: continue
-
-                    taux_tranches = []
-                    taux_nuls     = 0
+                    taux_tranches = []; taux_nuls = 0
                     for t in tranches_input:
                         tt = calc_taux_tranche(t, a, b)
-                        if tt['taux'] <= 0 or np.isnan(tt['taux']) or np.isinf(tt['taux']):
-                            taux_nuls += 1
+                        if tt['taux'] <= 0 or np.isnan(tt['taux']) or np.isinf(tt['taux']): taux_nuls += 1
                         taux_tranches.append(tt)
-
                     if taux_nuls > 0: continue
-
                     taux_vals   = [tt["taux"] for tt in taux_tranches]
                     median_taux = np.median(taux_vals)
                     cv_taux     = np.std(taux_vals) / median_taux if median_taux > 0 else 99
-
-                    resultats_mkt.append({
-                        "quantile"     : q,
-                        "n_points"     : len(df_q),
-                        "a"            : a,
-                        "b"            : b,
-                        "r2"           : r2,
-                        "cv_taux"      : cv_taux,
-                        "taux_tranches": taux_tranches,
-                        "r2_ok"        : r2 >= r2_min
-                    })
+                    resultats_mkt.append({"quantile": q, "n_points": len(df_q), "a": a, "b": b,
+                                          "r2": r2, "cv_taux": cv_taux, "taux_tranches": taux_tranches,
+                                          "r2_ok": r2 >= r2_min})
                 except: continue
 
-            # Relâchement si aucun résultat propre
             if not resultats_mkt:
                 st.warning("⚠️ Aucun ajustement avec taux non nuls — relâchement de la contrainte.")
                 for q in [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]:
@@ -1556,40 +1293,29 @@ with tab5:
                         a, b, r2 = fit_power(df_q['midpoints'].values, df_q['ROLs'].values)
                         if b <= 0: continue
                         taux_tranches = [calc_taux_tranche(t, a, b) for t in tranches_input]
-                        taux_vals     = [tt["taux"] for tt in taux_tranches]
-                        median_taux   = np.median(taux_vals)
-                        cv_taux       = np.std(taux_vals) / median_taux if median_taux > 0 else 99
-                        resultats_mkt.append({
-                            "quantile": q, "n_points": len(df_q),
-                            "a": a, "b": b, "r2": r2,
-                            "cv_taux": cv_taux, "taux_tranches": taux_tranches,
-                            "r2_ok": r2 >= r2_min
-                        })
+                        taux_vals   = [tt["taux"] for tt in taux_tranches]
+                        median_taux = np.median(taux_vals)
+                        cv_taux     = np.std(taux_vals) / median_taux if median_taux > 0 else 99
+                        resultats_mkt.append({"quantile": q, "n_points": len(df_q), "a": a, "b": b,
+                                              "r2": r2, "cv_taux": cv_taux, "taux_tranches": taux_tranches,
+                                              "r2_ok": r2 >= r2_min})
                     except: continue
 
             if not resultats_mkt:
                 st.error("❌ Impossible d'ajuster la courbe. Vérifiez les données.")
                 st.stop()
 
-            # ── Score ──
-            all_t       = [tt["taux"] for r in resultats_mkt for tt in r["taux_tranches"]]
-            med_g       = np.median([t for t in all_t if t > 0]) if any(t > 0 for t in all_t) else 1
-            r2v         = [r["r2"] for r in resultats_mkt]
+            all_t = [tt["taux"] for r in resultats_mkt for tt in r["taux_tranches"]]
+            med_g = np.median([t for t in all_t if t > 0]) if any(t > 0 for t in all_t) else 1
+            r2v   = [r["r2"] for r in resultats_mkt]
             r2min_v, r2max_v = min(r2v), max(r2v)
-
             for r in resultats_mkt:
                 tm            = np.mean([tt["taux"] for tt in r["taux_tranches"]])
                 r2_norm       = (r["r2"] - r2min_v) / (r2max_v - r2min_v + 1e-10)
                 ecart_med     = abs(tm - med_g) / (med_g + 1e-10)
                 taux_nuls     = sum(1 for tt in r["taux_tranches"] if tt["taux"] <= 0)
-                penalite_nuls = taux_nuls * 10.0
-                r["score"]    = (
-                    0.5 * r2_norm
-                    - 0.3 * ecart_med
-                    - 0.2 * r["cv_taux"]
-                    - penalite_nuls
-                    + (0.5 if r["r2_ok"] else 0)
-                )
+                r["score"]    = (0.5 * r2_norm - 0.3 * ecart_med - 0.2 * r["cv_taux"]
+                                 - taux_nuls * 10.0 + (0.5 if r["r2_ok"] else 0))
 
             resultats_mkt = sorted(resultats_mkt, key=lambda x: x['score'], reverse=True)
             st.session_state["resultats_mkt"] = resultats_mkt
@@ -1599,20 +1325,14 @@ with tab5:
         rmt = st.session_state["resultats_mkt"]
         dmc = st.session_state["df_mkt_clean"]
 
-        def predict_rol(x_norm, a, b):
-            return a * (x_norm ** (-b))
+        def predict_rol(x_norm, a, b): return a * (x_norm ** (-b))
 
         rows_recap = []
         for r in rmt:
-            row = {
-                "Q"       : f"Q{int(r['quantile']*100)}",
-                "N"       : r["n_points"],
-                "a"       : f"{r['a']:.5f}",
-                "b"       : f"{r['b']:.4f}",
-                "R²"      : f"{r['r2']:.4f}",
-                "R²≥seuil": "✅" if r["r2_ok"] else "⚠️",
-                "Score"   : f"{r['score']:.4f}",
-            }
+            row = {"Q": f"Q{int(r['quantile']*100)}", "N": r["n_points"],
+                   "a": f"{r['a']:.5f}", "b": f"{r['b']:.4f}",
+                   "R²": f"{r['r2']:.4f}", "R²≥seuil": "✅" if r["r2_ok"] else "⚠️",
+                   "Score": f"{r['score']:.4f}"}
             for tt in r["taux_tranches"]:
                 row[tt["tranche"]] = f"{tt['taux']:.4%}" if tt["taux"] > 0 else "❌ NUL"
             rows_recap.append(row)
@@ -1621,58 +1341,35 @@ with tab5:
         tableau_resultats(rows_recap)
 
         best = rmt[0]
-        st.success(
-            f"✅ Meilleur : Q{int(best['quantile']*100)} — "
-            f"a={best['a']:.5f}, b={best['b']:.4f} | "
-            f"R²={best['r2']:.4f} {'✅' if best['r2_ok'] else '⚠️'} | "
-            f"Score={best['score']:.4f}"
-        )
+        st.success(f"✅ Meilleur : Q{int(best['quantile']*100)} — a={best['a']:.5f}, b={best['b']:.4f} | R²={best['r2']:.4f} {'✅' if best['r2_ok'] else '⚠️'} | Score={best['score']:.4f}")
 
-        choix_q = st.selectbox(
-            "Choisir la combinaison",
-            options=[
-                f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} "
-                f"R²={r['r2']:.4f}{'✅' if r['r2_ok'] else '⚠️'} Score={r['score']:.4f}"
-                for r in rmt
-            ],
-            index=0
-        )
-        idx_choix = [
-            f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} "
-            f"R²={r['r2']:.4f}{'✅' if r['r2_ok'] else '⚠️'} Score={r['score']:.4f}"
-            for r in rmt
-        ].index(choix_q)
+        choix_q = st.selectbox("Choisir la combinaison",
+            options=[f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} R²={r['r2']:.4f}{'✅' if r['r2_ok'] else '⚠️'} Score={r['score']:.4f}" for r in rmt], index=0)
+        idx_choix = [f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} R²={r['r2']:.4f}{'✅' if r['r2_ok'] else '⚠️'} Score={r['score']:.4f}" for r in rmt].index(choix_q)
         choix = rmt[idx_choix]
 
-        # ── Graphique ──
-        x_all   = dmc['midpoints'].values
-        y_all   = dmc['ROLs'].values
+        x_all   = dmc['midpoints'].values; y_all = dmc['ROLs'].values
         x_range = np.linspace(min(x_all), max(x_all), 300)
         y_fit   = predict_rol(x_range, choix['a'], choix['b'])
 
         fig, ax = plt.subplots(figsize=(10, 5))
-        fig.patch.set_facecolor('#f5f5f5')
-        ax.set_facecolor('#fafafa')
+        fig.patch.set_facecolor('#f5f5f5'); ax.set_facecolor('#fafafa')
         ax.scatter(x_all, y_all, color='#2d8a4e', s=60, zorder=5, alpha=0.7, label='Données marché')
         ax.plot(x_range, y_fit, color='#1a1a1a', lw=2.5,
                 label=f"ROL = {choix['a']:.5f} × x^(−{choix['b']:.4f}) | R²={choix['r2']:.4f}")
-        ax.set_xlabel('Midpoint normalisé x = (D+C/2)/GNPI')
-        ax.set_ylabel('ROL')
+        ax.set_xlabel('Midpoint normalisé x = (D+C/2)/GNPI'); ax.set_ylabel('ROL')
         ax.set_title('Market Curve — ROL = a × x^(−b)', fontweight='bold', color='#1a1a1a')
-        ax.legend()
-        ax.grid(alpha=0.3, linestyle='--')
+        ax.legend(); ax.grid(alpha=0.3, linestyle='--')
         st.pyplot(fig)
 
-        # ── Taux retenus ──
         st.subheader("📊 Taux marché retenus")
         tableau_resultats([{
-            "Tranche"       : tt["tranche"],
-            "Type"          : tt["type"],
+            "Tranche"         : tt["tranche"], "Type": tt["type"],
             "x = (D+C/2)/GNPI": f"{tt['x_norm']:.5f}",
-            "ROL estimé"    : f"{tt['rol']:.4%}",
-            "Taux pur"      : f"{tt['taux_pur']:.4%}",
-            "Taux technique": f"{tt['taux_tech']:.4%}",
-            "Taux final"    : f"{tt['taux']:.4%}" if tt["taux"] > 0 else "❌ NUL"
+            "ROL estimé"      : f"{tt['rol']:.4%}",
+            "Taux pur"        : f"{tt['taux_pur']:.4%}",
+            "Taux technique"  : f"{tt['taux_tech']:.4%}",
+            "Taux final"      : f"{tt['taux']:.4%}" if tt["taux"] > 0 else "❌ NUL"
         } for tt in choix["taux_tranches"]])
 
         st.session_state["taux_mkt_final"] = choix["taux_tranches"]
@@ -1684,53 +1381,34 @@ with tab5:
             placeholder_contexte="Ex: Marché en durcissement, hausse 15% vs année précédente...",
             placeholder_instructions="Ex: Privilégier les ajustements avec N > 20 points...",
             placeholder_input="Ex: Taux marché de référence secteur : Cat L1=1.5%",
-            placeholder_output="Ex: Recommandation unique avec justification R² et cohérence"
-        )
+            placeholder_output="Ex: Recommandation unique avec justification R² et cohérence")
 
         if api_key and st.button("🤖 Recommandations Claude — Market Curve"):
-            with st.spinner("Claude analyse..."):
-                prompt = build_prompt(
-                    role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
-                    task=f"""Analyse les ajustements de market curve et recommande le meilleur.
-Modèle : ROL = a × x^(-b)  où  x = (D + C/2) / GNPI  (midpoint normalisé)
-τ_pur = ROL × C / GNPI  |  τ_risque = τ_pur × 1.002  |  τ_tech = τ_risque / (1 - brokage - frais - 0.0021)
-τ_final = τ_tech × (1 - Rec)
-Critère : R²≥{r2_min*100:.0f}% avec taux non nuls prime sur R² élevé avec taux nuls.
-Pour chaque ajustement :
-1. Évalue R² (seuil {r2_min*100:.0f}%)
-2. Vérifie cohérence des taux
-3. Tiens compte du N
-4. Signale taux nuls ou aberrants
-Recommande UN seul ajustement avec justification.""",
-                    data=f"""Ajustements :
+            prompt = build_prompt(
+                role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
+                task=f"""Analyse les ajustements de market curve et recommande le meilleur.
+Modèle : ROL = a × x^(-b)  où  x = (D + C/2) / GNPI
+τ_pur = ROL × C / GNPI | τ_risque = τ_pur × 1.002 | τ_tech = τ_risque / (1-BK-FG-AF) | τ_final = τ_tech × (1-Rec)
+Critère : R²≥{r2_min*100:.0f}% avec taux non nuls prime sur R² élevé avec taux nuls.""",
+                data=f"""Ajustements :
 {json.dumps(rows_recap, indent=2)}
 Programme : {json.dumps(tranches_input, indent=2)}
 GNPI : {gnpi:,} MAD
 Filtres : ROL∈[{rol_min*100:.0f}%,{rol_max*100:.0f}%], proximité {tolerance*100:.0f}%""",
-                    contexte=ctx_mkt,
-                    instructions=inst_mkt,
-                    input_data=inp_mkt,
-                    output_instructions=out_mkt,
-                    contexte_global=st.session_state.get("instructions_globales", ""),
-                    contraintes=f"""- b > 0 obligatoire
+                contexte=ctx_mkt, instructions=inst_mkt,
+                input_data=inp_mkt, output_instructions=out_mkt,
+                contexte_global=st.session_state.get("instructions_globales", ""),
+                contraintes=f"""- b > 0 obligatoire
 - R²≥{r2_min*100:.0f}% avec taux non nuls = préférable à R² élevé avec taux nuls
-- Taux nul = rejet immédiat
-- N < 10 = faible robustesse
-- Taux marché > 3× simulation = suspect"""
-                )
-                client = anthropic.Anthropic(api_key=api_key)
-                reco   = client.messages.create(
-                    model="claude-opus-4-5", max_tokens=1500,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                st.session_state["analyse_mkt"] = reco.content[0].text
+- Taux nul = rejet immédiat | N < 10 = faible robustesse | Taux > 3× simulation = suspect""")
+            claude_stream(api_key, prompt, max_tokens=1500, session_key="analyse_mkt")
 
         if "analyse_mkt" in st.session_state:
             st.markdown(st.session_state["analyse_mkt"])
+
 # ════════════════════════════════════════════
 # TAB 6 — RAPPORT FINAL
 # ════════════════════════════════════════════
-
 
 with tab6:
     st.header("Rapport Final de Tarification")
@@ -1740,7 +1418,6 @@ with tab6:
     if manquants:
         st.warning(f"⚠️ Complétez d'abord : {', '.join(manquants)}")
     else:
-        # Calcul automatique du rapport
         bc_map  = {r["tranche"]: r for r in st.session_state["resultats_bc"]}
         sim_map = {r["tranche"]: r for r in st.session_state["resultats_sim"]}
         mkt_map = {r["tranche"]: r["taux"] for r in st.session_state["taux_mkt_final"]}
@@ -1769,7 +1446,6 @@ with tab6:
         st.session_state["df_rapport"]   = pd.DataFrame(rows_rapport)
         st.session_state["prime_totale"] = prime_totale
 
-        # Affichage tableau
         st.subheader("📊 Synthèse de tarification")
         st.dataframe(st.session_state["df_rapport"], use_container_width=True)
         c1, c2, c3 = st.columns(3)
@@ -1784,16 +1460,14 @@ with tab6:
             placeholder_contexte="Ex: Négociation avec réassureur XYZ, objectif prime < 14M MAD...",
             placeholder_instructions="Ex: Justifier chaque taux retenu, comparer avec N-1...",
             placeholder_input="Ex: Taux retenus N-1 : R&C=3.1%, CatL1=1.2%, CatL2=0.8%",
-            placeholder_output="Ex: Rapport 1 page max, tableau synthèse final obligatoire"
-        )
+            placeholder_output="Ex: Rapport 1 page max, tableau synthèse final obligatoire")
 
         if api_key and st.button("🤖 Générer le rapport Claude", type="primary"):
-            with st.spinner("Claude rédige le rapport final..."):
-                prompt = build_prompt(
-                    role="""Expert senior en tarification réassurance non-proportionnelle,
+            prompt = build_prompt(
+                role="""Expert senior en tarification réassurance non-proportionnelle,
 spécialisé branche automobile marchés émergents (Maroc, Afrique francophone).
 Rôle de consultant indépendant — objectif : fournir un avis technique rigoureux.""",
-                    task="""Rédige un rapport de tarification professionnel et complet.
+                task="""Rédige un rapport de tarification professionnel et complet.
 Structure OBLIGATOIRE :
 1. SYNTHÈSE EXÉCUTIVE (5 lignes max — pour le management)
 2. ANALYSE PAR TRANCHE (une section par tranche)
@@ -1804,40 +1478,28 @@ Structure OBLIGATOIRE :
 4. ANOMALIES ET POINTS D'ATTENTION
 5. TABLEAU RÉCAPITULATIF FINAL
 6. RECOMMANDATION GLOBALE""",
-                    data=f"""Rapport de tarification :
+                data=f"""Rapport de tarification :
 {json.dumps(rows_rapport, indent=2)}
-
 BC détaillé :
 {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}
-
 Simulation :
 {json.dumps(st.session_state['resultats_sim'], indent=2)}
-
-GNPI : {gnpi:,} MAD
-Prime totale : {prime_totale:,.0f} MAD
-Taux global  : {prime_totale/gnpi:.4%}""",
-                    contexte=ctx_r, instructions=inst_r,
-                    input_data=inp_r, output_instructions=out_r,
-                    contexte_global=st.session_state.get("instructions_globales",""),
-                    exemples="""Exemple de BONNE synthèse exécutive :
+GNPI : {gnpi:,} MAD | Prime totale : {prime_totale:,.0f} MAD | Taux global : {prime_totale/gnpi:.4%}""",
+                contexte=ctx_r, instructions=inst_r,
+                input_data=inp_r, output_instructions=out_r,
+                contexte_global=st.session_state.get("instructions_globales",""),
+                exemples="""Exemple de BONNE synthèse exécutive :
 "Le programme 2026 de 3 tranches ressort à 14.2M MAD (7.76% du GNPI).
 La tranche travaillante Risk&Cat présente un écart BC/Simulation de 35%
 — vraisemblablement lié à l'inflation sinistres. Les tranches cat sont
 tarifées sur la market curve, plus prudente que la simulation seule."
-
-Exemple à ÉVITER :
-"Les taux calculés semblent raisonnables." ← vague, sans chiffres.""",
-                    contraintes="""- Ne jamais recommander un taux inférieur au taux pur
+Exemple à ÉVITER : "Les taux calculés semblent raisonnables." ← vague, sans chiffres.""",
+                contraintes="""- Ne jamais recommander un taux inférieur au taux pur
 - Si BC = 0 sur tranche cat → c'est normal, ne pas le signaler comme problème
 - Prime totale = somme des (GNPI × taux_retenu par tranche)
-- Si taux marché >> simulation sur tranche cat → normal, l'expliquer
 - Mentionner explicitement les incertitudes et limites de chaque méthode
-- Ne pas inventer de comparatifs historiques non fournis"""
-                )
-                client      = anthropic.Anthropic(api_key=api_key)
-                reco_finale = client.messages.create(model="claude-opus-4-5", max_tokens=2500,
-                    messages=[{"role":"user","content":prompt}])
-                st.session_state["reco_finale"] = reco_finale.content[0].text
+- Ne pas inventer de comparatifs historiques non fournis""")
+            claude_stream(api_key, prompt, max_tokens=2500, session_key="reco_finale")
 
     if "reco_finale" in st.session_state:
         st.divider()
@@ -1850,19 +1512,14 @@ Exemple à ÉVITER :
 
 with tab_admin:
     st.header("🔐 Interface Administrateur")
-
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
 
     if admin_pwd == get_admin_password():
         st.success("✅ Accès accordé")
         users = get_users()
-
         st.markdown("#### 👥 Utilisateurs autorisés")
-        st.dataframe(pd.DataFrame([
-            {"Email": e, "Code": c, "Statut": "✅ Actif"}
-            for e, c in users.items()
-        ]), use_container_width=True)
-
+        st.dataframe(pd.DataFrame([{"Email": e, "Code": c, "Statut": "✅ Actif"}
+                                    for e, c in users.items()]), use_container_width=True)
         st.divider()
         st.markdown("#### ⚙️ Comment gérer les utilisateurs")
         st.info("""**Allez sur Streamlit Cloud → votre app → Settings → Secrets** et ajoutez :
@@ -1874,9 +1531,7 @@ admin_password = "VotreMotDePasseAdmin"
 "email@exemple.com" = "CODE_UNIQUE"
 "autre@email.com"   = "AUTRE_CODE"
 ```
-
 Sauvegardez — l'app se recharge automatiquement.""")
-
         st.divider()
         st.markdown("#### 🎲 Générateur de code")
         col1, col2 = st.columns(2)
@@ -1885,7 +1540,6 @@ Sauvegardez — l'app se recharge automatiquement.""")
         with col2:
             if st.button("Générer un code"):
                 st.session_state["generated_code"] = secrets_lib.token_hex(4).upper()
-
         if "generated_code" in st.session_state:
             st.success(f"Code généré : **{st.session_state['generated_code']}**")
             if email_new:
@@ -1894,13 +1548,3 @@ Sauvegardez — l'app se recharge automatiquement.""")
 
     elif admin_pwd:
         st.error("❌ Mot de passe incorrect")
-
-
-
-
-
-
-
-
-
-
