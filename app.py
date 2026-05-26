@@ -1301,6 +1301,10 @@ with tab5:
             n_avant = len(df_mkt)
             if filtre_branche.strip():
                 col_business = next((c for c in df_mkt.columns if 'BUSINESS' in c.upper() or 'BRANCHE' in c.upper()), None)
+                st.write("Colonne trouvée :", col_business)
+                st.write("5 premières valeurs brutes :", df_mkt[col_business].head(5).tolist())
+                st.write("5 premières valeurs après strip/upper :", df_mkt[col_business].astype(str).str.strip().str.upper().head(5).tolist())
+                st.write("Contient EVENEMENT ?", df_mkt[col_business].astype(str).str.strip().str.upper().str.contains("EVENEMENT", regex=False, na=False).sum())
                 if col_business:
                     df_mkt = df_mkt[df_mkt[col_business].astype(str).str.strip().str.upper().str.contains(filtre_branche.strip().upper(), regex=False, na=False)]
             n_filtre = n_avant - len(df_mkt)
