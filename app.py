@@ -1032,62 +1032,59 @@ with tab2:
                         text="Stabilisation..."
                     )
 
-                    df_liq["ratio_check"] = (
-                        I_cotation_val
-                        / df_liq["I_surv"]
-                    )
-
-                    df_liq["S_prime_k"] = np.where(
-
-                        (df_liq["ratio_check"] - 1) > 0.10,
-
-                        df_liq["Sk"]
-                        * (
-                            df_liq["I_surv"]
-                            / I_cotation_val
-                        ),
-
-                        df_liq["Sk"]
-
-                    )
-
-                    df_liq["coeff_stab"] = np.where(
-
-                        df_liq["S_prime_k"] > 0,
-
-                        df_liq["Sk"]
-                        / df_liq["S_prime_k"],
-
-                        1.0
-                    )
-
-                else:
-
-                    df_liq["S_prime_k"] = df_liq["Sk"]
-                    df_liq["coeff_stab"] = 1.0
-
                 # =========================================================
-                # DEBUG FINAL
+                # STABILISATION CORRIGÉE
                 # =========================================================
-
-                st.write("DEBUG COEFFS")
-                st.dataframe(
-
+                
+                df_liq['ratio_check'] = (
+                    I_cotation_val
+                    / df_liq['I_surv']
+                )
+                
+                # déclenchement stabilisation
+                mask_stab = (
+                    df_liq['ratio_check'] >= 1.10
+                )
+                
+                # S'k
+                df_liq['S_prime_k'] = np.where(
+                
+                    mask_stab,
+                
+                    df_liq['Sk']
+                    * (
+                        df_liq['I_surv']
+                        / I_cotation_val
+                    ),
+                
+                    df_liq['Sk']
+                )
+                
+                # coefficient stabilisation
+                df_liq['coeff_stab'] = np.where(
+                
+                    df_liq['S_prime_k'] > 0,
+                
+                    df_liq['Sk']
+                    / df_liq['S_prime_k'],
+                
+                    1.0
+                )
+                
+                # DEBUG
+                st.write(
                     df_liq[
                         [
-                            "annee_surv",
-                            "annee_reg",
-                            "dev",
-                            "I_reg",
-                            "I_ultime",
-                            "I_surv",
-                            "Sk",
-                            "S_prime_k",
-                            "coeff_stab"
+                            'annee_surv',
+                            'I_surv',
+                            'ratio_check',
+                            'Sk',
+                            'S_prime_k',
+                            'coeff_stab'
                         ]
-                    ].head(50)
-
+                    ].head(30)
                 )
+
 
                 progress.progress(
                     100,
