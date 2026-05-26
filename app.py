@@ -8,6 +8,16 @@ import secrets as secrets_lib
 from PIL import Image
 
 # ════════════════════════════════════════════
+# SET PAGE CONFIG — DOIT ÊTRE EN PREMIER
+# ════════════════════════════════════════════
+
+try:
+    icon = Image.open("icon.png")
+    st.set_page_config(page_title="AtlanticRe IA", layout="wide", page_icon=icon)
+except:
+    st.set_page_config(page_title="AtlanticRe IA", layout="wide", page_icon="🎯")
+
+# ════════════════════════════════════════════
 # ACCESS CONTROL
 # ════════════════════════════════════════════
 
@@ -27,12 +37,6 @@ if "authenticated" not in st.session_state:
 
 
 if not st.session_state["authenticated"]:
-
-    try:
-        icon = Image.open("icon.png")
-        st.set_page_config(page_title="AtlanticRe IA", layout="wide", page_icon=icon)
-    except:
-        st.set_page_config(page_title="AtlanticRe IA", layout="wide", page_icon="🎯")
 
     st.markdown("""
     <style>
@@ -89,12 +93,10 @@ if st.session_state["page"] == "landing":
     </style>
     """, unsafe_allow_html=True)
 
-    # ── Avatar IA animé ──
     st.markdown("""
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
         min-height:85vh;text-align:center;padding:40px 20px">
 
-        <!-- Avatar SVG -->
         <div style="width:160px;height:160px;margin-bottom:32px;position:relative">
             <svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="80" cy="80" r="75" fill="none" stroke="#2d8a4e" stroke-width="2" opacity="0.3"/>
@@ -129,7 +131,6 @@ if st.session_state["page"] == "landing":
             Atlantic Re · Automobile · Maroc
         </p>
 
-        <!-- Features -->
         <div style="display:flex;gap:16px;margin-bottom:48px;flex-wrap:wrap;justify-content:center">
             <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);
                 border-radius:12px;padding:16px 20px;min-width:140px">
@@ -137,21 +138,18 @@ if st.session_state["page"] == "landing":
                 <div style="color:white;font-size:13px;font-weight:600">Burning Cost</div>
                 <div style="color:#888;font-size:11px">As-If · Stabilisation · CL</div>
             </div>
-
             <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);
                 border-radius:12px;padding:16px 20px;min-width:140px">
                 <div style="font-size:24px;margin-bottom:6px">🎲</div>
                 <div style="color:white;font-size:13px;font-weight:600">Simulation</div>
                 <div style="color:#888;font-size:11px">Pareto · Poisson · TVE</div>
             </div>
-
             <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);
                 border-radius:12px;padding:16px 20px;min-width:140px">
                 <div style="font-size:24px;margin-bottom:6px">📈</div>
                 <div style="color:white;font-size:13px;font-weight:600">Market Curve</div>
                 <div style="color:#888;font-size:11px">Modèle puissance log-log</div>
             </div>
-
             <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);
                 border-radius:12px;padding:16px 20px;min-width:140px">
                 <div style="font-size:24px;margin-bottom:6px">🤖</div>
@@ -177,14 +175,10 @@ if st.session_state["page"] == "landing":
         )
 
     st.stop()
+
 # ════════════════════════════════════════════
-# APP CONFIG
+# APP CONFIG (styles uniquement, set_page_config déjà appelé)
 # ════════════════════════════════════════════
-try:
-    icon = Image.open("icon.png")
-    st.set_page_config(page_title="Atlantic Re", layout="wide", page_icon=icon)
-except:
-    st.set_page_config(page_title="Atlantic Re", layout="wide", page_icon="🎯")
 
 st.markdown("""
 <style>
@@ -503,7 +497,6 @@ def claude_stream(api_key, prompt, max_tokens=2000, session_key=""):
     return full_text
 
 
-
 def guide_prompt(etape, exemples_contexte, exemples_instructions, exemples_input, exemples_output):
     """Affiche des recommandations de prompt pour chaque étape"""
     with st.expander("💡 Conseils pour bien prompter Claude sur cette étape", expanded=False):
@@ -537,6 +530,7 @@ def guide_prompt(etape, exemples_contexte, exemples_instructions, exemples_input
             plus l'analyse Claude sera pertinente et actionnelle.
         </div>
         """, unsafe_allow_html=True)
+
 # ════════════════════════════════════════════
 # FONCTIONS ACTUARIELLES — PORTAGE CODE R
 # ════════════════════════════════════════════
@@ -625,13 +619,13 @@ with st.sidebar:
         placeholder="Ex: Portefeuille automobile Maroc, forte croissance 2023...",
         height=120, key="instructions_globales",
         help="Inclus dans TOUS les prompts Claude")
+
 # ════════════════════════════════════════════
 # ACCUEIL INTELLIGENT — AUTO-DÉCLENCHÉ
 # ════════════════════════════════════════════
 
 if api_key and "accueil_ia_done" not in st.session_state:
 
-    # Détecter l'état actuel du workflow
     etapes_faites   = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
                        ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
                        ("Market Curve","resultats_mkt")] if k in st.session_state]
@@ -687,7 +681,6 @@ Utilisateur       : {st.session_state.get('user_email', 'Inconnu')}""",
         st.session_state["accueil_ia_done"] = True
 
 elif "accueil_ia_msg" in st.session_state:
-    # Réafficher le message sans re-appeler Claude
     st.markdown("""
     <div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
         border-radius:16px;padding:24px 28px;margin-bottom:20px;
@@ -711,12 +704,12 @@ elif not api_key:
     </div>
     """, unsafe_allow_html=True)
 
-# Bouton pour réinitialiser l'accueil (utile après avoir complété une étape)
 if "accueil_ia_done" in st.session_state:
     if st.button("🔄 Actualiser les recommandations IA", key="reset_accueil"):
         del st.session_state["accueil_ia_done"]
         del st.session_state["accueil_ia_msg"]
         st.rerun()
+
 # ════════════════════════════════════════════
 # TABS
 # ════════════════════════════════════════════
@@ -932,10 +925,6 @@ with tab2:
             df_liq['I_surv']       = df_liq['annee_surv'].apply(get_indice)
             df_liq['Sk']           = df_liq['total'] * (df_liq['I_ultime'] / df_liq['I_reg'])
 
-            # ── Stabilisation ──
-            # ratio = I_reg / I_surv (varie par sinistre ET par développement)
-            # Déclenchement si ratio >= 1 + seuil
-            # S'k = Sk × (I_surv / I_reg)  → ramène en monnaie constante de survenance
             progress.progress(55, text="Stabilisation...")
 
             df_liq['ratio_check'] = df_liq['I_reg'] / df_liq['I_surv']
@@ -1051,7 +1040,6 @@ with tab2:
             coeffs_raw = df_proj['coeff_stab'].values
             coeffs     = coeffs_raw[(coeffs_raw > 0) & np.isfinite(coeffs_raw)]
 
-            # ── Analyse sinistres majeurs (portage code R) ──
             C_trav  = next((t['portee'] for t in tranches_input if t['type'] == 'travaillante'), 13_000_000)
             res_maj = identifier_sinistres_majeurs(
                 df_proj=df_proj, gnpi=gnpi, D=D_trav, C_tranche=C_trav,
@@ -1145,10 +1133,9 @@ with tab3:
                     aal   = t_info["AAL"]
                     aad   = t_info["AAD"]
                     n_rec = t_info["nb_reconstitutions"]
-                    t_r   = t_info["taux_reconstitution"] / 100  # taux par reconstitution
+                    t_r   = t_info["taux_reconstitution"] / 100
                     cap   = (n_rec + 1) * L
 
-                    # ── Charges par sinistre ──
                     df_proj["Ck"] = df_proj.apply(
                         lambda row: min(max(row["Sprime_ultime"] - D, 0), L) * row["coeff_stab"],
                         axis=1)
@@ -1163,11 +1150,8 @@ with tab3:
                         charges_finales.append({"annee": ann, "charge": ch})
 
                     df_ch = pd.DataFrame(charges_finales)
-                    N     = len(df_ch)  # nombre d'années historique
+                    N     = len(df_ch)
 
-                    # ── Pr_Rec : formule exacte ──
-                    # Pr_Rec = (1/L) × Σ_n Σ_r [ t_r × min(L, max(C_n - (r-1)×L, 0)) ]
-                    # Rec    = Pr_Rec / (Pr_Rec + N)
                     Pr_Rec = 0.0
                     for C_n in df_ch["charge"].values:
                         for r in range(1, n_rec + 1):
@@ -1177,12 +1161,10 @@ with tab3:
 
                     Rec = Pr_Rec / (Pr_Rec + N) if (Pr_Rec + N) > 0 else 0.0
 
-                    # ── Taux ──
                     charge_moy  = df_ch["charge"].mean()
                     taux_pur    = charge_moy / gnpi
                     taux_risque = taux_pur * 1.20
 
-                    # τ_tech = τ_risque × (1 - Rec) / (1 - BK - FG - AF)
                     taux_technique = (taux_risque * (1 - Rec)) / (
                         1 - t_info["brokage"] - t_info["frais"] - 0.0021)
 
@@ -1491,16 +1473,14 @@ with tab5:
                 taux_pur    = rol * (t['portee'] / gnpi)
                 taux_risque = taux_pur * 1.002
                 taux_tech   = taux_risque / (1 - t['brokage'] - t['frais'] - 0.0021)
-                # Reconstitution : même formule que BC
                 n_rec = t['nb_reconstitutions']; t_r = t['taux_reconstitution'] / 100
                 L = t['portee']
-                # Proxy Pr_Rec avec taux_pur × GNPI comme charge annuelle représentative
                 C_rep  = taux_pur * gnpi
                 Pr_Rec = 0.0
                 for r in range(1, n_rec + 1):
                     Pr_Rec += t_r * min(L, max(C_rep - (r - 1) * L, 0))
                 Pr_Rec /= L if L > 0 else 1
-                N_hist  = 10  # années historique par défaut
+                N_hist  = 10
                 Rec     = Pr_Rec / (Pr_Rec + N_hist) if (Pr_Rec + N_hist) > 0 else 0
                 taux_final = taux_tech * (1 - Rec)
                 return {"tranche": t["nom"], "type": t["type"], "x_norm": x_norm,
