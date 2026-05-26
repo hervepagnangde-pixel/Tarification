@@ -1302,7 +1302,7 @@ with tab5:
             if filtre_branche.strip():
                 col_business = next((c for c in df_mkt.columns if 'BUSINESS' in c.upper() or 'BRANCHE' in c.upper()), None)
                 if col_business:
-                    df_mkt = df_mkt[df_mkt[col_business].astype(str).str.strip().str.upper().str.contains(filtre_branche.strip().upper())]
+                    df_mkt = df_mkt[df_mkt[col_business].astype(str).str.strip().str.upper().str.contains(filtre_branche.strip().upper(), regex=False, na=False)]
             n_filtre = n_avant - len(df_mkt)
 
             # ── Filtre 2 : bornes ROL ──
