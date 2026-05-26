@@ -1021,35 +1021,45 @@ with tab2:
                     )
                 )
 
-                # =========================================================
-                # STABILISATION
-                # =========================================================
-
-                if is_long:
-
-                    progress.progress(
-                        65,
-                        text="Stabilisation..."
-                    )
-
-                # ── Stabilisation corrigée ──
-                # ratio = I_cotation / I_reg  (varie par développement)
-                # Condition : ratio >= 1.10
-                # Si oui : S'k = Sk × (I_reg / I_cotation)
-                # coeff_stab = Sk / S'k = I_cotation / I_reg
+                # ── Stabilisation — formule exacte clause de stabilisation ──
+                # P0 = Pn × (I_surv / I_reg)  → ramène en monnaie de survenance
+                # S'k = Sk × (I_surv / I_reg)
+                # coeff_stab = I_reg / I_surv  (varie par sinistre ET développement)
+                #
+                # Déclenchement : pas de seuil sur ratio
+                # La clause s'applique TOUJOURS — c'est le contrat qui décide
+                # (on peut ajouter un seuil atteint ou seuil déduit si prévu)
+                #
+                # Option seuil atteint : stabilisation seulement si I_reg/I_surv >= 1 + seuil
                 
-                df_liq['ratio_check'] = I_cotation_val / df_liq['I_reg']
-                mask_stab             = df_liq['ratio_check'] >= 1.10
+                seuil_stabilisation = st.number_input(
+                    "Seuil de déclenchement stabilisation (% inflation, 0 = toujours)",
+                    value=0.0, min_value=0.0, max_value=50.0, step=5.0,
+                    help="0% = clause s'applique toujours | 10% = seuil atteint 10%"
+                ) / 100
+                
+                df_liq['ratio_check'] = df_liq['I_reg'] / df_liq['I_surv']
+                
+                mask_stab = df_liq['ratio_check'] >= (1.0 + seuil_stabilisation)
                 
                 df_liq['S_prime_k'] = np.where(
                     mask_stab,
-                    df_liq['Sk'] * (df_liq['I_reg'] / I_cotation_val),
+                    df_liq['Sk'] * (df_liq['I_surv'] / df_liq['I_reg']),
                     df_liq['Sk']
                 )
+                
                 df_liq['coeff_stab'] = np.where(
                     df_liq['S_prime_k'] > 0,
                     df_liq['Sk'] / df_liq['S_prime_k'],
                     1.0
+                )
+                
+                n_stab      = mask_stab.sum()
+                annees_reg_stab = sorted(df_liq[mask_stab]['annee_reg'].unique().tolist())
+                st.info(
+                    f"📊 Clause stabilisation | Seuil : {seuil_stabilisation*100:.0f}% | "
+                    f"Obs. stabilisées : {n_stab} | "
+                    f"Années règlement concernées : {annees_reg_stab}"
                 )
                 
                 # Résumé stabilisation
@@ -1070,7 +1080,7 @@ with tab2:
                     ].head(30)
                 )
 
-
+                "seuil_stabilisation": seuil_stabilisation,
                 progress.progress(
                     100,
                     text="Transformation terminée"
