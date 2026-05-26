@@ -26,11 +26,12 @@ if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
 if not st.session_state["authenticated"]:
+
     try:
         icon = Image.open("icon.png")
-        st.set_page_config(page_title="AtlanticRe IA", layout="centered", page_icon=icon)
+        st.set_page_config(page_title="AtlanticRe IA", layout="wide", page_icon=icon)
     except:
-        st.set_page_config(page_title="AtlanticRe IA", layout="centered", page_icon="🎯")
+        st.set_page_config(page_title="AtlanticRe IA", layout="wide", page_icon="🎯")
 
     st.markdown("""
     <style>
@@ -49,7 +50,7 @@ if not st.session_state["authenticated"]:
         st.markdown("<div style='text-align:center; padding:40px 0 20px 0'>", unsafe_allow_html=True)
         st.markdown("# 🎯")
         st.markdown("### Herve IA")
-        st.caption("Tarification Réassurance Non-Proportionnelle")
+        st.caption("Tarification réassurance non-proportionnelle")
         st.markdown("</div>", unsafe_allow_html=True)
         st.divider()
         email = st.text_input("📧 Adresse email", placeholder="votre@email.com", key="login_email")
@@ -1207,6 +1208,11 @@ with tab3:
 
         st.divider()
         st.markdown("### 🤖 Analyse Claude — Burning Cost")
+        guide_prompt("Burning Cost",
+            ["Sinistralité exceptionnelle 2020", "Portefeuille en croissance +15%/an"],
+            ["Comparer avec taux marché 2-4%", "Signaler si BC < simulation de 30%"],
+            ["Taux BC N-1 : R&C=2.5%", "Objectif prime < 12M MAD"],
+            ["Tableau par tranche avec verdict ✅/⚠️/❌", "Maximum 1 page"])
         ctx_bc, inst_bc, inp_bc, out_bc = prompt_inputs(
             key_prefix="bc",
             placeholder_contexte="Ex: Sinistralité exceptionnelle 2020, portefeuille en croissance...",
@@ -1348,6 +1354,11 @@ with tab4:
 
         st.divider()
         st.markdown("### 🤖 Analyse Claude — Simulation & Conditions")
+        guide_prompt("Simulation Pareto/Poisson",
+            ["Alpha calibré sur 2016-2025", "Lambda estimé sur 183M MAD"],
+            ["Analyser impact AAL sur tranche cat", "Comparer BC vs Simulation"],
+            ["Alpha R=1.45, Lambda R=3.2", "Résultats simulation N-1 : R&C=3.1%"],
+            ["Impact par condition en points de taux", "Classement NÉCESSAIRE/À AJUSTER/INUTILE"])
         ctx_sim, inst_sim, inp_sim, out_sim = prompt_inputs(
             key_prefix="sim",
             placeholder_contexte="Ex: Nouveau modèle cat, lambda revu à la hausse...",
@@ -1603,6 +1614,11 @@ with tab5:
 
         st.divider()
         st.markdown("### 🤖 Analyse Claude — Market Curve")
+        guide_prompt("Market Curve",
+            ["Marché 2025, 40 cotations XL événement", "Marché en durcissement +10-15%"],
+            ["Privilégier R²≥45% avec taux non nuls", "Recommander UN seul ajustement"],
+            ["Taux marché référence Cat L1=1.5%", "a=0.0487, b=0.605 (rapport FST)"],
+            ["Justification R² + robustesse N", "Ajustement retenu avec a, b, R²"])
         ctx_mkt, inst_mkt, inp_mkt, out_mkt = prompt_inputs(
             key_prefix="mkt",
             placeholder_contexte="Ex: Marché en durcissement, hausse 15% vs année précédente...",
@@ -1682,6 +1698,11 @@ with tab6:
 
         st.divider()
         st.markdown("### 🤖 Rapport Claude — Analyse finale")
+        guide_prompt("Rapport Final",
+            ["Négociation avec Partner Re", "Comité de tarification 15 janvier 2026"],
+            ["Justifier chaque taux vs alternatives", "Comparer avec taux N-1 fournis"],
+            ["Taux N-1 : R&C=3.1%, CatL1=1.2%", "Cotation Partner Re : R&C=2.30%"],
+            ["Synthèse exécutive 5 lignes max", "Verdict : ACCEPTER / NÉGOCIER / REFUSER"])
         ctx_r, inst_r, inp_r, out_r = prompt_inputs(
             key_prefix="rapport",
             placeholder_contexte="Ex: Négociation avec réassureur XYZ, objectif prime < 14M MAD...",
