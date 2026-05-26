@@ -552,15 +552,23 @@ with tab1:
     nb_tranches = st.number_input("Nombre de tranches", min_value=1, max_value=10, value=3)
     tranches_input = []
 
+defaults = {
+        0: {"type": "travaillante", "priorite": 2_000_000,  "portee": 13_000_000},
+        1: {"type": "cat",          "priorite": 15_000_000, "portee": 10_000_000},
+        2: {"type": "cat",          "priorite": 25_000_000, "portee": 15_000_000},
+    }
+
     for i in range(nb_tranches):
+        d = defaults.get(i, {"type": "travaillante", "priorite": 2_000_000, "portee": 13_000_000})
         with st.expander(f"🔷 Tranche {i+1}", expanded=(i==0)):
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown("**Identification**")
-                nom      = st.text_input("Nom",             value=f"Tranche {i+1}", key=f"nom_{i}")
-                type_t   = st.selectbox("Type",             ["travaillante","non_travaillante","cat"], key=f"type_{i}")
-                priorite = st.number_input("Priorité (MAD)",value=2_000_000,  step=500_000, key=f"prio_{i}", format="%d")
-                portee   = st.number_input("Portée (MAD)",  value=13_000_000, step=500_000, key=f"port_{i}", format="%d")
+                nom      = st.text_input("Nom",              value=f"Tranche {i+1}", key=f"nom_{i}")
+                type_idx = ["travaillante","non_travaillante","cat"].index(d["type"])
+                type_t   = st.selectbox("Type",              ["travaillante","non_travaillante","cat"], index=type_idx, key=f"type_{i}")
+                priorite = st.number_input("Priorité (MAD)", value=d["priorite"], step=500_000, key=f"prio_{i}", format="%d")
+                portee   = st.number_input("Portée (MAD)",   value=d["portee"],   step=500_000, key=f"port_{i}", format="%d")
             with c2:
                 st.markdown("**Conditions contractuelles**")
                 has_aal     = st.checkbox("AAL", key=f"aal_{i}")
