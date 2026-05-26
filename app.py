@@ -478,7 +478,98 @@ with st.sidebar:
         placeholder="Ex: Portefeuille automobile Maroc, forte croissance 2023...",
         height=120, key="instructions_globales",
         help="Inclus dans TOUS les prompts Claude")
+# ════════════════════════════════════════════
+# ACCUEIL INTELLIGENT — AUTO-DÉCLENCHÉ
+# ════════════════════════════════════════════
 
+if api_key and "accueil_ia_done" not in st.session_state:
+
+    # Détecter l'état actuel du workflow
+    etapes_faites   = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
+                       ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
+                       ("Market Curve","resultats_mkt")] if k in st.session_state]
+    etapes_manquantes = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
+                         ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
+                         ("Market Curve","resultats_mkt")] if k not in st.session_state]
+
+    prompt_accueil = build_prompt(
+        role="""Assistant actuariel expert en réassurance non-proportionnelle automobile.
+Tu accueilles un utilisateur sur l'outil de tarification XL Atlantic Re.""",
+        task="""Génère un message d'accueil intelligent en 3 parties :
+
+1. ACCUEIL PERSONNALISÉ (2 lignes max)
+   - Salutation professionnelle et chaleureuse
+   - Rappel de l'objectif de l'outil : tarification XL automobile Maroc
+
+2. GUIDE RAPIDE (format étapes numérotées, 1 ligne par étape)
+   📋 Programme → 📂 Triangle → 🔥 Burning Cost → 🎲 Simulation → 📈 Market Curve → 📋 Rapport
+
+3. RECOMMANDATION INTELLIGENTE (selon l'état actuel)
+   - Si aucune étape faite : recommander de commencer par le Programme
+   - Si des étapes sont faites : féliciter et indiquer la prochaine étape
+   - Si tout est fait : proposer de générer le rapport final
+
+Ton style : professionnel, concis, encourageant. Maximum 10 lignes au total.""",
+        data=f"""État actuel du workflow :
+Étapes complétées : {etapes_faites if etapes_faites else 'Aucune — nouvelle session'}
+Étapes restantes  : {etapes_manquantes if etapes_manquantes else 'Toutes complétées !'}
+GNPI configuré    : {gnpi:,} MAD
+Utilisateur       : {st.session_state.get('user_email', 'Inconnu')}""",
+        contexte_global=st.session_state.get("instructions_globales", ""),
+        contraintes="""- Ne pas inventer de données ou de résultats
+- Ne pas mentionner d'étapes non encore faites comme si elles étaient faites
+- Rester très concis — c'est un message d'accueil, pas un rapport
+- Utiliser des emojis pour rendre le message visuel et agréable"""
+    )
+
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
+        border-radius:16px;padding:24px 28px;margin-bottom:20px;
+        box-shadow:0 6px 20px rgba(0,0,0,0.2)">
+        <div style="font-size:18px;font-weight:700;color:white;margin-bottom:8px">
+            🤖 Herve IA — Assistant de tarification
+        </div>
+        <div style="font-size:13px;color:rgba(255,255,255,0.7)">
+            Analyse de votre session en cours...
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.container():
+        claude_stream(api_key, prompt_accueil, max_tokens=600, session_key="accueil_ia_msg")
+        st.session_state["accueil_ia_done"] = True
+
+elif "accueil_ia_msg" in st.session_state:
+    # Réafficher le message sans re-appeler Claude
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
+        border-radius:16px;padding:24px 28px;margin-bottom:20px;
+        box-shadow:0 6px 20px rgba(0,0,0,0.2)">
+        <div style="font-size:18px;font-weight:700;color:white;margin-bottom:4px">
+            🤖 Herve IA — Assistant de tarification
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown(st.session_state["accueil_ia_msg"])
+
+elif not api_key:
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
+        border-radius:16px;padding:24px 28px;margin-bottom:20px;">
+        <div style="font-size:18px;font-weight:700;color:white">🤖 Herve IA</div>
+        <div style="color:rgba(255,255,255,0.8);margin-top:8px;font-size:14px">
+            Entrez votre clé API Claude dans la sidebar pour activer l'assistant IA.<br>
+            <b>Workflow :</b> 📋 Programme → 📂 Triangle → 🔥 Burning Cost → 🎲 Simulation → 📈 Market Curve → 📋 Rapport
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Bouton pour réinitialiser l'accueil (utile après avoir complété une étape)
+if "accueil_ia_done" in st.session_state:
+    if st.button("🔄 Actualiser les recommandations IA", key="reset_accueil"):
+        del st.session_state["accueil_ia_done"]
+        del st.session_state["accueil_ia_msg"]
+        st.rerun()
 # ════════════════════════════════════════════
 # TABS
 # ════════════════════════════════════════════
