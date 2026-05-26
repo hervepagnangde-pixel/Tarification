@@ -400,35 +400,7 @@ def build_prompt(role, task, data, contexte="", instructions="",
                  contexte_global="", exemples="", contraintes=""):
     prompt = f"""
     
-def claude_stream(api_key, prompt, max_tokens=2000, session_key=""):
-    """Streaming Claude avec animation agentique"""
-    client      = anthropic.Anthropic(api_key=api_key)
-    placeholder = st.empty()
-    full_text   = ""
 
-    with st.status("🤖 Agent Claude en cours...", expanded=True) as status:
-        st.write("🔗 Connexion au modèle...")
-        st.write("📊 Chargement des données actuarielles...")
-        try:
-            with client.messages.stream(
-                model="claude-opus-4-5",
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}]
-            ) as stream:
-                st.write("✍️ Génération de l'analyse...")
-                for text in stream.text_stream:
-                    full_text += text
-                    placeholder.markdown(full_text + "▌")
-            status.update(label="✅ Analyse terminée", state="complete", expanded=False)
-        except Exception as e:
-            status.update(label="❌ Erreur", state="error")
-            st.error(f"Erreur API : {e}")
-            return ""
-
-    placeholder.markdown(full_text)
-    if session_key:
-        st.session_state[session_key] = full_text
-    return full_text
 ════════════════════════════════════════════
 RÔLE
 ════════════════════════════════════════════
@@ -521,6 +493,35 @@ Si incertain → le dire plutôt qu'inventer.
 """
     return prompt.strip()
 
+def claude_stream(api_key, prompt, max_tokens=2000, session_key=""):
+    """Streaming Claude avec animation agentique"""
+    client      = anthropic.Anthropic(api_key=api_key)
+    placeholder = st.empty()
+    full_text   = ""
+
+    with st.status("🤖 Agent Claude en cours...", expanded=True) as status:
+        st.write("🔗 Connexion au modèle...")
+        st.write("📊 Chargement des données actuarielles...")
+        try:
+            with client.messages.stream(
+                model="claude-opus-4-5",
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}]
+            ) as stream:
+                st.write("✍️ Génération de l'analyse...")
+                for text in stream.text_stream:
+                    full_text += text
+                    placeholder.markdown(full_text + "▌")
+            status.update(label="✅ Analyse terminée", state="complete", expanded=False)
+        except Exception as e:
+            status.update(label="❌ Erreur", state="error")
+            st.error(f"Erreur API : {e}")
+            return ""
+
+    placeholder.markdown(full_text)
+    if session_key:
+        st.session_state[session_key] = full_text
+    return full_text
 
 # ════════════════════════════════════════════
 # HEADER + SIDEBAR
