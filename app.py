@@ -1267,7 +1267,7 @@ with tab5:
 
     f_mkt = st.file_uploader("📁 Données marché", type=["xlsx","csv"], key="f_mkt")
 
-    # ── Paramètres de filtrage (inspirés du VBA) ──
+    # ── Paramètres de filtrage  ──
     with st.expander("⚙️ Paramètres de filtrage", expanded=False):
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -1275,7 +1275,7 @@ with tab5:
             rol_max   = st.number_input("ROL maximum (%)", value=150.0, step=10.0) / 100
         with c2:
             tolerance = st.number_input("Tolérance proximité ROL≈Midpoint (%)", value=20.0, step=5.0) / 100
-            r2_min    = st.number_input("R² minimum accepté (%)", value=45.0, step=5.0) / 100
+            r2_min    = st.number_input("R² minimum accepté (%)", value=30.0, step=5.0) / 100
         with c3:
             filtre_branche = st.text_input("Filtre branche (colonne INT_BUSINESS)", value="EVENEMENT",
                                             help="Garde uniquement les lignes contenant ce mot")
@@ -1284,7 +1284,9 @@ with tab5:
     if f_mkt and st.button("▶ Construire la market curve", type="primary"):
         with st.spinner("📈 Construction en cours..."):
             df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
-
+            st.write("Colonnes :", df_mkt.columns.tolist())
+            st.write("Valeurs INT_BUSINESS uniques :", df_mkt['INT_BUSINESS'].unique().tolist() if 'INT_BUSINESS' in df_mkt.columns else "Colonne absente")
+            st.write("Nb lignes avant filtrage :", len(df_mkt))
             # Nettoyage colonnes numériques
             for col in ['ROLs','midpoints','Garantie en MAD','Priorité en MAD']:
                 if col in df_mkt.columns and df_mkt[col].dtype == object:
@@ -1564,34 +1566,34 @@ with tab5:
                 prompt = build_prompt(
                     role="Expert en réassurance catastrophe et market curve, spécialiste marchés émergents.",
                     task=f"""Analyse les ajustements de market curve et recommande le meilleur.
-Modèle : ROL = a × midpoints^(-b), b > 0 (ROL décroit avec la priorité)
-Critère prioritaire : R²≥{r2_min*100:.0f}% avec taux non nuls > R² plus élevé avec taux nuls.
-Pour chaque ajustement :
-1. Évalue R² et sa significativité (seuil {r2_min*100:.0f}%)
-2. Vérifie que tous les taux sont positifs et cohérents
-3. Tiens compte du N (robustesse statistique)
-4. Signale les taux nuls ou aberrants
-Recommande UN seul ajustement avec justification.""",
-                    data=f"""Ajustements :
-{json.dumps(rows_recap, indent=2)}
-Programme : {json.dumps(tranches_input, indent=2)}
-GNPI : {gnpi:,} MAD
-Filtres appliqués : ROL∈[{rol_min*100:.0f}%,{rol_max*100:.0f}%], tolérance proximité {tolerance*100:.0f}%""",
-                    contexte=ctx_mkt, instructions=inst_mkt,
-                    input_data=inp_mkt, output_instructions=out_mkt,
-                    contexte_global=st.session_state.get("instructions_globales",""),
-                    contraintes=f"""- b > 0 obligatoire (ROL décroit avec priorité)
-- R²≥{r2_min*100:.0f}% avec taux non nuls = préférable à R² plus élevé avec taux nuls
-- Taux nul = rejet immédiat de l'ajustement
-- N < 10 = faible robustesse à signaler
-- Taux marché > 3× simulation = suspect"""
-                )
-                client = anthropic.Anthropic(api_key=api_key)
-                reco   = client.messages.create(
-                    model="claude-opus-4-5", max_tokens=1500,
-                    messages=[{"role":"user","content":prompt}]
-                )
-                st.session_state["analyse_mkt"] = reco.content[0].text
+        Modèle : ROL = a × midpoints^(-b), b > 0 (ROL décroit avec la priorité)
+        Critère prioritaire : R²≥{r2_min*100:.0f}% avec taux non nuls > R² plus élevé avec taux nuls.
+        Pour chaque ajustement :
+        1. Évalue R² et sa significativité (seuil {r2_min*100:.0f}%)
+        2. Vérifie que tous les taux sont positifs et cohérents
+        3. Tiens compte du N (robustesse statistique)
+        4. Signale les taux nuls ou aberrants
+        Recommande UN seul ajustement avec justification.""",
+                            data=f"""Ajustements :
+        {json.dumps(rows_recap, indent=2)}
+        Programme : {json.dumps(tranches_input, indent=2)}
+        GNPI : {gnpi:,} MAD
+        Filtres appliqués : ROL∈[{rol_min*100:.0f}%,{rol_max*100:.0f}%], tolérance proximité {tolerance*100:.0f}%""",
+                            contexte=ctx_mkt, instructions=inst_mkt,
+                            input_data=inp_mkt, output_instructions=out_mkt,
+                            contexte_global=st.session_state.get("instructions_globales",""),
+                            contraintes=f"""- b > 0 obligatoire (ROL décroit avec priorité)
+        - R²≥{r2_min*100:.0f}% avec taux non nuls = préférable à R² plus élevé avec taux nuls
+        - Taux nul = rejet immédiat de l'ajustement
+        - N < 10 = faible robustesse à signaler
+        - Taux marché > 3× simulation = suspect"""
+                        )
+                        client = anthropic.Anthropic(api_key=api_key)
+                        reco   = client.messages.create(
+                            model="claude-opus-4-5", max_tokens=1500,
+                            messages=[{"role":"user","content":prompt}]
+                        )
+                        st.session_state["analyse_mkt"] = reco.content[0].text
 
         if "analyse_mkt" in st.session_state:
             st.markdown(st.session_state["analyse_mkt"])
