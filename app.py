@@ -46,8 +46,8 @@ if not st.session_state["authenticated"]:
     with col2:
         st.markdown("<div style='text-align:center; padding:40px 0 20px 0'>", unsafe_allow_html=True)
         st.markdown("# 🎯")
-        st.markdown("### Atlanticre IA")
-        st.caption("Tarification réassurance non-proportionnelle")
+        st.markdown("### Herve IA")
+        st.caption("Tarification Réassurance Non-Proportionnelle")
         st.markdown("</div>", unsafe_allow_html=True)
         st.divider()
         email = st.text_input("📧 Adresse email", placeholder="votre@email.com", key="login_email")
@@ -101,7 +101,7 @@ if st.session_state["page"] == "landing":
             </svg>
         </div>
         <h1 style="color:white;font-size:42px;font-weight:800;margin:0 0 8px 0;letter-spacing:-1px;font-family:Inter,sans-serif">
-            Atlanticre <span style="color:#2d8a4e">IA</span>
+            Herve <span style="color:#2d8a4e">IA</span>
         </h1>
         <p style="color:#aaa;font-size:16px;margin:0 0 8px 0">Agent de tarification · Réassurance Non-Proportionnelle</p>
         <p style="color:#666;font-size:13px;margin:0 0 40px 0">Atlantic Re · Automobile · Maroc</p>
@@ -516,10 +516,11 @@ if "accueil_ia_done" in st.session_state:
 # TABS
 # ════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab_admin = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab_agent, tab_admin = st.tabs([
     "📋 Programme", "📂 Données & Triangle",
     "🔥 Burning Cost", "🎲 Simulation",
-    "📈 Market Curve", "📋 Rapport Final", "🔐 Admin"
+    "📈 Market Curve", "📋 Rapport Final",
+    "🤖 Mode Agent", "🔐 Admin"
 ])
 
 etapes_progress = [
@@ -536,7 +537,7 @@ progress_steps(etapes_progress, current=0)
 # ════════════════════════════════════════════
 
 with tab1:
-    st.header("Programme de réassurance")
+    st.header("Programme de Réassurance")
     st.caption("Définissez les tranches, conditions et paramètres de chargement")
     nb_tranches = st.number_input("Nombre de tranches", min_value=1, max_value=10, value=3)
     tranches_input = []
@@ -1304,6 +1305,597 @@ with tab6:
         st.divider()
         st.subheader("🤖 Rapport Claude")
         st.markdown(st.session_state["reco_finale"])
+
+# ════════════════════════════════════════════
+# TAB AGENT — MODE AGENT AUTONOME
+# ════════════════════════════════════════════
+
+with tab_agent:
+    section_header("Mode Agent Autonome", "Claude exécute la tarification complète de A à Z", "🤖")
+
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d2b1a,#1a1a1a);border-radius:12px;
+        padding:20px 24px;margin-bottom:20px;border:1px solid rgba(45,138,78,0.4)">
+        <div style="color:#2d8a4e;font-weight:700;font-size:15px;margin-bottom:8px">
+            ⚡ Comment fonctionne le Mode Agent
+        </div>
+        <div style="color:#ccc;font-size:13px;line-height:1.8">
+            1. Vous uploadez les fichiers et définissez le programme<br>
+            2. Claude <b style="color:#2d8a4e">décide seul</b> de l'ordre et des paramètres<br>
+            3. Claude <b style="color:#2d8a4e">appelle les outils</b> (BC, Simulation, Market Curve)<br>
+            4. Claude <b style="color:#2d8a4e">reboucle</b> si anomalie détectée<br>
+            5. Claude produit le <b style="color:#2d8a4e">rapport final autonome</b>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Prérequis ──
+    prereqs = {
+        "Programme validé"  : "df_prog"    in st.session_state,
+        "Triangle transformé": "df_proj"   in st.session_state,
+        "Données marché"    : "df_mkt_clean" in st.session_state,
+    }
+    c1, c2, c3 = st.columns(3)
+    for col, (nom, ok) in zip([c1, c2, c3], prereqs.items()):
+        col.markdown(f"""<div style="background:{'rgba(45,138,78,0.12)' if ok else 'rgba(239,68,68,0.08)'};
+            border:1px solid {'#2d8a4e' if ok else '#ef4444'};border-radius:10px;
+            padding:14px;text-align:center">
+            <div style="font-size:22px">{'✅' if ok else '❌'}</div>
+            <div style="font-size:12px;font-weight:600;color:{'#2d8a4e' if ok else '#ef4444'};margin-top:4px">{nom}</div>
+            </div>""", unsafe_allow_html=True)
+
+    st.markdown("")
+
+    # ── Instructions agent ──
+    with st.expander("🎯 Instructions pour l'agent (optionnel)", expanded=False):
+        agent_instructions = st.text_area(
+            "Directives spécifiques",
+            placeholder="Ex: Priorité à la market curve pour les tranches cat. Seuil d'alerte écart BC/Sim = 20%. Objectif prime totale < 14M MAD...",
+            height=100, key="agent_instructions")
+        agent_contraintes = st.text_area(
+            "Contraintes métier",
+            placeholder="Ex: Ne pas retenir alpha < 1.2. Si R² < 0.3 sur market curve, utiliser uniquement simulation...",
+            height=80, key="agent_contraintes")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        n_sim_agent = st.number_input("Nb simulations (agent)", value=10000, step=5000, key="n_sim_agent")
+    with col2:
+        st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+        lancer = st.button("🚀 Lancer l'Agent", type="primary", use_container_width=True,
+                           disabled=not all(prereqs.values()) or not api_key)
+
+    if not api_key:
+        st.warning("⚠️ Clé API requise dans la sidebar")
+    elif not all(prereqs.values()):
+        manquants_agent = [n for n, ok in prereqs.items() if not ok]
+        st.warning(f"⚠️ Complétez d'abord : {', '.join(manquants_agent)}")
+
+    # ════════════════════════
+    # DÉFINITION DES OUTILS
+    # ════════════════════════
+
+    AGENT_TOOLS = [
+        {
+            "name": "calculer_burning_cost",
+            "description": """Calcule le Burning Cost pour toutes les tranches du programme.
+Formule : Ck = min(max(S'k_ultime - D, 0), L) × coeff_stab
+Reconstitution : Pr_Rec = (1/L) × Σ_n Σ_r [t_r × min(L, max(C_n-(r-1)L, 0))]
+Rec = Pr_Rec / (Pr_Rec + N)
+τ_tech = τ_risque × (1-Rec) / (1 - BK - FG - AF)
+Retourne les taux pur, risque, technique et final par tranche.""",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "justification": {"type": "string", "description": "Pourquoi tu lances le BC maintenant"}
+                },
+                "required": ["justification"]
+            }
+        },
+        {
+            "name": "lancer_simulation",
+            "description": """Lance la simulation stochastique Pareto/Poisson.
+Simule N sinistres selon Pareto(alpha, seuil), fréquence selon Poisson(lambda).
+Retourne les taux pur, risque, technique et final par tranche, plus l'impact des conditions.""",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "alpha"        : {"type": "number",  "description": "Paramètre de forme Pareto (MLE Hill)"},
+                    "lambda_"      : {"type": "number",  "description": "Fréquence annuelle Poisson"},
+                    "seuil"        : {"type": "number",  "description": "Seuil de modélisation (MAD)"},
+                    "n_sim"        : {"type": "integer", "description": "Nombre de simulations"},
+                    "justification": {"type": "string",  "description": "Pourquoi ces paramètres"}
+                },
+                "required": ["alpha", "lambda_", "seuil", "n_sim", "justification"]
+            }
+        },
+        {
+            "name": "construire_market_curve",
+            "description": """Ajuste le modèle ROL = a × x^(-b) sur les données marché.
+x = (D + C/2) / GNPI (midpoint normalisé).
+τ_pur = ROL × C / GNPI. Retourne les taux par tranche pour le meilleur ajustement.""",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "rol_min"      : {"type": "number", "description": "ROL minimum à retenir (ex: 0.05)"},
+                    "rol_max"      : {"type": "number", "description": "ROL maximum à retenir (ex: 1.0)"},
+                    "r2_min"       : {"type": "number", "description": "R² minimum acceptable (ex: 0.30)"},
+                    "tolerance"    : {"type": "number", "description": "Tolérance proximité ROL≈midpoint (ex: 0.50)"},
+                    "justification": {"type": "string", "description": "Pourquoi ces filtres"}
+                },
+                "required": ["rol_min", "rol_max", "r2_min", "tolerance", "justification"]
+            }
+        },
+        {
+            "name": "generer_rapport_final",
+            "description": """Génère le rapport de synthèse final avec les taux retenus.
+Compare BC, simulation et market curve. Sélectionne la méthode par tranche.
+Retourne le tableau de synthèse et la prime totale.""",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "methode_travaillante": {
+                        "type": "string",
+                        "enum": ["bc", "simulation", "moyenne_bc_sim"],
+                        "description": "Méthode retenue pour tranches travaillantes"
+                    },
+                    "methode_cat": {
+                        "type": "string",
+                        "enum": ["simulation", "market_curve", "max_sim_mkt"],
+                        "description": "Méthode retenue pour tranches cat"
+                    },
+                    "justification": {"type": "string", "description": "Justification du choix des méthodes"}
+                },
+                "required": ["methode_travaillante", "methode_cat", "justification"]
+            }
+        },
+        {
+            "name": "signaler_anomalie",
+            "description": "Signale une anomalie détectée et indique l'action corrective à mener.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "type_anomalie": {
+                        "type": "string",
+                        "enum": ["ecart_bc_sim_eleve", "alpha_suspect", "r2_insuffisant",
+                                 "taux_nul", "incoherence_inter_tranches", "autre"]
+                    },
+                    "description": {"type": "string", "description": "Description de l'anomalie"},
+                    "action"     : {"type": "string", "description": "Action corrective proposée"}
+                },
+                "required": ["type_anomalie", "description", "action"]
+            }
+        }
+    ]
+
+    # ════════════════════════
+    # EXÉCUTEURS D'OUTILS
+    # ════════════════════════
+
+    def _executer_burning_cost():
+        """Exécute le calcul BC et retourne les résultats"""
+        if "df_proj" not in st.session_state: return {"erreur": "df_proj manquant"}
+        df_proj = st.session_state["df_proj"].copy()
+        resultats = []
+        for t_info in tranches_input:
+            D = t_info["priorite"]; L = t_info["portee"]
+            aal = t_info["AAL"]; aad = t_info["AAD"]
+            n_rec = t_info["nb_reconstitutions"]; t_r = t_info["taux_reconstitution"] / 100
+            cap = (n_rec + 1) * L
+            df_proj["Ck"] = df_proj.apply(
+                lambda row: min(max(row["Sprime_ultime"] - D, 0), L) * row["coeff_stab"], axis=1)
+            charges_ann = df_proj.groupby("annee_surv")["Ck"].sum()
+            charges_finales = []
+            for ann, ch in charges_ann.items():
+                if aad: ch = max(ch - aad, 0)
+                if aal: ch = min(ch, aal)
+                charges_finales.append({"annee": int(ann), "charge": round(float(min(ch, cap)), 2)})
+            df_ch = pd.DataFrame(charges_finales); N = len(df_ch)
+            Pr_Rec = 0.0
+            for C_n in df_ch["charge"].values:
+                for r in range(1, n_rec + 1):
+                    Pr_Rec += t_r * min(L, max(C_n - (r-1)*L, 0))
+            Pr_Rec /= L if L > 0 else 1
+            Rec = Pr_Rec / (Pr_Rec + N) if (Pr_Rec + N) > 0 else 0.0
+            charge_moy  = df_ch["charge"].mean()
+            taux_pur    = charge_moy / gnpi
+            taux_risque = taux_pur * 1.20
+            taux_technique = (taux_risque * (1 - Rec)) / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
+            taux_final = taux_technique * (1 + t_info["marge"] + t_info["retrocession"])
+            resultats.append({
+                "tranche": t_info["nom"], "type": t_info["type"],
+                "charge_moy_MAD": round(charge_moy, 2),
+                "Pr_Rec": round(Pr_Rec, 6), "Rec": round(Rec, 6),
+                "taux_pur": round(taux_pur, 6), "taux_risque": round(taux_risque, 6),
+                "taux_technique": round(taux_technique, 6), "taux_final": round(taux_final, 6),
+                "detail_annuel": charges_finales
+            })
+        st.session_state["resultats_bc"] = resultats
+        return {"status": "ok", "resultats": [{k:v for k,v in r.items() if k!="detail_annuel"} for r in resultats]}
+
+
+    def _executer_simulation(alpha, lambda_, seuil, n_sim):
+        """Exécute la simulation et retourne les résultats"""
+        if "coeffs" not in st.session_state: return {"erreur": "coeffs manquants"}
+        coeffs = st.session_state["coeffs"]
+        np.random.seed(42)
+        resultats = []
+        for t_info in tranches_input:
+            D = t_info["priorite"]; P = t_info["portee"]
+            r = t_info["nb_reconstitutions"]; aal = t_info["AAL"]; aad = t_info["AAD"]
+            cap = (r + 1) * P
+            def simuler(avec_aal, avec_aad, avec_rec):
+                charges = []
+                for _ in range(n_sim):
+                    N = np.random.poisson(lambda_); S_total = 0
+                    if N > 0:
+                        U = np.random.uniform(size=N)
+                        Sp = seuil * (U ** (-1/alpha))
+                        idx_c = np.random.choice(len(coeffs), size=N, replace=True)
+                        for i in range(N):
+                            s = Sp[i]; c = coeffs[idx_c[i]]
+                            if s <= D: S_i = 0
+                            elif s <= D + P: S_i = c * (s - D)
+                            else: S_i = c * P
+                            S_total += S_i
+                    ch = S_total
+                    if avec_aad and aad: ch = max(ch - aad, 0)
+                    if avec_aal and aal: ch = min(ch, aal)
+                    charges.append(min(ch, cap) if avec_rec else ch)
+                return np.array(charges)
+            def calc_taux(ch):
+                P0 = np.mean(ch); sig = np.std(ch)
+                tp = P0 / gnpi; tr = (P0 + 0.2 * sig) / gnpi
+                tt = tr / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
+                tf = tt * (1 + t_info["marge"] + t_info["retrocession"])
+                return round(tp,6), round(tr,6), round(tt,6), round(tf,6)
+            c_base = simuler(True, True, True)
+            c_sans_aal = simuler(False, True, True)
+            c_sans_aad = simuler(True, False, True)
+            c_sans_rec = simuler(True, True, False)
+            tp, tr, tt, tf = calc_taux(c_base)
+            tp2, tr2, tt2, tf2 = calc_taux(c_sans_aal)
+            tp3, tr3, tt3, tf3 = calc_taux(c_sans_aad)
+            tp4, tr4, tt4, tf4 = calc_taux(c_sans_rec)
+            resultats.append({
+                "tranche": t_info["nom"], "type": t_info["type"],
+                "taux_pur": tp, "taux_risque": tr, "taux_technique": tt, "taux_final": tf,
+                "sans_aal": tt2, "sans_aad": tt3, "sans_rec": tt4,
+                "impact_aal": round(tt2 - tt, 6), "impact_aad": round(tt3 - tt, 6),
+                "impact_rec": round(tt4 - tt, 6)
+            })
+        st.session_state["resultats_sim"] = resultats
+        return {"status": "ok", "parametres": {"alpha": alpha, "lambda": lambda_, "seuil": seuil, "n_sim": n_sim},
+                "resultats": resultats}
+
+
+    def _executer_market_curve(rol_min, rol_max, r2_min, tolerance):
+        """Exécute la construction de la market curve"""
+        if "df_mkt_clean" not in st.session_state: return {"erreur": "données marché manquantes"}
+        df_mkt = st.session_state["df_mkt_clean"].copy()
+
+        # Appliquer filtres
+        mask = (df_mkt['ROLs'] >= rol_min) & (df_mkt['ROLs'] <= rol_max)
+        df_mkt = df_mkt[mask].copy()
+        df_mkt['diff_rel'] = np.where(df_mkt['midpoints'] != 0,
+            np.abs(df_mkt['ROLs'] - df_mkt['midpoints']) / np.abs(df_mkt['midpoints']), 1.0)
+        df_mkt = df_mkt[df_mkt['diff_rel'] >= tolerance].copy()
+        df_mkt = df_mkt[df_mkt['midpoints'] > 0].copy()
+
+        if len(df_mkt) < 5: return {"erreur": f"Moins de 5 points après filtrage ({len(df_mkt)})"}
+
+        def fit_power(x, y):
+            lx = np.log(x); ly = np.log(y)
+            c = np.polyfit(lx, ly, 1)
+            a = np.exp(c[1]); b = -c[0]
+            ly_pred = np.polyval(c, lx)
+            r2 = 1 - np.sum((ly-ly_pred)**2) / np.sum((ly-ly_pred.mean())**2 + 1e-10)
+            return a, b, r2
+
+        def calc_tt(t, a, b):
+            x = (t['priorite'] + t['portee'] / 2) / gnpi
+            rol = a * (x ** (-b))
+            tp = rol * t['portee'] / gnpi
+            tr = tp * 1.002
+            tt = tr / (1 - t['brokage'] - t['frais'] - 0.0021)
+            L = t['portee']; t_r = t['taux_reconstitution'] / 100; n_rec = t['nb_reconstitutions']
+            C_rep = tp * gnpi
+            Pr = sum(t_r * min(L, max(C_rep-(r-1)*L, 0)) for r in range(1, n_rec+1)) / (L or 1)
+            Rec = Pr / (Pr + 10)
+            return {"tranche": t["nom"], "type": t["type"], "x_norm": round(x,6),
+                    "rol": round(rol,6), "taux_pur": round(tp,6), "taux_tech": round(tt,6),
+                    "taux": round(tt*(1-Rec),6)}
+
+        resultats_mkt = []
+        for q in [0.20, 0.40, 0.60, 0.80, 1.0]:
+            mid_max = np.quantile(df_mkt['midpoints'], q)
+            df_q = df_mkt[df_mkt['midpoints'] <= mid_max]
+            if len(df_q) < 5: continue
+            try:
+                a, b, r2 = fit_power(df_q['midpoints'].values, df_q['ROLs'].values)
+                if b <= 0: continue
+                taux_tranches = [calc_tt(t, a, b) for t in tranches_input]
+                if any(tt['taux'] <= 0 for tt in taux_tranches): continue
+                resultats_mkt.append({"quantile": q, "n_points": len(df_q), "a": round(a,6),
+                    "b": round(b,4), "r2": round(r2,4), "r2_ok": r2 >= r2_min,
+                    "taux_tranches": taux_tranches, "score": r2 - (0 if r2 >= r2_min else 0.5)})
+            except: continue
+
+        if not resultats_mkt: return {"erreur": "Aucun ajustement valide"}
+        best = max(resultats_mkt, key=lambda x: x["score"])
+        st.session_state["resultats_mkt"]  = resultats_mkt
+        st.session_state["taux_mkt_final"] = best["taux_tranches"]
+        return {"status": "ok", "meilleur_ajustement": {k:v for k,v in best.items() if k!="taux_tranches"},
+                "taux_par_tranche": best["taux_tranches"], "n_ajustements_testes": len(resultats_mkt)}
+
+
+    def _executer_rapport(methode_travaillante, methode_cat):
+        """Génère le rapport de synthèse"""
+        if not all(k in st.session_state for k in ["resultats_bc","resultats_sim","taux_mkt_final"]):
+            return {"erreur": "BC, simulation ou market curve manquant"}
+        bc_map  = {r["tranche"]: r for r in st.session_state["resultats_bc"]}
+        sim_map = {r["tranche"]: r for r in st.session_state["resultats_sim"]}
+        mkt_map = {r["tranche"]: r["taux"] for r in st.session_state["taux_mkt_final"]}
+        rows = []; prime_totale = 0
+        for t in tranches_input:
+            nom   = t["nom"]
+            bc_tt = bc_map.get(nom, {}).get("taux_technique", 0)
+            si_tt = sim_map.get(nom, {}).get("taux_technique", 0)
+            mkt   = mkt_map.get(nom, 0)
+            if t["type"] == "travaillante":
+                if methode_travaillante == "bc":             taux = bc_tt; meth = "BC"
+                elif methode_travaillante == "moyenne_bc_sim": taux = (bc_tt + si_tt) / 2; meth = "Moy BC+Sim"
+                else:                                        taux = si_tt; meth = "Simulation"
+            else:
+                if methode_cat == "market_curve":   taux = mkt;              meth = "Marché"
+                elif methode_cat == "max_sim_mkt":  taux = max(si_tt, mkt);  meth = "Max(Sim,Marché)"
+                else:                               taux = si_tt;            meth = "Simulation"
+            prime = gnpi * taux; prime_totale += prime
+            ecart_bc_sim = abs(bc_tt - si_tt) / bc_tt * 100 if bc_tt > 0 else 0
+            rows.append({
+                "tranche": nom, "type": t["type"],
+                "taux_bc": round(bc_tt,6), "taux_sim": round(si_tt,6), "taux_mkt": round(mkt,6),
+                "taux_retenu": round(taux,6), "methode": meth,
+                "prime_MAD": round(prime,2), "ecart_bc_sim_pct": round(ecart_bc_sim,1)
+            })
+        st.session_state["df_rapport"]   = pd.DataFrame(rows)
+        st.session_state["prime_totale"] = prime_totale
+        return {"status": "ok", "synthese": rows,
+                "prime_totale_MAD": round(prime_totale, 2),
+                "taux_global": round(prime_totale / gnpi, 6)}
+
+
+    def executer_outil(nom, inputs):
+        """Dispatcher vers la bonne fonction"""
+        if nom == "calculer_burning_cost":
+            return _executer_burning_cost()
+        elif nom == "lancer_simulation":
+            return _executer_simulation(
+                alpha=inputs["alpha"], lambda_=inputs["lambda_"],
+                seuil=inputs["seuil"], n_sim=inputs["n_sim"])
+        elif nom == "construire_market_curve":
+            return _executer_market_curve(
+                rol_min=inputs["rol_min"], rol_max=inputs["rol_max"],
+                r2_min=inputs["r2_min"], tolerance=inputs["tolerance"])
+        elif nom == "generer_rapport_final":
+            return _executer_rapport(
+                methode_travaillante=inputs["methode_travaillante"],
+                methode_cat=inputs["methode_cat"])
+        elif nom == "signaler_anomalie":
+            return {"status": "anomalie_enregistree", "type": inputs["type_anomalie"],
+                    "description": inputs["description"], "action": inputs["action"]}
+        else:
+            return {"erreur": f"Outil inconnu : {nom}"}
+
+
+    # ════════════════════════
+    # BOUCLE AGENTIQUE
+    # ════════════════════════
+
+    def run_agent(api_key, instructions, contraintes, log_container, result_container):
+        """Boucle agentique complète avec affichage temps réel"""
+        client = anthropic.Anthropic(api_key=api_key)
+
+        alpha_0  = st.session_state.get("alpha_est",  1.5)
+        lambda_0 = st.session_state.get("lambda_est", 5.0)
+        seuil_0  = st.session_state.get("seuil_est",  1_600_000)
+        n_sim_0  = n_sim_agent
+
+        system_prompt = f"""Tu es un agent actuariel autonome expert en tarification réassurance non-proportionnelle automobile.
+Tu travailles sur le programme Atlantic Re 2026 — GNPI {gnpi:,} MAD.
+
+PARAMÈTRES ESTIMÉS DISPONIBLES :
+- Alpha Pareto (MLE Hill) : {alpha_0:.4f}
+- Lambda Poisson : {lambda_0:.4f}
+- Seuil modélisation (p80×D) : {seuil_0:,.0f} MAD
+- Pm proxy (P99.5) : {st.session_state.get('Pm_proxy', 0):,.0f} MAD
+
+PROGRAMME :
+{json.dumps(tranches_input, indent=2)}
+
+RÈGLES DE DÉCISION :
+1. Commence TOUJOURS par le Burning Cost
+2. Lance ensuite la Simulation avec les paramètres estimés
+3. Construis la Market Curve
+4. Si écart BC/Sim > 30% sur une tranche travaillante → signale l'anomalie et justifie
+5. Si R² market curve < seuil → relance avec filtres assouplis
+6. Génère le rapport final en choisissant la méthode la plus prudente par tranche
+7. Pour les tranches cat : préfère max(simulation, market_curve)
+8. JUSTIFIE chaque décision avant d'appeler un outil
+
+INSTRUCTIONS UTILISATEUR : {instructions if instructions else "Aucune instruction spécifique."}
+CONTRAINTES MÉTIER : {contraintes if contraintes else "Contraintes standard."}
+
+Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque étape."""
+
+        messages = [{"role": "user", "content":
+            "Lance la tarification complète du programme Atlantic Re 2026. Exécute toutes les étapes nécessaires de façon autonome."}]
+
+        tour = 0; max_tours = 10
+        agent_log = []  # [(type, contenu)]
+
+        while tour < max_tours:
+            tour += 1
+
+            with log_container:
+                st.markdown(f"**Tour {tour}/{max_tours}** — Appel Claude...")
+
+            response = client.messages.create(
+                model="claude-opus-4-5",
+                max_tokens=4096,
+                system=system_prompt,
+                tools=AGENT_TOOLS,
+                messages=messages
+            )
+
+            # Traiter le contenu de la réponse
+            for block in response.content:
+                if hasattr(block, 'text') and block.text:
+                    agent_log.append(("reasoning", block.text))
+                    with log_container:
+                        st.markdown(f"""<div style="background:rgba(45,138,78,0.08);border-left:3px solid #2d8a4e;
+                            border-radius:0 8px 8px 0;padding:12px 16px;margin:8px 0;font-size:13px">
+                            🧠 <b>Raisonnement Claude</b><br>{block.text}</div>""",
+                            unsafe_allow_html=True)
+
+                if block.type == "tool_use":
+                    agent_log.append(("tool_call", {"name": block.name, "input": block.input}))
+                    with log_container:
+                        st.markdown(f"""<div style="background:rgba(26,26,26,0.06);border-left:3px solid #1a1a1a;
+                            border-radius:0 8px 8px 0;padding:12px 16px;margin:8px 0;font-size:13px">
+                            ⚙️ <b>Outil appelé :</b> <code>{block.name}</code><br>
+                            <small style="color:#666">{json.dumps({k:v for k,v in block.input.items() if k!='justification'}, ensure_ascii=False)}</small>
+                            </div>""", unsafe_allow_html=True)
+
+            # Fin de la boucle
+            if response.stop_reason == "end_turn":
+                agent_log.append(("done", "Agent terminé"))
+                break
+
+            # Exécuter les outils
+            if response.stop_reason == "tool_use":
+                tool_results = []
+                for block in response.content:
+                    if block.type == "tool_use":
+                        with log_container:
+                            with st.spinner(f"⚙️ Exécution : {block.name}..."):
+                                result = executer_outil(block.name, block.input)
+
+                        agent_log.append(("tool_result", {"name": block.name, "result": result}))
+                        with log_container:
+                            status = result.get("status", "")
+                            erreur = result.get("erreur", "")
+                            if erreur:
+                                st.markdown(f"""<div style="background:rgba(239,68,68,0.08);border-left:3px solid #ef4444;
+                                    border-radius:0 8px 8px 0;padding:10px 14px;margin:4px 0;font-size:12px">
+                                    ❌ <b>{block.name}</b> : {erreur}</div>""", unsafe_allow_html=True)
+                            else:
+                                st.markdown(f"""<div style="background:rgba(45,138,78,0.06);border-left:3px solid #2d8a4e;
+                                    border-radius:0 8px 8px 0;padding:10px 14px;margin:4px 0;font-size:12px">
+                                    ✅ <b>{block.name}</b> terminé</div>""", unsafe_allow_html=True)
+
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(result, ensure_ascii=False)
+                        })
+
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user",      "content": tool_results})
+
+            else:
+                break
+
+        # Afficher les résultats finaux
+        with result_container:
+            if "resultats_bc" in st.session_state and "resultats_sim" in st.session_state:
+                st.markdown("---")
+                st.markdown("### 📊 Résultats BC")
+                tableau_resultats([{
+                    "Tranche": r["tranche"], "Type": r["type"],
+                    "Rec": f"{r['Rec']:.4%}",
+                    "Taux pur": f"{r['taux_pur']:.4%}",
+                    "Taux technique": f"{r['taux_technique']:.4%}",
+                    "Taux final": f"{r['taux_final']:.4%}",
+                } for r in st.session_state["resultats_bc"]])
+
+                st.markdown("### 📊 Résultats Simulation")
+                tableau_resultats([{
+                    "Tranche": r["tranche"],
+                    "Taux pur": f"{r['taux_pur']:.4%}",
+                    "Taux technique": f"{r['taux_technique']:.4%}",
+                    "Sans AAL": f"{r['sans_aal']:.4%}",
+                    "Impact reconst.": f"{r['impact_rec']:.4%}",
+                } for r in st.session_state["resultats_sim"]])
+
+            if "taux_mkt_final" in st.session_state:
+                st.markdown("### 📊 Market Curve")
+                tableau_resultats([{
+                    "Tranche": tt["tranche"],
+                    "ROL estimé": f"{tt['rol']:.4%}",
+                    "Taux tech.": f"{tt['taux_tech']:.4%}",
+                    "Taux final": f"{tt['taux']:.4%}",
+                } for tt in st.session_state["taux_mkt_final"]])
+
+            if "df_rapport" in st.session_state:
+                st.markdown("### 📋 Rapport Final Agent")
+                tableau_resultats([{
+                    "Tranche": row["tranche"], "Type": row["type"],
+                    "Taux BC": f"{row['taux_bc']:.4%}",
+                    "Taux Sim.": f"{row['taux_sim']:.4%}",
+                    "Taux Marché": f"{row['taux_mkt']:.4%}",
+                    "Taux retenu": f"{row['taux_retenu']:.4%}",
+                    "Prime (MAD)": f"{row['prime_MAD']:,.0f}",
+                    "Méthode": row["methode"],
+                    "Ecart BC/Sim": f"{row['ecart_bc_sim_pct']:.0f}%",
+                } for row in st.session_state["df_rapport"].to_dict("records")])
+                prime_tot = st.session_state.get("prime_totale", 0)
+                c1, c2, c3 = st.columns(3)
+                with c1: card("Prime totale agent", f"{prime_tot:,.0f} MAD", icone="💰")
+                with c2: card("Taux global",        f"{prime_tot/gnpi:.4%}", couleur="#1a1a1a", icone="📊")
+                with c3: card("Méthode",            "Agent autonome", couleur="#2d8a4e", icone="🤖")
+
+        return agent_log
+
+
+    # ════════════════════════
+    # LANCEMENT
+    # ════════════════════════
+
+    if lancer:
+        st.session_state["agent_running"] = True
+        st.markdown("---")
+        st.markdown("### 🤖 Exécution de l'Agent")
+
+        log_container    = st.container()
+        result_container = st.container()
+
+        with log_container:
+            st.markdown("""<div style="background:linear-gradient(135deg,#0d2b1a,#1a1a1a);
+                border-radius:10px;padding:14px 18px;margin-bottom:12px;
+                border:1px solid rgba(45,138,78,0.4)">
+                <span style="color:#2d8a4e;font-weight:700">🤖 Agent démarré</span>
+                <span style="color:#888;font-size:12px;margin-left:8px">Raisonnement en cours...</span>
+                </div>""", unsafe_allow_html=True)
+
+        try:
+            instructions = st.session_state.get("agent_instructions", "")
+            contraintes  = st.session_state.get("agent_contraintes", "")
+            log = run_agent(api_key, instructions, contraintes, log_container, result_container)
+            st.session_state["agent_log"]     = log
+            st.session_state["agent_running"] = False
+            with log_container:
+                st.success("✅ Agent terminé — résultats disponibles ci-dessous et dans les autres onglets")
+        except Exception as e:
+            st.error(f"❌ Erreur agent : {e}")
+
+    elif "agent_log" in st.session_state:
+        st.markdown("---")
+        st.info("✅ Dernière exécution agent disponible. Les résultats sont synchronisés dans les onglets BC, Simulation, Market Curve et Rapport.")
+        if st.button("🔄 Relancer l'agent", key="relancer_agent"):
+            for k in ["agent_log","agent_running"]: st.session_state.pop(k, None)
+            st.rerun()
+
 
 # ════════════════════════════════════════════
 # TAB ADMIN
