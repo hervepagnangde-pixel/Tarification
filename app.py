@@ -894,7 +894,7 @@ with tab3:
     if "resultats_bc" in st.session_state:
         tableau_resultats([{
             "Tranche": r["tranche"], "Type": r["type"],
-            "Charge moy.": f"{r['charge_moy']:,.0f} MAD",
+            "Charge moy.": f"{r.get('charge_moy', r.get('charge_moy_MAD', 0)):,.0f} MAD",
             "Pr_Rec": f"{r['Pr_Rec']:.4f}", "Rec": f"{r['Rec']:.4%}",
             "Taux pur": f"{r['taux_pur']:.4%}", "Taux risque": f"{r['taux_risque']:.4%}",
             "Taux technique": f"{r['taux_technique']:.4%}", "Taux final": f"{r['taux_final']:.4%}",
@@ -2570,30 +2570,27 @@ Agis de façon professionnelle et autonome."""
 
                     # Gestion validation humaine
                     if result.get("status") == "validation_requise":
+                        # ── Validation non-bloquante : affiche l'alerte et continue ──
+                        niveau = result.get("niveau","avertissement")
+                        color_map = {"avertissement":"#f59e0b","critique":"#ef4444","bloquant":"#7c3aed"}
+                        col_a = color_map.get(niveau, "#f59e0b")
                         with alert_cont:
-                            niveau = result["niveau"]
-                            color_map = {"avertissement":"#f59e0b","critique":"#ef4444","bloquant":"#7c3aed"}
-                            col_a = color_map.get(niveau, "#f59e0b")
-                            st.markdown(f"""<div style="background:rgba(239,68,68,0.08);
+                            choix_defaut = result.get("choix", ["Continuer"])[0]
+                            st.markdown(f"""<div style="background:rgba(245,158,11,0.08);
                                 border:2px solid {col_a};border-radius:12px;
-                                padding:20px 24px;margin:12px 0">
-                                <div style="color:{col_a};font-weight:700;font-size:16px;margin-bottom:8px">
-                                    🚨 Validation requise — {niveau.upper()}
+                                padding:16px 20px;margin:8px 0">
+                                <div style="color:{col_a};font-weight:700;font-size:14px;margin-bottom:6px">
+                                    🚨 {niveau.upper()} — {result.get('message','')}
                                 </div>
-                                <div style="color:#333;margin-bottom:12px">{result['message']}</div>
-                                <div style="color:#555;font-style:italic;margin-bottom:16px">
-                                    ❓ {result['question']}
+                                <div style="color:#555;font-size:13px">
+                                    {result.get('question','')}
                                 </div>
-                                </div>""", unsafe_allow_html=True)
-                            choix_val = st.radio("Votre choix :", result["choix"],
-                                                  key=f"val_{block.id[:8]}")
-                            if st.button("✅ Confirmer et continuer", key=f"btn_{block.id[:8]}"):
-                                result = {"status": "validation_confirmee",
-                                          "choix_humain": choix_val,
-                                          "message": f"L'humain a choisi : {choix_val}"}
-                                st.rerun()
-                            else:
-                                st.stop()
+                                <div style="color:#2d8a4e;font-size:12px;margin-top:8px">
+                                    ✅ L'agent continue automatiquement avec : <b>{choix_defaut}</b>
+                                </div></div>""", unsafe_allow_html=True)
+                        result = {"status": "validation_confirmee",
+                                  "choix_humain": choix_defaut,
+                                  "message": f"Auto-continué : {choix_defaut}"}
 
                     erreur = result.get("erreur","")
                     with log_cont:
