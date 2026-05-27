@@ -7,6 +7,16 @@ import json
 import secrets as secrets_lib
 from PIL import Image
 
+def _json_safe(obj):
+    """Convertit les types numpy non-sérialisables en types Python natifs"""
+    if isinstance(obj, dict):  return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):  return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.bool_):   return bool(obj)
+    if isinstance(obj, np.integer): return int(obj)
+    if isinstance(obj, np.floating):return float(obj)
+    if isinstance(obj, np.ndarray): return obj.tolist()
+    return obj
+
 # ════════════════════════════════════════════
 # SET PAGE CONFIG — UNE SEULE FOIS EN HAUT
 # ════════════════════════════════════════════
@@ -1569,8 +1579,8 @@ Retourne le tableau de synthèse et la prime totale.""",
                 "impact_rec": round(tt4 - tt, 6)
             })
         st.session_state["resultats_sim"] = resultats
-        return {"status": "ok", "parametres": {"alpha": alpha, "lambda": lambda_, "seuil": seuil, "n_sim": n_sim},
-                "resultats": resultats}
+        return _json_safe({"status": "ok", "parametres": {"alpha": alpha, "lambda": lambda_, "seuil": seuil, "n_sim": n_sim},
+                "resultats": resultats})
 
 
     def _executer_market_curve(rol_min, rol_max, r2_min, tolerance):
@@ -1629,8 +1639,8 @@ Retourne le tableau de synthèse et la prime totale.""",
         best = max(resultats_mkt, key=lambda x: x["score"])
         st.session_state["resultats_mkt"]  = resultats_mkt
         st.session_state["taux_mkt_final"] = best["taux_tranches"]
-        return {"status": "ok", "meilleur_ajustement": {k:v for k,v in best.items() if k!="taux_tranches"},
-                "taux_par_tranche": best["taux_tranches"], "n_ajustements_testes": len(resultats_mkt)}
+        return _json_safe({"status": "ok", "meilleur_ajustement": {k:v for k,v in best.items() if k!="taux_tranches"},
+                "taux_par_tranche": best["taux_tranches"], "n_ajustements_testes": len(resultats_mkt)})
 
 
     def _executer_rapport(methode_travaillante, methode_cat):
@@ -1803,7 +1813,7 @@ Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque 
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
-                            "content": json.dumps(result, ensure_ascii=False)
+                            "content": json.dumps(_json_safe(result), ensure_ascii=False)
                         })
 
                 messages.append({"role": "assistant", "content": response.content})
@@ -2114,10 +2124,13 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
     def _executer_transformer_triangle_complet(type_branche, seuil_stab, pct_seuil_p,
                                                 f_tri, f_gnp, f_idx, gnpi_val, annee_cot):
         try:
+            import io as _io
             is_long_p3 = (type_branche == "long")
-            df_gnpis_p3 = pd.read_excel(f_tri.getvalue() if hasattr(f_tri,'getvalue') else f_tri) if f_gnp.name.endswith('xlsx') else pd.read_csv(f_gnp)
-            df_gnpis_p3 = pd.read_excel(f_gnp) if f_gnp.name.endswith('xlsx') else pd.read_csv(f_gnp)
-            df_idx_p3   = pd.read_excel(f_idx) if f_idx.name.endswith('xlsx') else pd.read_csv(f_idx)
+            # ── Seek & read files (Streamlit UploadedFile needs seek before each read) ──
+            f_gnp.seek(0)
+            df_gnpis_p3 = pd.read_excel(_io.BytesIO(f_gnp.read())) if f_gnp.name.endswith('xlsx') else pd.read_csv(f_gnp)
+            f_idx.seek(0)
+            df_idx_p3   = pd.read_excel(_io.BytesIO(f_idx.read())) if f_idx.name.endswith('xlsx') else pd.read_csv(f_idx)
             df_gnpis_p3.columns = [str(c).strip() for c in df_gnpis_p3.columns]
             df_idx_p3.columns   = [str(c).strip() for c in df_idx_p3.columns]
 
@@ -2141,9 +2154,12 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
 
             I_cot = get_idx(annee_cot)
 
-            df_raw_p3 = pd.read_excel(f_tri) if f_tri.name.endswith('xlsx') else pd.read_csv(f_tri, header=None)
+            f_tri.seek(0)
+            tri_bytes = f_tri.read()
             if f_tri.name.endswith('xlsx'):
-                df_raw_p3 = pd.read_excel(f_tri, header=None)
+                df_raw_p3 = pd.read_excel(_io.BytesIO(tri_bytes), header=None)
+            else:
+                df_raw_p3 = pd.read_csv(_io.BytesIO(tri_bytes), header=None)
             ligne_ann = df_raw_p3.iloc[0].tolist(); ligne_typ = df_raw_p3.iloc[1].tolist()
             annee_cur = None; col_info_p3 = []
             for i, (a, t) in enumerate(zip(ligne_ann, ligne_typ)):
@@ -2300,7 +2316,9 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
     def _executer_market_curve_p3(rol_min, rol_max, r2_min, tolerance, filtre, f_mkt_file, gnpi_val):
         """Market curve sur fichier uploadé directement"""
         try:
-            df_mkt_p3 = pd.read_excel(f_mkt_file) if f_mkt_file.name.endswith('xlsx') else pd.read_csv(f_mkt_file)
+            import io as _io
+            f_mkt_file.seek(0)
+            df_mkt_p3 = pd.read_excel(_io.BytesIO(f_mkt_file.read())) if f_mkt_file.name.endswith('xlsx') else pd.read_csv(f_mkt_file)
             df_mkt_p3.columns = [c.strip() for c in df_mkt_p3.columns]
             for col in ['ROLs','midpoints','Garantie en MAD']:
                 if col in df_mkt_p3.columns and df_mkt_p3[col].dtype == object:
@@ -2359,10 +2377,10 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
             best = max(resultats_p3_mkt, key=lambda x: x["score"])
             st.session_state["resultats_mkt"]  = resultats_p3_mkt
             st.session_state["taux_mkt_final"] = best["taux_tranches"]
-            return {"status":"ok","a":best["a"],"b":best["b"],"r2":best["r2"],
+            return _json_safe({"status":"ok","a":best["a"],"b":best["b"],"r2":best["r2"],
                     "r2_ok":best["r2_ok"],"n_points":best["n_points"],
                     "taux_par_tranche":best["taux_tranches"],
-                    "interpretation": "R² satisfaisant" if best["r2_ok"] else "R² faible — interpréter avec prudence"}
+                    "interpretation": "R² satisfaisant" if best["r2_ok"] else "R² faible — interpréter avec prudence"})
         except Exception as e:
             return {"erreur": str(e)}
 
@@ -2593,7 +2611,7 @@ Agis de façon professionnelle et autonome."""
 
                     tool_results.append({
                         "type": "tool_result", "tool_use_id": block.id,
-                        "content": json.dumps(result, ensure_ascii=False)})
+                        "content": json.dumps(_json_safe(result), ensure_ascii=False)})
 
                 messages.append({"role":"assistant","content":resp.content})
                 messages.append({"role":"user","content":tool_results})
