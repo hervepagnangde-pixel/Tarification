@@ -818,15 +818,18 @@ with tab2:
             c4.metric("Chargement majeurs", f"{res['chargement']:.4%}")
             with st.expander("📊 Détail sinistres majeurs"):
                 st.dataframe(res["df_chargements"], use_container_width=True)
-            with st.expander("📊 Sélection seuil Pareto (TVE)"):
-                st.dataframe(st.session_state["df_seuils_pareto"], use_container_width=True)
+            if "df_seuils_pareto" in st.session_state:
+                with st.expander("📊 Sélection seuil Pareto (TVE)"):
+                    st.dataframe(st.session_state["df_seuils_pareto"], use_container_width=True)
         with st.expander("📊 Triangle — vérification stabilisation"):
             cols_show = ['sinistre_id','annee_surv','annee_reg','dev','total','I_surv','I_reg','ratio_check','Sk','S_prime_k','coeff_stab']
             st.dataframe(st.session_state["df_liq"][[c for c in cols_show if c in st.session_state["df_liq"].columns]].head(50), use_container_width=True)
-        with st.expander("📊 Facteurs Chain Ladder"):
-            st.dataframe(st.session_state["df_facteurs"], use_container_width=True)
-        with st.expander("📊 Projections"):
-            st.dataframe(st.session_state["df_proj"].head(20), use_container_width=True)
+        if "df_facteurs" in st.session_state:
+            with st.expander("📊 Facteurs Chain Ladder"):
+                st.dataframe(st.session_state["df_facteurs"], use_container_width=True)
+        if "df_proj" in st.session_state:
+            with st.expander("📊 Projections"):
+                st.dataframe(st.session_state["df_proj"].head(20), use_container_width=True)
 
 # ════════════════════════════════════════════
 # TAB 3 — BURNING COST
@@ -1330,6 +1333,7 @@ with tab_agent:
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Prérequis ──
     prereqs = {
         "Programme validé"  : "df_prog"    in st.session_state,
         "Triangle transformé": "df_proj"   in st.session_state,
@@ -1346,6 +1350,7 @@ with tab_agent:
 
     st.markdown("")
 
+    # ── Instructions agent ──
     with st.expander("🎯 Instructions pour l'agent (optionnel)", expanded=False):
         agent_instructions = st.text_area(
             "Directives spécifiques",
@@ -1369,6 +1374,10 @@ with tab_agent:
     elif not all(prereqs.values()):
         manquants_agent = [n for n, ok in prereqs.items() if not ok]
         st.warning(f"⚠️ Complétez d'abord : {', '.join(manquants_agent)}")
+
+    # ════════════════════════
+    # DÉFINITION DES OUTILS
+    # ════════════════════════
 
     AGENT_TOOLS = [
         {
@@ -1463,7 +1472,12 @@ Retourne le tableau de synthèse et la prime totale.""",
         }
     ]
 
+    # ════════════════════════
+    # EXÉCUTEURS D'OUTILS
+    # ════════════════════════
+
     def _executer_burning_cost():
+        """Exécute le calcul BC et retourne les résultats"""
         if "df_proj" not in st.session_state: return {"erreur": "df_proj manquant"}
         df_proj = st.session_state["df_proj"].copy()
         resultats = []
@@ -1494,8 +1508,7 @@ Retourne le tableau de synthèse et la prime totale.""",
             taux_final = taux_technique * (1 + t_info["marge"] + t_info["retrocession"])
             resultats.append({
                 "tranche": t_info["nom"], "type": t_info["type"],
-                # ── CORRECTION : charge_moy (unifié avec Tab 3) ──
-                "charge_moy": round(charge_moy, 2),
+                "charge_moy_MAD": round(charge_moy, 2),
                 "Pr_Rec": round(Pr_Rec, 6), "Rec": round(Rec, 6),
                 "taux_pur": round(taux_pur, 6), "taux_risque": round(taux_risque, 6),
                 "taux_technique": round(taux_technique, 6), "taux_final": round(taux_final, 6),
@@ -1506,6 +1519,7 @@ Retourne le tableau de synthèse et la prime totale.""",
 
 
     def _executer_simulation(alpha, lambda_, seuil, n_sim):
+        """Exécute la simulation et retourne les résultats"""
         if "coeffs" not in st.session_state: return {"erreur": "coeffs manquants"}
         coeffs = st.session_state["coeffs"]
         np.random.seed(42)
@@ -1560,14 +1574,18 @@ Retourne le tableau de synthèse et la prime totale.""",
 
 
     def _executer_market_curve(rol_min, rol_max, r2_min, tolerance):
+        """Exécute la construction de la market curve"""
         if "df_mkt_clean" not in st.session_state: return {"erreur": "données marché manquantes"}
         df_mkt = st.session_state["df_mkt_clean"].copy()
+
+        # Appliquer filtres
         mask = (df_mkt['ROLs'] >= rol_min) & (df_mkt['ROLs'] <= rol_max)
         df_mkt = df_mkt[mask].copy()
         df_mkt['diff_rel'] = np.where(df_mkt['midpoints'] != 0,
             np.abs(df_mkt['ROLs'] - df_mkt['midpoints']) / np.abs(df_mkt['midpoints']), 1.0)
         df_mkt = df_mkt[df_mkt['diff_rel'] >= tolerance].copy()
         df_mkt = df_mkt[df_mkt['midpoints'] > 0].copy()
+
         if len(df_mkt) < 5: return {"erreur": f"Moins de 5 points après filtrage ({len(df_mkt)})"}
 
         def fit_power(x, y):
@@ -1616,6 +1634,7 @@ Retourne le tableau de synthèse et la prime totale.""",
 
 
     def _executer_rapport(methode_travaillante, methode_cat):
+        """Génère le rapport de synthèse"""
         if not all(k in st.session_state for k in ["resultats_bc","resultats_sim","taux_mkt_final"]):
             return {"erreur": "BC, simulation ou market curve manquant"}
         bc_map  = {r["tranche"]: r for r in st.session_state["resultats_bc"]}
@@ -1651,6 +1670,7 @@ Retourne le tableau de synthèse et la prime totale.""",
 
 
     def executer_outil(nom, inputs):
+        """Dispatcher vers la bonne fonction"""
         if nom == "calculer_burning_cost":
             return _executer_burning_cost()
         elif nom == "lancer_simulation":
@@ -1674,7 +1694,12 @@ Retourne le tableau de synthèse et la prime totale.""",
             return {"erreur": f"Outil inconnu : {nom}"}
 
 
+    # ════════════════════════
+    # BOUCLE AGENTIQUE
+    # ════════════════════════
+
     def run_agent(api_key, instructions, contraintes, log_container, result_container):
+        """Boucle agentique complète avec affichage temps réel"""
         client = anthropic.Anthropic(api_key=api_key)
 
         alpha_0  = st.session_state.get("alpha_est",  1.5)
@@ -1713,7 +1738,7 @@ Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque 
             "Lance la tarification complète du programme Atlantic Re 2026. Exécute toutes les étapes nécessaires de façon autonome."}]
 
         tour = 0; max_tours = 10
-        agent_log = []
+        agent_log = []  # [(type, contenu)]
 
         while tour < max_tours:
             tour += 1
@@ -1729,6 +1754,7 @@ Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque 
                 messages=messages
             )
 
+            # Traiter le contenu de la réponse
             for block in response.content:
                 if hasattr(block, 'text') and block.text:
                     agent_log.append(("reasoning", block.text))
@@ -1747,10 +1773,12 @@ Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque 
                             <small style="color:#666">{json.dumps({k:v for k,v in block.input.items() if k!='justification'}, ensure_ascii=False)}</small>
                             </div>""", unsafe_allow_html=True)
 
+            # Fin de la boucle
             if response.stop_reason == "end_turn":
                 agent_log.append(("done", "Agent terminé"))
                 break
 
+            # Exécuter les outils
             if response.stop_reason == "tool_use":
                 tool_results = []
                 for block in response.content:
@@ -1784,6 +1812,7 @@ Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque 
             else:
                 break
 
+        # Afficher les résultats finaux
         with result_container:
             if "resultats_bc" in st.session_state and "resultats_sim" in st.session_state:
                 st.markdown("---")
@@ -1834,6 +1863,10 @@ Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque 
 
         return agent_log
 
+
+    # ════════════════════════
+    # LANCEMENT
+    # ════════════════════════
 
     if lancer:
         st.session_state["agent_running"] = True
@@ -1903,6 +1936,7 @@ with tab_full:
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Uploads directs ──
     st.markdown("### 📁 Fichiers sources")
     c1, c2, c3, c4 = st.columns(4)
     with c1: f3_tri = st.file_uploader("Triangle développement", type=["xlsx","csv"], key="f3_tri")
@@ -1910,12 +1944,14 @@ with tab_full:
     with c3: f3_idx = st.file_uploader("Table indices",          type=["xlsx","csv"], key="f3_idx")
     with c4: f3_mkt = st.file_uploader("Données marché",         type=["xlsx","csv"], key="f3_mkt")
 
+    # ── Config minimale ──
     st.markdown("### ⚙️ Configuration minimale")
     c1, c2, c3 = st.columns(3)
     with c1: gnpi3      = st.number_input("GNPI (MAD)", value=183_000_000, step=1_000_000, key="gnpi3")
     with c2: annee3     = st.number_input("Année de cotation", value=2026, step=1, key="annee3")
     with c3: retour3    = st.number_input("Période de retour sinistres majeurs (ans)", value=20, step=5, key="retour3")
 
+    # ── Contexte pour l'agent ──
     contexte3 = st.text_area("📌 Contexte pour l'agent (optionnel)",
         placeholder="Ex: Portefeuille automobile Maroc 2026, GNPI en hausse +8%, 3 tranches : Risk&Cat 13M xs 2M, Cat L1 10M xs 15M, Cat L2 15M xs 25M. Objectif prime < 14M MAD. Réassureur cible : Partner Re.",
         height=90, key="contexte3")
@@ -1937,6 +1973,10 @@ with tab_full:
     lancer3 = st.button("🚀 Lancer l'Agent Complet", type="primary",
                         use_container_width=True, disabled=not fichiers_ok,
                         key="lancer3")
+
+    # ════════════════════════════════
+    # OUTILS PHASE 3 (étend phase 2)
+    # ════════════════════════════════
 
     TOOLS_FULL = [
         {
@@ -2070,10 +2110,12 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
         }
     ]
 
+    # ── Exécuteur triangle complet ──
     def _executer_transformer_triangle_complet(type_branche, seuil_stab, pct_seuil_p,
                                                 f_tri, f_gnp, f_idx, gnpi_val, annee_cot):
         try:
             is_long_p3 = (type_branche == "long")
+            df_gnpis_p3 = pd.read_excel(f_tri.getvalue() if hasattr(f_tri,'getvalue') else f_tri) if f_gnp.name.endswith('xlsx') else pd.read_csv(f_gnp)
             df_gnpis_p3 = pd.read_excel(f_gnp) if f_gnp.name.endswith('xlsx') else pd.read_csv(f_gnp)
             df_idx_p3   = pd.read_excel(f_idx) if f_idx.name.endswith('xlsx') else pd.read_csv(f_idx)
             df_gnpis_p3.columns = [str(c).strip() for c in df_gnpis_p3.columns]
@@ -2099,11 +2141,9 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
 
             I_cot = get_idx(annee_cot)
 
+            df_raw_p3 = pd.read_excel(f_tri) if f_tri.name.endswith('xlsx') else pd.read_csv(f_tri, header=None)
             if f_tri.name.endswith('xlsx'):
                 df_raw_p3 = pd.read_excel(f_tri, header=None)
-            else:
-                df_raw_p3 = pd.read_csv(f_tri, header=None)
-
             ligne_ann = df_raw_p3.iloc[0].tolist(); ligne_typ = df_raw_p3.iloc[1].tolist()
             annee_cur = None; col_info_p3 = []
             for i, (a, t) in enumerate(zip(ligne_ann, ligne_typ)):
@@ -2199,6 +2239,7 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
             coeffs_p3  = df_proj_p3['coeff_stab'].values
             coeffs_p3  = coeffs_p3[(coeffs_p3>0)&np.isfinite(coeffs_p3)]
 
+            # Stocker dans session
             st.session_state.update({
                 "df_liq": df_liq_p3, "df_proj": df_proj_p3, "f_moyens": f_moy_p3,
                 "alpha_est": float(alpha_p3), "lambda_est": float(lambda_p3),
@@ -2229,6 +2270,7 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
 
 
     def _executer_definir_programme(tranches_def):
+        """Définit le programme depuis la décision de l'agent"""
         prog = []
         for t in tranches_def:
             prog.append({
@@ -2256,6 +2298,7 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
 
 
     def _executer_market_curve_p3(rol_min, rol_max, r2_min, tolerance, filtre, f_mkt_file, gnpi_val):
+        """Market curve sur fichier uploadé directement"""
         try:
             df_mkt_p3 = pd.read_excel(f_mkt_file) if f_mkt_file.name.endswith('xlsx') else pd.read_csv(f_mkt_file)
             df_mkt_p3.columns = [c.strip() for c in df_mkt_p3.columns]
@@ -2324,6 +2367,35 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
             return {"erreur": str(e)}
 
 
+    def executer_outil_full(nom, inputs, f_tri_f, f_gnp_f, f_idx_f, f_mkt_f, gnpi_v, annee_v):
+        """Dispatcher Phase 3 — inclut les outils de parsing fichiers"""
+        if nom == "analyser_et_transformer_triangle":
+            return _executer_transformer_triangle_complet(
+                inputs.get("type_branche", "long"), inputs.get("seuil_stabilisation", 0.0),
+                inputs.get("pct_seuil_pareto", 0.80), f_tri_f, f_gnp_f, f_idx_f, gnpi_v, annee_v)
+        elif nom == "definir_programme_tranches":
+            return _executer_definir_programme(inputs.get("tranches", []))
+        elif nom == "calculer_burning_cost_complet":
+            prog = st.session_state.get("tranches_p3", tranches_input)
+            return _executer_burning_cost_p3(prog, gnpi_v)
+        elif nom == "lancer_simulation_complete":
+            prog = st.session_state.get("tranches_p3", tranches_input)
+            return _executer_simulation(inputs.get("alpha", st.session_state.get("alpha_est",1.5)), inputs.get("lambda_", st.session_state.get("lambda_est",5.0)), inputs.get("seuil", st.session_state.get("seuil_est",1_600_000)), int(inputs.get("n_sim", 10000)))
+        elif nom == "construire_market_curve_complete":
+            return _executer_market_curve_p3(
+                inputs.get("rol_min", 0.05), inputs.get("rol_max", 1.0), inputs.get("r2_min", 0.30),
+                inputs.get("tolerance", 0.50), inputs.get("filtre_branche", "EVENEMENT"), f_mkt_f, gnpi_v)
+        elif nom == "demander_validation_humaine":
+            return {"status": "validation_requise",
+                    "niveau": inputs.get("niveau","avertissement"), "message": inputs.get("message",""),
+                    "question": inputs.get("question",""), "choix": inputs.get("choix", ["Continuer", "Arrêter"])}
+        elif nom == "generer_rapport_final_complet":
+            prog = st.session_state.get("tranches_p3", tranches_input)
+            return _executer_rapport_p3(inputs.get("methode_travaillante","simulation"), inputs.get("methode_cat","max_sim_mkt"), prog, gnpi_v)
+        else:
+            return {"erreur": f"Outil inconnu : {nom}"}
+
+
     def _executer_burning_cost_p3(prog, gnpi_v):
         if "df_proj" not in st.session_state: return {"erreur": "df_proj manquant"}
         df_proj = st.session_state["df_proj"].copy()
@@ -2351,8 +2423,7 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
             tt=(tr*(1-Rec))/(1-t_info["brokage"]-t_info["frais"]-0.0021)
             tf=tt*(1+t_info["marge"]+t_info["retrocession"])
             resultats.append({"tranche":t_info["nom"],"type":t_info["type"],
-                # ── CORRECTION : charge_moy (unifié avec Tab 3) ──
-                "charge_moy":round(cm,2),"Pr_Rec":round(Pr,6),"Rec":round(Rec,6),
+                "charge_moy_MAD":round(cm,2),"Pr_Rec":round(Pr,6),"Rec":round(Rec,6),
                 "taux_pur":round(tp,6),"taux_risque":round(tr,6),
                 "taux_technique":round(tt,6),"taux_final":round(tf,6),
                 "detail_annuel":cfs})
@@ -2390,35 +2461,9 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
         return {"status":"ok","synthese":rows,"prime_totale_MAD":round(pt,2),"taux_global":round(pt/gnpi_v,6)}
 
 
-    def executer_outil_full(nom, inputs, f_tri_f, f_gnp_f, f_idx_f, f_mkt_f, gnpi_v, annee_v):
-        if nom == "analyser_et_transformer_triangle":
-            return _executer_transformer_triangle_complet(
-                inputs.get("type_branche", "long"), inputs.get("seuil_stabilisation", 0.0),
-                inputs.get("pct_seuil_pareto", 0.80), f_tri_f, f_gnp_f, f_idx_f, gnpi_v, annee_v)
-        elif nom == "definir_programme_tranches":
-            return _executer_definir_programme(inputs.get("tranches", []))
-        elif nom == "calculer_burning_cost_complet":
-            prog = st.session_state.get("tranches_p3", tranches_input)
-            return _executer_burning_cost_p3(prog, gnpi_v)
-        elif nom == "lancer_simulation_complete":
-            return _executer_simulation(inputs.get("alpha", st.session_state.get("alpha_est",1.5)),
-                inputs.get("lambda_", st.session_state.get("lambda_est",5.0)),
-                inputs.get("seuil", st.session_state.get("seuil_est",1_600_000)),
-                int(inputs.get("n_sim", 10000)))
-        elif nom == "construire_market_curve_complete":
-            return _executer_market_curve_p3(
-                inputs.get("rol_min", 0.05), inputs.get("rol_max", 1.0), inputs.get("r2_min", 0.30),
-                inputs.get("tolerance", 0.50), inputs.get("filtre_branche", "EVENEMENT"), f_mkt_f, gnpi_v)
-        elif nom == "demander_validation_humaine":
-            return {"status": "validation_requise",
-                    "niveau": inputs.get("niveau","avertissement"), "message": inputs.get("message",""),
-                    "question": inputs.get("question",""), "choix": inputs.get("choix", ["Continuer", "Arrêter"])}
-        elif nom == "generer_rapport_final_complet":
-            prog = st.session_state.get("tranches_p3", tranches_input)
-            return _executer_rapport_p3(inputs.get("methode_travaillante","simulation"), inputs.get("methode_cat","max_sim_mkt"), prog, gnpi_v)
-        else:
-            return {"erreur": f"Outil inconnu : {nom}"}
-
+    # ════════════════════════════════
+    # BOUCLE AGENTIQUE PHASE 3
+    # ════════════════════════════════
 
     def run_agent_full(api_key, f_tri_f, f_gnp_f, f_idx_f, f_mkt_f,
                        gnpi_v, annee_v, contexte_v, seuil_al,
@@ -2429,7 +2474,7 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
 Tu as accès aux fichiers bruts d'Atlantic Re pour la tarification 2026.
 
 CONTEXTE FOURNI PAR L'UTILISATEUR :
-{contexte_v if contexte_v else f"Portefeuille automobile Maroc, GNPI {gnpi_v:,} MAD, année cotation {annee_v}."}
+{contexte_v if contexte_v else "Portefeuille automobile Maroc, GNPI {gnpi_v:,} MAD, année cotation {annee_v}."}
 
 GNPI : {gnpi_v:,} MAD | Année cotation : {annee_v}
 Seuil d'alerte critique (écart BC/Sim) : {seuil_al}%
@@ -2458,7 +2503,7 @@ Agis de façon professionnelle et autonome."""
         messages = [{"role": "user", "content":
             f"Lance la tarification complète Atlantic Re 2026. GNPI={gnpi_v:,} MAD. Contexte : {contexte_v if contexte_v else 'Standard automobile Maroc'}. Go."}]
 
-        tour=0; max_t=15
+        tour=0; max_t=15; validation_en_attente=None
 
         while tour < max_t:
             tour+=1
@@ -2505,6 +2550,7 @@ Agis de façon professionnelle et autonome."""
                                 f_tri_f, f_gnp_f, f_idx_f, f_mkt_f,
                                 gnpi_v, annee_v)
 
+                    # Gestion validation humaine
                     if result.get("status") == "validation_requise":
                         with alert_cont:
                             niveau = result["niveau"]
@@ -2554,6 +2600,7 @@ Agis de façon professionnelle et autonome."""
             else:
                 break
 
+        # Résultats finaux
         with result_cont:
             st.markdown("---")
             st.markdown("## 📊 Résultats Agent Complet")
@@ -2623,6 +2670,7 @@ Agis de façon professionnelle et autonome."""
                 with c3: card("Agent",        "Complet ✅", couleur="#3b82f6", icone="🚀")
 
 
+    # ── Lancement Phase 3 ──
     if lancer3:
         st.markdown("---")
         st.markdown("### 🚀 Exécution Agent Complet")
