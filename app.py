@@ -985,6 +985,7 @@ with tab4:
                         "tranche": t_info["nom"], "type": t_info["type"],
                         "taux_pur": tp, "taux_risque": tr, "taux_technique": tt, "taux_final": tf,
                         "sans_aal": tt2, "sans_aad": tt3, "sans_rec": tt4,
+                        "impact_aal": round(tt2 - tt, 6), "impact_aad": round(tt3 - tt, 6), "impact_rec": round(tt4 - tt, 6),
                     })
                 progress_sim.progress(100, text="Terminé !")
                 st.session_state["resultats_sim"] = resultats_sim
@@ -1671,19 +1672,21 @@ Retourne le tableau de synthèse et la prime totale.""",
             return _executer_burning_cost()
         elif nom == "lancer_simulation":
             return _executer_simulation(
-                alpha=inputs["alpha"], lambda_=inputs["lambda_"],
-                seuil=inputs["seuil"], n_sim=inputs["n_sim"])
+                alpha=inputs.get("alpha", st.session_state.get("alpha_est", 1.5)),
+                lambda_=inputs.get("lambda_", st.session_state.get("lambda_est", 5.0)),
+                seuil=inputs.get("seuil", st.session_state.get("seuil_est", 1_600_000)),
+                n_sim=int(inputs.get("n_sim", 10000)))
         elif nom == "construire_market_curve":
             return _executer_market_curve(
-                rol_min=inputs["rol_min"], rol_max=inputs["rol_max"],
-                r2_min=inputs["r2_min"], tolerance=inputs["tolerance"])
+                rol_min=inputs.get("rol_min", 0.05), rol_max=inputs.get("rol_max", 1.0),
+                r2_min=inputs.get("r2_min", 0.30), tolerance=inputs.get("tolerance", 0.50))
         elif nom == "generer_rapport_final":
             return _executer_rapport(
-                methode_travaillante=inputs["methode_travaillante"],
-                methode_cat=inputs["methode_cat"])
+                methode_travaillante=inputs.get("methode_travaillante", "simulation"),
+                methode_cat=inputs.get("methode_cat", "max_sim_mkt"))
         elif nom == "signaler_anomalie":
-            return {"status": "anomalie_enregistree", "type": inputs["type_anomalie"],
-                    "description": inputs["description"], "action": inputs["action"]}
+            return {"status": "anomalie_enregistree", "type": inputs.get("type_anomalie","autre"),
+                    "description": inputs.get("description",""), "action": inputs.get("action","")}
         else:
             return {"erreur": f"Outil inconnu : {nom}"}
 
@@ -1825,7 +1828,7 @@ Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque 
                     "Taux pur": f"{r['taux_pur']:.4%}",
                     "Taux technique": f"{r['taux_technique']:.4%}",
                     "Sans AAL": f"{r['sans_aal']:.4%}",
-                    "Impact reconst.": f"{r['impact_rec']:.4%}",
+                    "Impact reconst.": f"{r.get('impact_rec', 0):.4%}",
                 } for r in st.session_state["resultats_sim"]])
 
             if "taux_mkt_final" in st.session_state:
@@ -2365,27 +2368,27 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
         """Dispatcher Phase 3 — inclut les outils de parsing fichiers"""
         if nom == "analyser_et_transformer_triangle":
             return _executer_transformer_triangle_complet(
-                inputs["type_branche"], inputs["seuil_stabilisation"],
-                inputs["pct_seuil_pareto"], f_tri_f, f_gnp_f, f_idx_f, gnpi_v, annee_v)
+                inputs.get("type_branche", "long"), inputs.get("seuil_stabilisation", 0.0),
+                inputs.get("pct_seuil_pareto", 0.80), f_tri_f, f_gnp_f, f_idx_f, gnpi_v, annee_v)
         elif nom == "definir_programme_tranches":
-            return _executer_definir_programme(inputs["tranches"])
+            return _executer_definir_programme(inputs.get("tranches", []))
         elif nom == "calculer_burning_cost_complet":
             prog = st.session_state.get("tranches_p3", tranches_input)
             return _executer_burning_cost_p3(prog, gnpi_v)
         elif nom == "lancer_simulation_complete":
             prog = st.session_state.get("tranches_p3", tranches_input)
-            return _executer_simulation(inputs["alpha"], inputs["lambda_"], inputs["seuil"], inputs["n_sim"])
+            return _executer_simulation(inputs.get("alpha", st.session_state.get("alpha_est",1.5)), inputs.get("lambda_", st.session_state.get("lambda_est",5.0)), inputs.get("seuil", st.session_state.get("seuil_est",1_600_000)), int(inputs.get("n_sim", 10000)))
         elif nom == "construire_market_curve_complete":
             return _executer_market_curve_p3(
-                inputs["rol_min"], inputs["rol_max"], inputs["r2_min"],
-                inputs["tolerance"], inputs["filtre_branche"], f_mkt_f, gnpi_v)
+                inputs.get("rol_min", 0.05), inputs.get("rol_max", 1.0), inputs.get("r2_min", 0.30),
+                inputs.get("tolerance", 0.50), inputs.get("filtre_branche", "EVENEMENT"), f_mkt_f, gnpi_v)
         elif nom == "demander_validation_humaine":
             return {"status": "validation_requise",
-                    "niveau": inputs["niveau"], "message": inputs["message"],
-                    "question": inputs["question"], "choix": inputs["choix"]}
+                    "niveau": inputs.get("niveau","avertissement"), "message": inputs.get("message",""),
+                    "question": inputs.get("question",""), "choix": inputs.get("choix", ["Continuer", "Arrêter"])}
         elif nom == "generer_rapport_final_complet":
             prog = st.session_state.get("tranches_p3", tranches_input)
-            return _executer_rapport_p3(inputs["methode_travaillante"], inputs["methode_cat"], prog, gnpi_v)
+            return _executer_rapport_p3(inputs.get("methode_travaillante","simulation"), inputs.get("methode_cat","max_sim_mkt"), prog, gnpi_v)
         else:
             return {"erreur": f"Outil inconnu : {nom}"}
 
@@ -2632,7 +2635,7 @@ Agis de façon professionnelle et autonome."""
                         "Tranche": r["tranche"],
                         "Taux pur": f"{r['taux_pur']:.4%}",
                         "Taux tech.": f"{r['taux_technique']:.4%}",
-                        "Impact rec.": f"{r['impact_rec']:.4%}",
+                        "Impact rec.": f"{r.get('impact_rec', 0):.4%}",
                     } for r in st.session_state["resultats_sim"]])
 
             if "taux_mkt_final" in st.session_state:
