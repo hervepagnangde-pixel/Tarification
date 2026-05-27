@@ -46,8 +46,8 @@ if not st.session_state["authenticated"]:
     with col2:
         st.markdown("<div style='text-align:center; padding:40px 0 20px 0'>", unsafe_allow_html=True)
         st.markdown("# 🎯")
-        st.markdown("### Herve IA")
-        st.caption("Tarification Réassurance Non-Proportionnelle")
+        st.markdown("### Atlanticre IA")
+        st.caption("Tarification réassurance non-proportionnelle")
         st.markdown("</div>", unsafe_allow_html=True)
         st.divider()
         email = st.text_input("📧 Adresse email", placeholder="votre@email.com", key="login_email")
