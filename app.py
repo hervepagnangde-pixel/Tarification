@@ -16,22 +16,28 @@ from datetime import datetime
 # Configurez DATABASE_URL dans les Secrets Streamlit pour PostgreSQL.
 # Sans DATABASE_URL → SQLite local (/tmp/) utilisé automatiquement.
 
-_DATABASE_URL = None
-try: _DATABASE_URL = st.secrets.get("DATABASE_URL")
-except: pass
+def _get_db_url():
+    """Lit DATABASE_URL depuis st.secrets à chaque appel."""
+    try:
+        url = st.secrets.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
+        return url if url and url.startswith("postgresql") else None
+    except:
+        return os.environ.get("DATABASE_URL") or None
 
 def _get_conn():
     """Retourne une connexion SQLite ou PostgreSQL selon la config."""
-    if _DATABASE_URL:
+    url = _get_db_url()
+    if url:
         import psycopg2
-        return psycopg2.connect(_DATABASE_URL), "pg"
+        return psycopg2.connect(url), "pg"
     import sqlite3
     _DB_PATH = os.environ.get("ATLANTICRE_DB", "/tmp/atlanticre_sessions.db")
     return sqlite3.connect(_DB_PATH), "sqlite"
 
 def _ph(n=1):
     """Placeholder SQL : %s pour PostgreSQL, ? pour SQLite."""
-    if _DATABASE_URL: return ",".join(["%s"]*n) if n>1 else "%s"
+    url = _get_db_url()
+    if url: return ",".join(["%s"]*n) if n>1 else "%s"
     return ",".join(["?"]*n) if n>1 else "?"
 
 def db_init():
@@ -824,11 +830,18 @@ with st.sidebar:
     st.divider()
     st.divider()
     st.markdown("### 💾 Base de données")
-    _db_type = "🐘 PostgreSQL" if _DATABASE_URL else "🗄️ SQLite local"
+    _db_type = "🐘 PostgreSQL (Supabase)" if _get_db_url() else "🗄️ SQLite local"
     _db_sid  = st.session_state.get("db_session_id")
     st.markdown(f"{_db_type}")
     if _db_sid:
-        st.caption(f"Session #{_db_sid} active")
+        chargé_sidebar = []
+        if "resultats_bc"   in st.session_state: chargé_sidebar.append("🔥 BC")
+        if "resultats_sim"  in st.session_state: chargé_sidebar.append("🎲 Sim")
+        if "taux_mkt_final" in st.session_state and st.session_state.get("taux_mkt_final"): chargé_sidebar.append("📈 Mkt")
+        if "df_rapport"     in st.session_state: chargé_sidebar.append("📋 Rapport")
+        st.caption(f"Session #{_db_sid}")
+        if chargé_sidebar:
+            st.caption(" · ".join(chargé_sidebar))
     else:
         st.caption("Aucune session active")
     if st.button("💾 Sauvegarder maintenant", key="btn_save_now", use_container_width=True):
@@ -3257,8 +3270,22 @@ with tab_hist:
                     sid_choix = sess_options[choix_sess]
                     try:
                         nom_load = db_load_session(sid_choix)
-                        st.success(f"✅ Session chargée : {nom_load}")
-                        st.info("Les résultats sont disponibles dans les onglets BC, Simulation, Market Curve et Rapport.")
+                        # Résumé de ce qui a été chargé
+                        chargé = []
+                        if "resultats_bc"  in st.session_state: chargé.append("🔥 Burning Cost")
+                        if "resultats_sim" in st.session_state: chargé.append("🎲 Simulation")
+                        if "taux_mkt_final" in st.session_state and st.session_state["taux_mkt_final"]: chargé.append("📈 Market Curve")
+                        if "df_rapport"    in st.session_state: chargé.append("📋 Rapport Final")
+                        st.success(f"✅ Session restaurée : **{nom_load}**")
+                        if chargé:
+                            st.markdown(f"""<div style="background:rgba(45,138,78,0.08);
+                                border-left:4px solid #2d8a4e;border-radius:0 8px 8px 0;
+                                padding:14px 18px;margin:8px 0;font-size:13px">
+                                <b>Données disponibles dans :</b><br>
+                                {"  ·  ".join(chargé)}<br><br>
+                                👉 Naviguez vers l'onglet souhaité pour consulter les résultats.<br>
+                                👉 Allez dans <b>📋 Rapport Final</b> pour voir la synthèse complète.
+                                </div>""", unsafe_allow_html=True)
                         st.rerun()
                     except Exception as _e:
                         st.error(f"Erreur chargement : {_e}")
