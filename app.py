@@ -18,11 +18,21 @@ from datetime import datetime
 
 def _get_db_url():
     """Lit DATABASE_URL depuis st.secrets à chaque appel."""
+    url = None
     try:
-        url = st.secrets.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
-        return url if url and url.startswith("postgresql") else None
-    except:
-        return os.environ.get("DATABASE_URL") or None
+        # Streamlit Cloud secrets
+        url = st.secrets.get("DATABASE_URL")
+    except Exception:
+        pass
+    if not url:
+        # Fallback env variable
+        url = os.environ.get("DATABASE_URL")
+    if not url:
+        return None
+    # Accepte "postgres://" ET "postgresql://"
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return url if url.startswith("postgresql://") else None
 
 def _get_conn():
     """Retourne une connexion SQLite ou PostgreSQL selon la config."""
@@ -183,6 +193,7 @@ from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
     TableStyle, PageBreak, HRFlowable)
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 import io as _io_db
 
 _VERT  = colors.HexColor("#2d8a4e")
@@ -193,8 +204,8 @@ _GRIS2 = colors.HexColor("#888888")
 def _pdf_styles():
     s = getSampleStyleSheet()
     for nm, kwargs in [
-        ("AR_Title",  dict(fontName="Helvetica-Bold", fontSize=26, textColor=_NOIR,   spaceAfter=6,  alignment=TA_CENTER   if True else 0)),
-        ("AR_Sub",    dict(fontName="Helvetica",      fontSize=12, textColor=_GRIS2,  spaceAfter=4,  alignment=TA_CENTER   if True else 0)),
+        ("AR_Title",  dict(fontName="Helvetica-Bold", fontSize=26, textColor=_NOIR,   spaceAfter=6,  alignment=TA_CENTER)),
+        ("AR_Sub",    dict(fontName="Helvetica",      fontSize=12, textColor=_GRIS2,  spaceAfter=4,  alignment=TA_CENTER)),
         ("AR_H1",     dict(fontName="Helvetica-Bold", fontSize=14, textColor=_VERT,   spaceBefore=14,spaceAfter=6)),
         ("AR_H2",     dict(fontName="Helvetica-Bold", fontSize=10, textColor=_NOIR,   spaceBefore=8, spaceAfter=3)),
         ("AR_Body",   dict(fontName="Helvetica",      fontSize=9,  leading=14,        textColor=_NOIR,spaceAfter=4)),
@@ -203,13 +214,11 @@ def _pdf_styles():
         ("AR_CellB",  dict(fontName="Helvetica-Bold", fontSize=8,  leading=11,        textColor=_NOIR)),
     ]:
         if nm not in s.byName:
-            from reportlab.lib.enums import TA_CENTER, TA_LEFT
             kwargs.pop("alignment", None)
             s.add(ParagraphStyle(nm, parent=s["Normal"], **kwargs))
     return s
 
 def _pdf_table_rl(data_rows, col_widths=None):
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
     S = _pdf_styles()
     rows = []
     for i, row in enumerate(data_rows):
@@ -235,7 +244,6 @@ def generer_pdf_rapport(user_email, gnpi_val, tranches,
                          resultats_bc, resultats_sim, taux_mkt_final,
                          df_rapport, prime_totale,
                          analyse_claude="", annee=2026):
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
     buf = _io_db.BytesIO()
     S   = _pdf_styles()
     W, H = A4
@@ -830,9 +838,56 @@ with st.sidebar:
     st.divider()
     st.divider()
     st.markdown("### 💾 Base de données")
-    _db_type = "🐘 PostgreSQL (Supabase)" if _get_db_url() else "🗄️ SQLite local"
+    _db_url_val = _get_db_url()
+    _db_type = "🐘 PostgreSQL (Supabase)" if _db_url_val else "🗄️ SQLite local"
     _db_sid  = st.session_state.get("db_session_id")
     st.markdown(f"{_db_type}")
+    if not _db_url_val:
+        try:
+            raw = st.secrets.get("DATABASE_URL", "")
+            if raw:
+                st.caption(f"⚠️ Format inattendu : {raw[:25]}...")
+            else:
+                st.caption("❌ DATABASE_URL absent des Secrets")
+        except:
+            st.caption("❌ Secrets non accessibles")
+
+    if st.button("🔌 Tester la connexion DB", key="btn_test_db", use_container_width=True):
+        st.markdown("---")
+        # 1. Lecture secrets
+        raw_url = None
+        try:
+            raw_url = st.secrets.get("DATABASE_URL")
+            if raw_url:
+                st.success(f"✅ Secret trouvé : {raw_url[:30]}...")
+            else:
+                st.error("❌ DATABASE_URL vide ou absent des Secrets")
+        except Exception as e:
+            st.error(f"❌ Erreur lecture secrets : {e}")
+
+        # 2. Normalisation URL
+        if raw_url:
+            if raw_url.startswith("postgres://"):
+                raw_url = raw_url.replace("postgres://", "postgresql://", 1)
+                st.info("ℹ️ URL normalisée : postgres:// → postgresql://")
+
+        # 3. Test connexion
+        if raw_url and raw_url.startswith("postgresql://"):
+            try:
+                import psycopg2
+                con = psycopg2.connect(raw_url, connect_timeout=5)
+                cur = con.cursor()
+                cur.execute("SELECT version()")
+                v = cur.fetchone()[0]
+                con.close()
+                st.success(f"✅ Connexion PostgreSQL OK !")
+                st.caption(v[:60])
+            except ImportError:
+                st.error("❌ psycopg2 non installé — ajoutez psycopg2-binary dans requirements.txt")
+            except Exception as e:
+                st.error(f"❌ Connexion échouée : {e}")
+        elif raw_url:
+            st.error(f"❌ Format URL non reconnu : {raw_url[:40]}")
     if _db_sid:
         chargé_sidebar = []
         if "resultats_bc"   in st.session_state: chargé_sidebar.append("🔥 BC")
