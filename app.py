@@ -1594,7 +1594,7 @@ with tab5:
             except Exception as _e:
                 st.toast(f"⚠️ Sauvegarde DB : {_e}", icon="⚠️")
 
-    if "resultats_mkt" in st.session_state:
+    if "resultats_mkt" in st.session_state and "df_mkt_clean" in st.session_state:
         rmt = st.session_state["resultats_mkt"]
         dmc = st.session_state["df_mkt_clean"]
         def predict_rol(x_norm, a, b): return a * (x_norm ** (-b))
@@ -2077,7 +2077,7 @@ Retourne le tableau de synthèse et la prime totale.""",
 
     def _executer_market_curve(rol_min, rol_max, r2_min, tolerance):
         """Exécute la construction de la market curve"""
-        if "df_mkt_clean" not in st.session_state: return {"erreur": "données marché manquantes"}
+        if "df_mkt_clean" not in st.session_state: return {"erreur": "Données marché manquantes — uploadez d'abord le fichier marché dans Tab5"}
         df_mkt = st.session_state["df_mkt_clean"].copy()
 
         # Appliquer filtres
