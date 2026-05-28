@@ -1561,14 +1561,14 @@ with tab5:
             if not resultats_mkt:
                 st.error("❌ Impossible d'ajuster la courbe."); st.stop()
 
-            all_t = [tt["taux"] for r in resultats_mkt for tt in r["taux_tranches"]]
+            all_t = [tt["taux"] for r in resultats_mkt for tt in r.get("taux_tranches",[])]
             med_g = np.median([t for t in all_t if t > 0]) if any(t > 0 for t in all_t) else 1
             r2v = [r["r2"] for r in resultats_mkt]; r2min_v, r2max_v = min(r2v), max(r2v)
             for r in resultats_mkt:
-                tm = np.mean([tt["taux"] for tt in r["taux_tranches"]])
+                tm = np.mean([tt["taux"] for tt in r.get("taux_tranches",[])])
                 r2_norm = (r["r2"] - r2min_v) / (r2max_v - r2min_v + 1e-10)
                 ecart_med = abs(tm - med_g) / (med_g + 1e-10)
-                taux_nuls = sum(1 for tt in r["taux_tranches"] if tt["taux"] <= 0)
+                taux_nuls = sum(1 for tt in r.get("taux_tranches",[]) if tt.get("taux",0) <= 0)
                 r["score"] = 0.5*r2_norm - 0.3*ecart_med - 0.2*r["cv_taux"] - taux_nuls*10.0 + (0.5 if r["r2_ok"] else 0)
             resultats_mkt = sorted(resultats_mkt, key=lambda x: x['score'], reverse=True)
             st.session_state["resultats_mkt"] = resultats_mkt
@@ -1591,7 +1591,7 @@ with tab5:
                    "a": f"{r['a']:.5f}", "b": f"{r['b']:.4f}",
                    "R2": f"{r['r2']:.4f}", "R2ok": "OK" if r["r2_ok"] else "faible",
                    "Score": f"{r['score']:.4f}"}
-            for tt in r["taux_tranches"]:
+            for tt in r.get("taux_tranches",[]):
                 row[tt["tranche"]] = f"{tt['taux']:.4%}" if tt["taux"] > 0 else "NUL"
             rows_recap.append(row)
         st.subheader("📊 Comparaison ajustements — ROL = a x x^(-b)  |  x = (D+C/2)/GNPI")
@@ -1624,8 +1624,8 @@ with tab5:
             "ROL estimé": f"{tt['rol']:.4%}", "Taux pur": f"{tt['taux_pur']:.4%}",
             "Taux tech.": f"{tt['taux_tech']:.4%}",
             "Taux final": f"{tt['taux']:.4%}" if tt["taux"] > 0 else "NUL"
-        } for tt in choix["taux_tranches"]])
-        st.session_state["taux_mkt_final"] = choix["taux_tranches"]
+        } for tt in choix.get("taux_tranches",[])])
+        st.session_state["taux_mkt_final"] = choix.get("taux_tranches",[])
 
         st.divider()
         guide_prompt("Market Curve",
