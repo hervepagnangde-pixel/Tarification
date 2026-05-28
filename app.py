@@ -7,6 +7,326 @@ import json
 import secrets as secrets_lib
 from PIL import Image
 
+import sqlite3, os
+from datetime import datetime
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+    TableStyle, PageBreak, HRFlowable)
+import io as _io_db
+
+# ════════════════════════════════════════════
+# BASE DE DONNÉES SQLITE
+# ════════════════════════════════════════════
+
+_DB_PATH = os.environ.get("ATLANTICRE_DB", "/tmp/atlanticre_sessions.db")
+
+def db_init():
+    con = sqlite3.connect(_DB_PATH)
+    con.executescript("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_email  TEXT NOT NULL,
+            nom_session TEXT,
+            gnpi        REAL,
+            programme   TEXT,
+            created_at  TEXT DEFAULT (datetime('now','localtime')),
+            updated_at  TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS resultats (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
+            etape      TEXT,
+            data_json  TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+    """)
+    con.commit(); con.close()
+
+def db_save_session(user_email, gnpi_val, tranches, nom=None):
+    db_init()
+    import json
+    sid = st.session_state.get("db_session_id")
+    prog_json = json.dumps(tranches, default=str)
+    con = sqlite3.connect(_DB_PATH)
+    cur = con.cursor()
+    if sid:
+        cur.execute("""UPDATE sessions SET gnpi=?,programme=?,
+            updated_at=datetime('now','localtime') WHERE id=?""",
+            (gnpi_val, prog_json, sid))
+    else:
+        nom_auto = nom or f"Session {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        cur.execute("INSERT INTO sessions (user_email,gnpi,programme,nom_session) VALUES (?,?,?,?)",
+            (user_email, gnpi_val, prog_json, nom_auto))
+        sid = cur.lastrowid
+        st.session_state["db_session_id"] = sid
+    con.commit(); con.close()
+    return sid
+
+def db_save_etape(etape, data):
+    db_init()
+    import json
+    sid = st.session_state.get("db_session_id")
+    if not sid: return
+    con = sqlite3.connect(_DB_PATH)
+    con.execute("DELETE FROM resultats WHERE session_id=? AND etape=?", (sid, etape))
+    con.execute("INSERT INTO resultats (session_id,etape,data_json) VALUES (?,?,?)",
+        (sid, etape, json.dumps(data, default=str)))
+    con.commit(); con.close()
+
+def db_load_session(session_id):
+    db_init()
+    import json, pandas as pd
+    con = sqlite3.connect(_DB_PATH)
+    cur = con.cursor()
+    cur.execute("SELECT etape,data_json FROM resultats WHERE session_id=?", (session_id,))
+    rows = cur.fetchall()
+    cur.execute("SELECT gnpi,programme,nom_session FROM sessions WHERE id=?", (session_id,))
+    sess = cur.fetchone()
+    con.close()
+    if not sess: return None
+    st.session_state["db_session_id"] = session_id
+    for etape, data_json in rows:
+        d = json.loads(data_json)
+        if etape == "bc":
+            st.session_state["resultats_bc"] = d
+        elif etape == "sim":
+            st.session_state["resultats_sim"] = d
+        elif etape == "mkt":
+            st.session_state["resultats_mkt"]  = d.get("resultats_mkt",[])
+            st.session_state["taux_mkt_final"] = d.get("taux_mkt_final",[])
+        elif etape == "rapport":
+            rows_r = d.get("rows",[])
+            if rows_r:
+                st.session_state["df_rapport"]   = pd.DataFrame(rows_r)
+                st.session_state["prime_totale"] = d.get("prime_totale", 0)
+    return sess[2] or f"Session #{session_id}"
+
+def db_list_sessions(user_email):
+    db_init()
+    con = sqlite3.connect(_DB_PATH)
+    cur = con.cursor()
+    cur.execute("""SELECT id,nom_session,gnpi,created_at,updated_at
+        FROM sessions WHERE user_email=? ORDER BY updated_at DESC LIMIT 50""",
+        (user_email,))
+    rows = cur.fetchall(); con.close()
+    return rows
+
+def db_delete_session(session_id):
+    db_init()
+    con = sqlite3.connect(_DB_PATH)
+    con.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+    con.commit(); con.close()
+
+def db_get_previous_session(user_email, current_id):
+    """Retourne les résultats BC de la session précédente pour comparaison N-1."""
+    db_init()
+    import json
+    con = sqlite3.connect(_DB_PATH)
+    cur = con.cursor()
+    cur.execute("""SELECT s.id FROM sessions s
+        WHERE s.user_email=? AND s.id != ?
+        ORDER BY s.updated_at DESC LIMIT 1""", (user_email, current_id or 0))
+    row = cur.fetchone()
+    if not row: con.close(); return None
+    cur.execute("SELECT data_json FROM resultats WHERE session_id=? AND etape='rapport'",
+        (row[0],))
+    rr = cur.fetchone(); con.close()
+    if rr:
+        import json
+        d = json.loads(rr[0])
+        return d.get("rows",[])
+    return None
+
+# ════════════════════════════════════════════
+# GENERATION PDF PROFESSIONNEL
+# ════════════════════════════════════════════
+
+_VERT  = colors.HexColor("#2d8a4e")
+_NOIR  = colors.HexColor("#1a1a1a")
+_GRIS  = colors.HexColor("#f4f6f4")
+_GRIS2 = colors.HexColor("#888888")
+
+def _pdf_styles():
+    s = getSampleStyleSheet()
+    for nm, kwargs in [
+        ("AR_Title",  dict(fontName="Helvetica-Bold", fontSize=26, textColor=_NOIR,   spaceAfter=6,  alignment=TA_CENTER   if True else 0)),
+        ("AR_Sub",    dict(fontName="Helvetica",      fontSize=12, textColor=_GRIS2,  spaceAfter=4,  alignment=TA_CENTER   if True else 0)),
+        ("AR_H1",     dict(fontName="Helvetica-Bold", fontSize=14, textColor=_VERT,   spaceBefore=14,spaceAfter=6)),
+        ("AR_H2",     dict(fontName="Helvetica-Bold", fontSize=10, textColor=_NOIR,   spaceBefore=8, spaceAfter=3)),
+        ("AR_Body",   dict(fontName="Helvetica",      fontSize=9,  leading=14,        textColor=_NOIR,spaceAfter=4)),
+        ("AR_Caption",dict(fontName="Helvetica-Oblique",fontSize=8,textColor=_GRIS2,  spaceAfter=8)),
+        ("AR_Cell",   dict(fontName="Helvetica",      fontSize=8,  leading=11,        textColor=_NOIR)),
+        ("AR_CellB",  dict(fontName="Helvetica-Bold", fontSize=8,  leading=11,        textColor=_NOIR)),
+    ]:
+        if nm not in s.byName:
+            from reportlab.lib.enums import TA_CENTER, TA_LEFT
+            kwargs.pop("alignment", None)
+            s.add(ParagraphStyle(nm, parent=s["Normal"], **kwargs))
+    return s
+
+def _pdf_table_rl(data_rows, col_widths=None):
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    S = _pdf_styles()
+    rows = []
+    for i, row in enumerate(data_rows):
+        r = []
+        for cell in row:
+            sty = S["AR_CellB"] if i == 0 else S["AR_Cell"]
+            r.append(Paragraph(str(cell), sty))
+        rows.append(r)
+    t = Table(rows, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),  (-1,0),  _NOIR),
+        ("TEXTCOLOR",     (0,0),  (-1,0),  colors.white),
+        ("ROWBACKGROUNDS",(0,1),  (-1,-1), [colors.white, _GRIS]),
+        ("GRID",          (0,0),  (-1,-1), 0.3, colors.HexColor("#e0e0e0")),
+        ("VALIGN",        (0,0),  (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0),  (-1,-1), 4),
+        ("BOTTOMPADDING", (0,0),  (-1,-1), 4),
+        ("LEFTPADDING",   (0,0),  (-1,-1), 5),
+    ]))
+    return t
+
+def generer_pdf_rapport(user_email, gnpi_val, tranches,
+                         resultats_bc, resultats_sim, taux_mkt_final,
+                         df_rapport, prime_totale,
+                         analyse_claude="", annee=2026):
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    buf = _io_db.BytesIO()
+    S   = _pdf_styles()
+    W, H = A4
+    m   = 1.8*cm
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+          leftMargin=m, rightMargin=m, topMargin=1.5*cm, bottomMargin=1.5*cm,
+          title=f"Rapport Tarification Atlantic Re {annee}")
+    story = []
+    PW = W - 2*m
+
+    # ── COUVERTURE ──
+    story += [Spacer(1, 1.5*cm),
+              Paragraph("ATLANTIC RE", ParagraphStyle("T", parent=S["Normal"],
+                  fontName="Helvetica-Bold", fontSize=32, textColor=_NOIR, alignment=1,
+                  spaceAfter=6)),
+              Paragraph(f"Rapport de Tarification {annee}", ParagraphStyle("S",
+                  parent=S["Normal"], fontName="Helvetica", fontSize=14,
+                  textColor=_GRIS2, alignment=1, spaceAfter=4)),
+              Paragraph("Reassurance Non-Proportionnelle · Automobile · Maroc",
+                  ParagraphStyle("S2", parent=S["Normal"], fontName="Helvetica",
+                  fontSize=10, textColor=_GRIS2, alignment=1, spaceAfter=16)),
+              HRFlowable(width=PW, thickness=2, color=_VERT),
+              Spacer(1, 0.6*cm)]
+
+    cv = [["GNPI", f"{gnpi_val:,.0f} MAD"],
+          ["Prime totale", f"{prime_totale:,.0f} MAD"],
+          ["Taux global", f"{prime_totale/gnpi_val:.4%}" if gnpi_val else "-"],
+          ["Tranches", str(len(tranches))],
+          ["Date", datetime.now().strftime("%d/%m/%Y %H:%M")],
+          ["Prepare par", "Herve IA - Agent Actuariel"]]
+    story.append(_pdf_table_rl([["Indicateur","Valeur"]]+cv, [PW*0.45, PW*0.55]))
+    story.append(PageBreak())
+
+    # ── 1. PROGRAMME ──
+    story += [Paragraph("1. Programme de Reassurance", S["AR_H1"]),
+              HRFlowable(width=PW, thickness=1, color=_VERT), Spacer(1, 0.3*cm)]
+    ph = ["Tranche","Type","Priorite (MAD)","Portee (MAD)","Reconst.","Brokage","Frais","Marge"]
+    pr = [[t.get("nom",""), t.get("type",""), f"{t.get('priorite',0):,.0f}",
+           f"{t.get('portee',0):,.0f}",
+           f"{t.get('nb_reconstitutions',1)}x{t.get('taux_reconstitution',100):.0f}%",
+           f"{t.get('brokage',0):.0%}", f"{t.get('frais',0):.0%}", f"{t.get('marge',0):.0%}"]
+          for t in tranches]
+    story.append(_pdf_table_rl([ph]+pr,
+        [PW*0.16,PW*0.13,PW*0.13,PW*0.12,PW*0.12,PW*0.10,PW*0.10,PW*0.10]))
+    story.append(Spacer(1, 0.4*cm))
+
+    # ── 2. BURNING COST ──
+    if resultats_bc:
+        story += [Paragraph("2. Burning Cost", S["AR_H1"]),
+                  HRFlowable(width=PW, thickness=1, color=_VERT), Spacer(1, 0.3*cm),
+                  Paragraph("Ck = min(max(S'k - D, 0), L) x coeff_stab | "
+                             "tau_tech = tau_risque x (1-Rec) / (1-BK-FG-AF)", S["AR_Caption"])]
+        bh = ["Tranche","Type","Charge moy.","Rec","Taux pur","Taux risque","Taux tech.","Taux final"]
+        br = [[r.get("tranche",""), r.get("type",""),
+               f"{r.get('charge_moy', r.get('charge_moy_MAD',0)):,.0f}",
+               f"{r.get('Rec',0):.4%}", f"{r.get('taux_pur',0):.4%}",
+               f"{r.get('taux_risque',0):.4%}", f"{r.get('taux_technique',0):.4%}",
+               f"{r.get('taux_final',0):.4%}"] for r in resultats_bc]
+        story.append(_pdf_table_rl([bh]+br,
+            [PW*0.18,PW*0.12,PW*0.14,PW*0.10,PW*0.11,PW*0.11,PW*0.12,PW*0.12]))
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── 3. SIMULATION ──
+    if resultats_sim:
+        story += [Paragraph("3. Simulation Pareto / Poisson", S["AR_H1"]),
+                  HRFlowable(width=PW, thickness=1, color=_VERT), Spacer(1, 0.3*cm)]
+        sh = ["Tranche","Taux pur","Taux risque","Taux tech.","Taux final","Sans AAL","Sans AAD","Sans reconst."]
+        sr = [[r.get("tranche",""), f"{r.get('taux_pur',0):.4%}", f"{r.get('taux_risque',0):.4%}",
+               f"{r.get('taux_technique',0):.4%}", f"{r.get('taux_final',0):.4%}",
+               f"{r.get('sans_aal',0):.4%}", f"{r.get('sans_aad',0):.4%}",
+               f"{r.get('sans_rec',0):.4%}"] for r in resultats_sim]
+        story.append(_pdf_table_rl([sh]+sr,
+            [PW*0.17,PW*0.11,PW*0.12,PW*0.11,PW*0.11,PW*0.10,PW*0.10,PW*0.14]))
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── 4. MARKET CURVE ──
+    if taux_mkt_final:
+        story += [Paragraph("4. Market Curve  ROL = a x x^(-b)", S["AR_H1"]),
+                  HRFlowable(width=PW, thickness=1, color=_VERT), Spacer(1, 0.3*cm)]
+        mh = ["Tranche","Type","x=(D+C/2)/GNPI","ROL","Taux pur","Taux tech.","Taux final"]
+        mr = [[t.get("tranche",""), t.get("type",""), f"{t.get('x_norm',0):.5f}",
+               f"{t.get('rol',0):.4%}", f"{t.get('taux_pur',0):.4%}",
+               f"{t.get('taux_tech',0):.4%}", f"{t.get('taux',0):.4%}"]
+              for t in taux_mkt_final]
+        story.append(_pdf_table_rl([mh]+mr,
+            [PW*0.17,PW*0.12,PW*0.16,PW*0.11,PW*0.11,PW*0.11,PW*0.12]))
+        story.append(Spacer(1, 0.4*cm))
+
+    # ── 5. SYNTHESE FINALE ──
+    story += [PageBreak(),
+              Paragraph("5. Synthese de Tarification", S["AR_H1"]),
+              HRFlowable(width=PW, thickness=2, color=_VERT), Spacer(1, 0.3*cm)]
+
+    if df_rapport is not None and not df_rapport.empty:
+        cols = list(df_rapport.columns)
+        drows = [cols] + [list(map(str, r)) for r in df_rapport.values.tolist()]
+        cw = PW / len(cols)
+        story.append(_pdf_table_rl(drows, [cw]*len(cols)))
+        story.append(Spacer(1, 0.4*cm))
+
+    story.append(_pdf_table_rl(
+        [["Indicateur","Valeur"],
+         ["Prime totale", f"{prime_totale:,.0f} MAD"],
+         ["Taux global",  f"{prime_totale/gnpi_val:.4%}" if gnpi_val else "-"],
+         ["GNPI",         f"{gnpi_val:,.0f} MAD"]],
+        [PW*0.45, PW*0.55]))
+
+    # ── 6. ANALYSE CLAUDE ──
+    if analyse_claude and len(analyse_claude.strip()) > 10:
+        story += [PageBreak(),
+                  Paragraph("6. Analyse Claude - Recommandations", S["AR_H1"]),
+                  HRFlowable(width=PW, thickness=1, color=_VERT), Spacer(1, 0.3*cm)]
+        for line in analyse_claude.split("\n"):
+            line = line.strip()
+            if not line: story.append(Spacer(1, 0.15*cm)); continue
+            line_c = line.replace("**","").replace("*","").replace("`","").replace("#","")
+            if line.startswith("## "): story.append(Paragraph(line[3:], S["AR_H2"]))
+            elif line.startswith("# "): story.append(Paragraph(line[2:], S["AR_H1"]))
+            else: story.append(Paragraph(line_c, S["AR_Body"]))
+
+    # ── FOOTER ──
+    story += [Spacer(1, 0.8*cm),
+              HRFlowable(width=PW, thickness=0.5, color=_GRIS2),
+              Spacer(1, 0.2*cm),
+              Paragraph(f"Document genere par Herve IA - Agent Actuariel Autonome | "
+                        f"Atlantic Re {annee} | {datetime.now().strftime('%d/%m/%Y %H:%M')} | Confidentiel",
+                        S["AR_Caption"])]
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 def _json_safe(obj):
     """Convertit les types numpy non-sérialisables en types Python natifs"""
     if isinstance(obj, dict):  return {k: _json_safe(v) for k, v in obj.items()}
@@ -78,6 +398,9 @@ if not st.session_state["authenticated"]:
 
 if "page" not in st.session_state:
     st.session_state["page"] = "landing"
+    # Auto-init DB
+    try: db_init()
+    except: pass
 
 if st.session_state["page"] == "landing":
     st.markdown("""
@@ -526,11 +849,11 @@ if "accueil_ia_done" in st.session_state:
 # TABS
 # ════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab_agent, tab_full, tab_admin = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab_agent, tab_full, tab_hist, tab_admin = st.tabs([
     "📋 Programme", "📂 Données & Triangle",
     "🔥 Burning Cost", "🎲 Simulation",
     "📈 Market Curve", "📋 Rapport Final",
-    "🤖 Mode Agent", "🚀 Agent Complet", "🔐 Admin"
+    "🤖 Mode Agent", "🚀 Agent Complet", "📜 Historique", "🔐 Admin"
 ])
 
 etapes_progress = [
@@ -890,6 +1213,12 @@ with tab3:
                         "detail_annuel": df_ch.to_dict("records")
                     })
                 st.session_state["resultats_bc"] = resultats_bc
+                # ── Auto-save ──
+                try:
+                    db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
+                    db_save_etape("bc", [{k:v for k,v in r.items() if k!="detail_annuel"} for r in resultats_bc])
+                    st.toast("💾 BC sauvegardé", icon="✅")
+                except Exception as _e: pass
 
     if "resultats_bc" in st.session_state:
         tableau_resultats([{
@@ -1002,6 +1331,12 @@ with tab4:
                     })
                 progress_sim.progress(100, text="Terminé !")
                 st.session_state["resultats_sim"] = resultats_sim
+                # ── Auto-save ──
+                try:
+                    db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
+                    db_save_etape("sim", resultats_sim)
+                    st.toast("💾 Simulation sauvegardée", icon="✅")
+                except Exception as _e: pass
 
     if "resultats_sim" in st.session_state:
         tableau_resultats([{
@@ -1172,6 +1507,12 @@ with tab5:
             resultats_mkt = sorted(resultats_mkt, key=lambda x: x['score'], reverse=True)
             st.session_state["resultats_mkt"] = resultats_mkt
             st.session_state["df_mkt_clean"]  = df_mkt
+            # ── Auto-save ──
+            try:
+                db_save_etape("mkt", {"resultats_mkt": [{k:v for k,v in r.items() if k!="taux_tranches"} for r in resultats_mkt],
+                                      "taux_mkt_final": resultats_mkt[0]["taux_tranches"] if resultats_mkt else []})
+                st.toast("💾 Market Curve sauvegardée", icon="✅")
+            except Exception as _e: pass
 
     if "resultats_mkt" in st.session_state:
         rmt = st.session_state["resultats_mkt"]
@@ -1283,12 +1624,82 @@ with tab6:
             })
         st.session_state["df_rapport"]   = pd.DataFrame(rows_rapport)
         st.session_state["prime_totale"] = prime_totale
+        # ── Auto-save rapport ──
+        try:
+            db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
+            db_save_etape("rapport", {"rows": rows_rapport, "prime_totale": prime_totale})
+            st.toast("💾 Rapport sauvegardé", icon="✅")
+        except Exception as _e: pass
         st.subheader("📊 Synthèse de tarification")
         st.dataframe(st.session_state["df_rapport"], use_container_width=True)
         c1, c2, c3 = st.columns(3)
         with c1: card("Prime totale", f"{prime_totale:,.0f} MAD", couleur="#2d8a4e", icone="💰")
         with c2: card("Taux global",  f"{prime_totale/gnpi:.4%}", couleur="#1a1a1a",  icone="📊")
         with c3: card("Tranches",     str(len(tranches_input)),   couleur="#2d8a4e",  icone="📋")
+
+        # ── EXPORT PDF + EXCEL ──
+        st.markdown("### 📥 Exports")
+        col_pdf, col_xls, col_name = st.columns([1, 1, 2])
+        with col_pdf:
+            if st.button("📄 Télécharger PDF", type="primary", use_container_width=True):
+                try:
+                    with st.spinner("Génération PDF..."):
+                        pdf_bytes = generer_pdf_rapport(
+                            user_email=st.session_state.get("user_email",""),
+                            gnpi_val=gnpi,
+                            tranches=tranches_input,
+                            resultats_bc=st.session_state.get("resultats_bc",[]),
+                            resultats_sim=st.session_state.get("resultats_sim",[]),
+                            taux_mkt_final=st.session_state.get("taux_mkt_final",[]),
+                            df_rapport=st.session_state.get("df_rapport"),
+                            prime_totale=prime_totale,
+                            analyse_claude=st.session_state.get("reco_finale",""),
+                            annee=2026
+                        )
+                    st.download_button(
+                        "⬇️ Cliquer pour télécharger",
+                        data=pdf_bytes,
+                        file_name=f"atlantic_re_rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                    st.success("✅ PDF prêt !")
+                except Exception as e_pdf:
+                    st.error(f"Erreur PDF : {e_pdf}")
+        with col_xls:
+            if st.button("📊 Télécharger Excel", use_container_width=True):
+                try:
+                    import io as _io_xls
+                    xls_buf = _io_xls.BytesIO()
+                    with pd.ExcelWriter(xls_buf, engine='openpyxl') as writer:
+                        st.session_state["df_rapport"].to_excel(writer, sheet_name="Rapport", index=False)
+                        if st.session_state.get("resultats_bc"):
+                            pd.DataFrame([{k:v for k,v in r.items() if k!="detail_annuel"}
+                                           for r in st.session_state["resultats_bc"]]).to_excel(
+                                writer, sheet_name="Burning Cost", index=False)
+                        if st.session_state.get("resultats_sim"):
+                            pd.DataFrame(st.session_state["resultats_sim"]).to_excel(
+                                writer, sheet_name="Simulation", index=False)
+                    st.download_button(
+                        "⬇️ Cliquer pour télécharger",
+                        data=xls_buf.getvalue(),
+                        file_name=f"atlantic_re_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                    st.success("✅ Excel prêt !")
+                except Exception as e_xls:
+                    st.error(f"Erreur Excel : {e_xls}")
+        with col_name:
+            nom_session_input = st.text_input("💾 Nommer cette session",
+                placeholder="Ex: Atlantic Re 2026 — Version finale",
+                key="nom_session_input")
+            if st.button("Enregistrer le nom", key="btn_save_nom"):
+                try:
+                    db_save_session(st.session_state.get("user_email",""), gnpi,
+                                    tranches_input, nom=nom_session_input)
+                    st.success(f"✅ Session nommée : {nom_session_input}")
+                except Exception as _e: st.error(str(_e))
 
         st.divider()
         guide_prompt("Rapport Final",
@@ -2718,6 +3129,120 @@ Agis de façon professionnelle et autonome."""
                 st.session_state.pop(k, None)
             st.rerun()
 
+
+
+# ════════════════════════════════════════════
+# TAB HISTORIQUE
+# ════════════════════════════════════════════
+
+with tab_hist:
+    section_header("Historique des Sessions", "Consultez et rechargez vos tarifications passées", "📜")
+
+    user_email_hist = st.session_state.get("user_email", "")
+    if not user_email_hist:
+        st.warning("⚠️ Connectez-vous pour accéder à l'historique")
+    else:
+        try:
+            sessions = db_list_sessions(user_email_hist)
+        except Exception as _e:
+            sessions = []
+            st.error(f"Erreur DB : {_e}")
+
+        if not sessions:
+            st.info("📭 Aucune session sauvegardée. Complétez une tarification pour la retrouver ici.")
+        else:
+            st.markdown(f"**{len(sessions)} session(s) trouvée(s)** pour {user_email_hist}")
+
+            # Tableau des sessions
+            sess_data = []
+            for sid, nom, gnpi_s, created, updated in sessions:
+                is_current = (sid == st.session_state.get("db_session_id"))
+                sess_data.append({
+                    "ID": sid,
+                    "Session": f"{'⭐ ' if is_current else ''}{nom or f'Session #{sid}'}",
+                    "GNPI": f"{gnpi_s:,.0f} MAD" if gnpi_s else "—",
+                    "Créée": created or "—",
+                    "Modifiée": updated or "—",
+                })
+            tableau_resultats(sess_data)
+
+            st.divider()
+            st.markdown("### 🔄 Charger une session")
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                sess_options = {f"#{sid} — {nom or 'Sans nom'} ({updated})": sid
+                                for sid, nom, _, _, updated in sessions}
+                choix_sess = st.selectbox("Choisir une session à charger",
+                    options=list(sess_options.keys()), key="hist_select")
+            with c2:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("📂 Charger", type="primary", use_container_width=True):
+                    sid_choix = sess_options[choix_sess]
+                    try:
+                        nom_load = db_load_session(sid_choix)
+                        st.success(f"✅ Session chargée : {nom_load}")
+                        st.info("Les résultats sont disponibles dans les onglets BC, Simulation, Market Curve et Rapport.")
+                        st.rerun()
+                    except Exception as _e:
+                        st.error(f"Erreur chargement : {_e}")
+
+            # Comparaison N-1
+            st.divider()
+            st.markdown("### 📊 Comparaison N-1")
+            current_sid = st.session_state.get("db_session_id")
+            if current_sid and st.session_state.get("df_rapport") is not None:
+                try:
+                    prev_rows = db_get_previous_session(user_email_hist, current_sid)
+                    if prev_rows and st.session_state.get("df_rapport") is not None:
+                        curr_rows = st.session_state["df_rapport"].to_dict("records")
+                        prev_map = {r.get("Tranche","") or r.get("tranche",""): r for r in prev_rows}
+                        comp = []
+                        for r in curr_rows:
+                            nom_t = r.get("Tranche","") or r.get("tranche","")
+                            prev_r = prev_map.get(nom_t, {})
+                            taux_curr = r.get("Taux retenu","") or r.get("taux_retenu","")
+                            taux_prev = prev_r.get("Taux retenu","") or prev_r.get("taux_retenu","")
+                            try:
+                                tc = float(str(taux_curr).replace("%",""))
+                                tp = float(str(taux_prev).replace("%",""))
+                                delta = tc - tp
+                                delta_str = f"{'▲' if delta>0 else '▼'} {abs(delta):.4f}%"
+                            except:
+                                delta_str = "—"
+                            comp.append({
+                                "Tranche": nom_t,
+                                "Taux N (actuel)": taux_curr,
+                                "Taux N-1": taux_prev or "—",
+                                "Évolution": delta_str,
+                            })
+                        if comp:
+                            st.caption("Comparaison entre la session courante et la précédente")
+                            tableau_resultats(comp)
+                    else:
+                        st.info("Exécutez une tarification complète pour voir la comparaison N-1.")
+                except Exception as _e:
+                    st.info(f"Comparaison N-1 non disponible : {_e}")
+            else:
+                st.info("Chargez une session et complétez une tarification pour comparer.")
+
+            # Suppression
+            st.divider()
+            st.markdown("### 🗑️ Supprimer une session")
+            with st.expander("Supprimer (irréversible)", expanded=False):
+                del_options = {f"#{sid} — {nom or 'Sans nom'}": sid
+                               for sid, nom, _, _, _ in sessions}
+                del_choix = st.selectbox("Session à supprimer", list(del_options.keys()),
+                                          key="hist_del_select")
+                if st.button("🗑️ Confirmer la suppression", key="hist_del_btn"):
+                    try:
+                        sid_del = del_options[del_choix]
+                        db_delete_session(sid_del)
+                        if st.session_state.get("db_session_id") == sid_del:
+                            st.session_state.pop("db_session_id", None)
+                        st.success("✅ Session supprimée")
+                        st.rerun()
+                    except Exception as _e:
+                        st.error(str(_e))
 
 # ════════════════════════════════════════════
 # TAB ADMIN
