@@ -109,12 +109,14 @@ def db_save_session(user_email, gnpi_val, tranches, nom=None):
                         (gnpi_val, prog_json, sid))
     else:
         nom_auto = nom or f"Session {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        cur.execute(f"INSERT INTO sessions (user_email,gnpi,programme,nom_session) VALUES ({_ph(4)})",
-                    (user_email, gnpi_val, prog_json, nom_auto))
-        sid = cur.lastrowid if db=="sqlite" else cur.fetchone() or None
         if db == "pg":
-            cur.execute("SELECT lastval()")
+            cur.execute(f"INSERT INTO sessions (user_email,gnpi,programme,nom_session) VALUES ({_ph(4)}) RETURNING id",
+                        (user_email, gnpi_val, prog_json, nom_auto))
             sid = cur.fetchone()[0]
+        else:
+            cur.execute(f"INSERT INTO sessions (user_email,gnpi,programme,nom_session) VALUES ({_ph(4)})",
+                        (user_email, gnpi_val, prog_json, nom_auto))
+            sid = cur.lastrowid
         st.session_state["db_session_id"] = sid
     con.commit(); con.close()
     return sid
