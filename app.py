@@ -171,6 +171,13 @@ def db_get_previous_session(user_email, current_id):
 # ════════════════════════════════════════════
 # GENERATION PDF PROFESSIONNEL
 # ════════════════════════════════════════════
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+    TableStyle, PageBreak, HRFlowable)
+import io as _io_db
 
 _VERT  = colors.HexColor("#2d8a4e")
 _NOIR  = colors.HexColor("#1a1a1a")
