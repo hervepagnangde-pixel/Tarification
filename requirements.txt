@@ -1,7 +1,9 @@
+streamlit
 anthropic
 pandas
-openpyxl
 numpy
 matplotlib
-scipy
-streamlit
+pillow
+openpyxl
+psycopg2-binary
+reportlab
