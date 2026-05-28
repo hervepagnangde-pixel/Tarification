@@ -7,42 +7,74 @@ import json
 import secrets as secrets_lib
 from PIL import Image
 
-import sqlite3, os
+import os
 from datetime import datetime
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.lib import colors
-from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
-    TableStyle, PageBreak, HRFlowable)
-import io as _io_db
 
 # ════════════════════════════════════════════
-# BASE DE DONNÉES SQLITE
+# BASE DE DONNÉES — SQLite (local) OU PostgreSQL (Streamlit Cloud)
 # ════════════════════════════════════════════
+# Configurez DATABASE_URL dans les Secrets Streamlit pour PostgreSQL.
+# Sans DATABASE_URL → SQLite local (/tmp/) utilisé automatiquement.
 
-_DB_PATH = os.environ.get("ATLANTICRE_DB", "/tmp/atlanticre_sessions.db")
+_DATABASE_URL = None
+try: _DATABASE_URL = st.secrets.get("DATABASE_URL")
+except: pass
+
+def _get_conn():
+    """Retourne une connexion SQLite ou PostgreSQL selon la config."""
+    if _DATABASE_URL:
+        import psycopg2
+        return psycopg2.connect(_DATABASE_URL), "pg"
+    import sqlite3
+    _DB_PATH = os.environ.get("ATLANTICRE_DB", "/tmp/atlanticre_sessions.db")
+    return sqlite3.connect(_DB_PATH), "sqlite"
+
+def _ph(n=1):
+    """Placeholder SQL : %s pour PostgreSQL, ? pour SQLite."""
+    if _DATABASE_URL: return ",".join(["%s"]*n) if n>1 else "%s"
+    return ",".join(["?"]*n) if n>1 else "?"
 
 def db_init():
-    con = sqlite3.connect(_DB_PATH)
-    con.executescript("""
-        CREATE TABLE IF NOT EXISTS sessions (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email  TEXT NOT NULL,
-            nom_session TEXT,
-            gnpi        REAL,
-            programme   TEXT,
-            created_at  TEXT DEFAULT (datetime('now','localtime')),
-            updated_at  TEXT DEFAULT (datetime('now','localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS resultats (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
-            etape      TEXT,
-            data_json  TEXT,
-            created_at TEXT DEFAULT (datetime('now','localtime'))
-        );
-    """)
+    """Crée les tables si elles n'existent pas."""
+    con, db = _get_conn()
+    cur = con.cursor()
+    if db == "pg":
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id          SERIAL PRIMARY KEY,
+                user_email  TEXT NOT NULL,
+                nom_session TEXT,
+                gnpi        FLOAT,
+                programme   TEXT,
+                created_at  TIMESTAMP DEFAULT NOW(),
+                updated_at  TIMESTAMP DEFAULT NOW()
+            )""")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS resultats (
+                id         SERIAL PRIMARY KEY,
+                session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
+                etape      TEXT,
+                data_json  TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )""")
+    else:
+        cur.executescript("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_email  TEXT NOT NULL,
+                nom_session TEXT,
+                gnpi        REAL,
+                programme   TEXT,
+                created_at  TEXT DEFAULT (datetime('now','localtime')),
+                updated_at  TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS resultats (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
+                etape      TEXT,
+                data_json  TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );""")
     con.commit(); con.close()
 
 def db_save_session(user_email, gnpi_val, tranches, nom=None):
@@ -50,17 +82,23 @@ def db_save_session(user_email, gnpi_val, tranches, nom=None):
     import json
     sid = st.session_state.get("db_session_id")
     prog_json = json.dumps(tranches, default=str)
-    con = sqlite3.connect(_DB_PATH)
-    cur = con.cursor()
+    con, db = _get_conn(); cur = con.cursor()
+    p = _ph()
     if sid:
-        cur.execute("""UPDATE sessions SET gnpi=?,programme=?,
-            updated_at=datetime('now','localtime') WHERE id=?""",
-            (gnpi_val, prog_json, sid))
+        if db == "pg":
+            cur.execute(f"UPDATE sessions SET gnpi={p},programme={p},updated_at=NOW() WHERE id={p}",
+                        (gnpi_val, prog_json, sid))
+        else:
+            cur.execute(f"UPDATE sessions SET gnpi={p},programme={p},updated_at=datetime('now','localtime') WHERE id={p}",
+                        (gnpi_val, prog_json, sid))
     else:
         nom_auto = nom or f"Session {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        cur.execute("INSERT INTO sessions (user_email,gnpi,programme,nom_session) VALUES (?,?,?,?)",
-            (user_email, gnpi_val, prog_json, nom_auto))
-        sid = cur.lastrowid
+        cur.execute(f"INSERT INTO sessions (user_email,gnpi,programme,nom_session) VALUES ({_ph(4)})",
+                    (user_email, gnpi_val, prog_json, nom_auto))
+        sid = cur.lastrowid if db=="sqlite" else cur.fetchone() or None
+        if db == "pg":
+            cur.execute("SELECT lastval()")
+            sid = cur.fetchone()[0]
         st.session_state["db_session_id"] = sid
     con.commit(); con.close()
     return sid
@@ -70,30 +108,26 @@ def db_save_etape(etape, data):
     import json
     sid = st.session_state.get("db_session_id")
     if not sid: return
-    con = sqlite3.connect(_DB_PATH)
-    con.execute("DELETE FROM resultats WHERE session_id=? AND etape=?", (sid, etape))
-    con.execute("INSERT INTO resultats (session_id,etape,data_json) VALUES (?,?,?)",
-        (sid, etape, json.dumps(data, default=str)))
+    con, db = _get_conn(); cur = con.cursor(); p = _ph()
+    cur.execute(f"DELETE FROM resultats WHERE session_id={p} AND etape={p}", (sid, etape))
+    cur.execute(f"INSERT INTO resultats (session_id,etape,data_json) VALUES ({_ph(3)})",
+                (sid, etape, json.dumps(data, default=str)))
     con.commit(); con.close()
 
 def db_load_session(session_id):
     db_init()
     import json, pandas as pd
-    con = sqlite3.connect(_DB_PATH)
-    cur = con.cursor()
-    cur.execute("SELECT etape,data_json FROM resultats WHERE session_id=?", (session_id,))
+    con, db = _get_conn(); cur = con.cursor(); p = _ph()
+    cur.execute(f"SELECT etape,data_json FROM resultats WHERE session_id={p}", (session_id,))
     rows = cur.fetchall()
-    cur.execute("SELECT gnpi,programme,nom_session FROM sessions WHERE id=?", (session_id,))
-    sess = cur.fetchone()
-    con.close()
+    cur.execute(f"SELECT gnpi,programme,nom_session FROM sessions WHERE id={p}", (session_id,))
+    sess = cur.fetchone(); con.close()
     if not sess: return None
     st.session_state["db_session_id"] = session_id
     for etape, data_json in rows:
         d = json.loads(data_json)
-        if etape == "bc":
-            st.session_state["resultats_bc"] = d
-        elif etape == "sim":
-            st.session_state["resultats_sim"] = d
+        if etape == "bc":   st.session_state["resultats_bc"] = d
+        elif etape == "sim":st.session_state["resultats_sim"] = d
         elif etape == "mkt":
             st.session_state["resultats_mkt"]  = d.get("resultats_mkt",[])
             st.session_state["taux_mkt_final"] = d.get("taux_mkt_final",[])
@@ -106,38 +140,32 @@ def db_load_session(session_id):
 
 def db_list_sessions(user_email):
     db_init()
-    con = sqlite3.connect(_DB_PATH)
-    cur = con.cursor()
-    cur.execute("""SELECT id,nom_session,gnpi,created_at,updated_at
-        FROM sessions WHERE user_email=? ORDER BY updated_at DESC LIMIT 50""",
+    con, db = _get_conn(); cur = con.cursor(); p = _ph()
+    cur.execute(f"""SELECT id,nom_session,gnpi,
+        {"to_char(created_at,'DD/MM/YYYY HH24:MI')" if db=="pg" else "created_at"},
+        {"to_char(updated_at,'DD/MM/YYYY HH24:MI')" if db=="pg" else "updated_at"}
+        FROM sessions WHERE user_email={p} ORDER BY updated_at DESC LIMIT 50""",
         (user_email,))
     rows = cur.fetchall(); con.close()
     return rows
 
 def db_delete_session(session_id):
     db_init()
-    con = sqlite3.connect(_DB_PATH)
-    con.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+    con, _ = _get_conn(); p = _ph()
+    con.execute(f"DELETE FROM sessions WHERE id={p}", (session_id,))
     con.commit(); con.close()
 
 def db_get_previous_session(user_email, current_id):
-    """Retourne les résultats BC de la session précédente pour comparaison N-1."""
     db_init()
     import json
-    con = sqlite3.connect(_DB_PATH)
-    cur = con.cursor()
-    cur.execute("""SELECT s.id FROM sessions s
-        WHERE s.user_email=? AND s.id != ?
-        ORDER BY s.updated_at DESC LIMIT 1""", (user_email, current_id or 0))
+    con, db = _get_conn(); cur = con.cursor(); p = _ph()
+    cur.execute(f"""SELECT id FROM sessions WHERE user_email={p} AND id!={p}
+        ORDER BY updated_at DESC LIMIT 1""", (user_email, current_id or 0))
     row = cur.fetchone()
     if not row: con.close(); return None
-    cur.execute("SELECT data_json FROM resultats WHERE session_id=? AND etape='rapport'",
-        (row[0],))
+    cur.execute(f"SELECT data_json FROM resultats WHERE session_id={p} AND etape='rapport'", (row[0],))
     rr = cur.fetchone(); con.close()
-    if rr:
-        import json
-        d = json.loads(rr[0])
-        return d.get("rows",[])
+    if rr: return json.loads(rr[0]).get("rows",[])
     return None
 
 # ════════════════════════════════════════════
