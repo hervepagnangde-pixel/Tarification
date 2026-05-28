@@ -822,6 +822,35 @@ with st.sidebar:
                      ("Market curve","resultats_mkt")]:
         st.markdown(f"{'✅' if key in st.session_state else '⬜'} {nom}")
     st.divider()
+    st.divider()
+    st.markdown("### 💾 Base de données")
+    _db_type = "🐘 PostgreSQL" if _DATABASE_URL else "🗄️ SQLite local"
+    _db_sid  = st.session_state.get("db_session_id")
+    st.markdown(f"{_db_type}")
+    if _db_sid:
+        st.caption(f"Session #{_db_sid} active")
+    else:
+        st.caption("Aucune session active")
+    if st.button("💾 Sauvegarder maintenant", key="btn_save_now", use_container_width=True):
+        try:
+            sid = db_save_session(st.session_state.get("user_email",""), gnpi,
+                                     st.session_state.get("tranches_input", tranches_input))
+            if "resultats_bc" in st.session_state:
+                db_save_etape("bc", [{k:v for k,v in r.items() if k!="detail_annuel"}
+                                      for r in st.session_state["resultats_bc"]])
+            if "resultats_sim" in st.session_state:
+                db_save_etape("sim", st.session_state["resultats_sim"])
+            if "resultats_mkt" in st.session_state:
+                db_save_etape("mkt", {"resultats_mkt": [{k:v for k,v in r.items() if k!="taux_tranches"}
+                                       for r in st.session_state["resultats_mkt"]],
+                                      "taux_mkt_final": st.session_state.get("taux_mkt_final",[])})
+            if st.session_state.get("df_rapport") is not None:
+                db_save_etape("rapport", {"rows": st.session_state["df_rapport"].to_dict("records"),
+                                           "prime_totale": st.session_state.get("prime_totale",0)})
+            st.success(f"✅ Sauvegardé — Session #{sid}")
+            st.rerun()
+        except Exception as _e:
+            st.error(f"Erreur DB : {_e}")
     st.markdown("### 🌍 Contexte global")
     instructions_globales = st.text_area("Contexte portefeuille",
         placeholder="Ex: Portefeuille automobile Maroc, forte croissance 2023...",
@@ -1253,7 +1282,8 @@ with tab3:
                     db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
                     db_save_etape("bc", [{k:v for k,v in r.items() if k!="detail_annuel"} for r in resultats_bc])
                     st.toast("💾 BC sauvegardé", icon="✅")
-                except Exception as _e: pass
+                except Exception as _e:
+                    st.toast(f"⚠️ Sauvegarde DB : {_e}", icon="⚠️")
 
     if "resultats_bc" in st.session_state:
         tableau_resultats([{
@@ -1371,7 +1401,8 @@ with tab4:
                     db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
                     db_save_etape("sim", resultats_sim)
                     st.toast("💾 Simulation sauvegardée", icon="✅")
-                except Exception as _e: pass
+                except Exception as _e:
+                    st.toast(f"⚠️ Sauvegarde DB : {_e}", icon="⚠️")
 
     if "resultats_sim" in st.session_state:
         tableau_resultats([{
@@ -1547,7 +1578,8 @@ with tab5:
                 db_save_etape("mkt", {"resultats_mkt": [{k:v for k,v in r.items() if k!="taux_tranches"} for r in resultats_mkt],
                                       "taux_mkt_final": resultats_mkt[0]["taux_tranches"] if resultats_mkt else []})
                 st.toast("💾 Market Curve sauvegardée", icon="✅")
-            except Exception as _e: pass
+            except Exception as _e:
+                st.toast(f"⚠️ Sauvegarde DB : {_e}", icon="⚠️")
 
     if "resultats_mkt" in st.session_state:
         rmt = st.session_state["resultats_mkt"]
@@ -1664,7 +1696,8 @@ with tab6:
             db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
             db_save_etape("rapport", {"rows": rows_rapport, "prime_totale": prime_totale})
             st.toast("💾 Rapport sauvegardé", icon="✅")
-        except Exception as _e: pass
+        except Exception as _e:
+            st.toast(f"⚠️ Sauvegarde DB : {_e}", icon="⚠️")
         st.subheader("📊 Synthèse de tarification")
         st.dataframe(st.session_state["df_rapport"], use_container_width=True)
         c1, c2, c3 = st.columns(3)
@@ -3184,7 +3217,16 @@ with tab_hist:
             st.error(f"Erreur DB : {_e}")
 
         if not sessions:
-            st.info("📭 Aucune session sauvegardée. Complétez une tarification pour la retrouver ici.")
+            st.info("📭 Aucune session sauvegardée.")
+            st.markdown("""
+            <div style="background:rgba(45,138,78,0.08);border-left:4px solid #2d8a4e;
+                border-radius:0 8px 8px 0;padding:14px 18px;margin:8px 0;font-size:13px">
+                <b>Comment créer une session ?</b><br>
+                1. Définissez votre programme dans l'onglet 📋 Programme<br>
+                2. Lancez au moins un calcul (BC, Simulation ou Market Curve)<br>
+                3. Cliquez <b>💾 Sauvegarder maintenant</b> dans la sidebar<br>
+                4. La session apparaîtra ici automatiquement
+            </div>""", unsafe_allow_html=True)
         else:
             st.markdown(f"**{len(sessions)} session(s) trouvée(s)** pour {user_email_hist}")
 
