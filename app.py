@@ -125,6 +125,13 @@ def db_save_etape(etape, data):
     sid = st.session_state.get("db_session_id")
     if not sid: return
     con, db = _get_conn(); cur = con.cursor(); p = _ph()
+    # Vérifie que la session existe dans CETTE base (SQLite → PG peut diverger)
+    cur.execute(f"SELECT id FROM sessions WHERE id={p}", (sid,))
+    if not cur.fetchone():
+        # Session introuvable → réinitialise et crée une nouvelle
+        st.session_state.pop("db_session_id", None)
+        con.close()
+        return  # sera recréée au prochain db_save_session
     cur.execute(f"DELETE FROM resultats WHERE session_id={p} AND etape={p}", (sid, etape))
     cur.execute(f"INSERT INTO resultats (session_id,etape,data_json) VALUES ({_ph(3)})",
                 (sid, etape, json.dumps(data, default=str)))
