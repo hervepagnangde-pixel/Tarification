@@ -834,7 +834,7 @@ with st.sidebar:
     if st.button("💾 Sauvegarder maintenant", key="btn_save_now", use_container_width=True):
         try:
             sid = db_save_session(st.session_state.get("user_email",""), gnpi,
-                                     st.session_state.get("tranches_input", tranches_input))
+                                     st.session_state.get("tranches_input", []))
             if "resultats_bc" in st.session_state:
                 db_save_etape("bc", [{k:v for k,v in r.items() if k!="detail_annuel"}
                                       for r in st.session_state["resultats_bc"]])
