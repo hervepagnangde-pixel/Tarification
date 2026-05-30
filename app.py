@@ -282,7 +282,7 @@ def generer_pdf_rapport(user_email, gnpi_val, tranches,
           ["Taux global", f"{prime_totale/gnpi_val:.4%}" if gnpi_val else "-"],
           ["Tranches", str(len(tranches))],
           ["Date", datetime.now().strftime("%d/%m/%Y %H:%M")],
-          ["Prepare par", "Herve IA - Agent Actuariel"]]
+          ["Prepare par", "Atlantic Re IA - Agent Actuariel"]]
     story.append(_pdf_table_rl([["Indicateur","Valeur"]]+cv, [PW*0.45, PW*0.55]))
     story.append(PageBreak())
 
@@ -377,7 +377,7 @@ def generer_pdf_rapport(user_email, gnpi_val, tranches,
     story += [Spacer(1, 0.8*cm),
               HRFlowable(width=PW, thickness=0.5, color=_GRIS2),
               Spacer(1, 0.2*cm),
-              Paragraph(f"Document genere par Herve IA - Agent Actuariel Autonome | "
+              Paragraph(f"Document genere par Atlantic Re IA - Agent Actuariel Autonome | "
                         f"Atlantic Re {annee} | {datetime.now().strftime('%d/%m/%Y %H:%M')} | Confidentiel",
                         S["AR_Caption"])]
 
@@ -400,9 +400,9 @@ def _json_safe(obj):
 # ════════════════════════════════════════════
 try:
     icon = Image.open("icon.png")
-    st.set_page_config(page_title="AtlanticRe IA", layout="wide", page_icon=icon)
+    st.set_page_config(page_title="Atlantic Re IA", layout="wide", page_icon=icon)
 except:
-    st.set_page_config(page_title="AtlanticRe IA", layout="wide", page_icon="🎯")
+    st.set_page_config(page_title="Atlantic Re IA", layout="wide", page_icon="🎯")
 
 # ════════════════════════════════════════════
 # ACCESS CONTROL
@@ -410,11 +410,11 @@ except:
 
 def get_admin_password():
     try: return st.secrets["admin_password"]
-    except: return "Admin@HerveIA2026"
+    except: return "Admin@AtlanticRe2026"
 
 def get_users():
     try: return dict(st.secrets["users"])
-    except: return {"demo@herve.ia": "DEMO2026"}
+    except: return {"demo@atlanticre.ia": "DEMO2026"}
 
 def check_access(email, code):
     return get_users().get(email.lower().strip()) == code.strip()
@@ -434,7 +434,7 @@ if not st.session_state["authenticated"]:
     with col2:
         st.markdown("<div style='text-align:center; padding:40px 0 20px 0'>", unsafe_allow_html=True)
         st.markdown("# 🎯")
-        st.markdown("### Herve IA")
+        st.markdown("### Atlantic Re IA")
         st.caption("Tarification Réassurance Non-Proportionnelle")
         st.markdown("</div>", unsafe_allow_html=True)
         st.divider()
@@ -492,7 +492,7 @@ if st.session_state["page"] == "landing":
             </svg>
         </div>
         <h1 style="color:white;font-size:42px;font-weight:800;margin:0 0 8px 0;letter-spacing:-1px;font-family:Inter,sans-serif">
-            Herve <span style="color:#2d8a4e">IA</span>
+            Atlantic Re <span style="color:#2d8a4e">IA</span>
         </h1>
         <p style="color:#aaa;font-size:16px;margin:0 0 8px 0">Agent de tarification · Réassurance Non-Proportionnelle</p>
         <p style="color:#666;font-size:13px;margin:0 0 40px 0">Atlantic Re · Automobile · Maroc</p>
@@ -957,7 +957,7 @@ Style : professionnel, concis, encourageant. Maximum 10 lignes.""",
         contraintes="- Concis max 10 lignes\n- Emojis\n- Ne pas inventer de donnees")
     st.markdown("""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
         border-radius:16px;padding:24px 28px;margin-bottom:20px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
-        <div style="font-size:18px;font-weight:700;color:white;margin-bottom:8px">🤖 Herve IA — Assistant de tarification</div>
+        <div style="font-size:18px;font-weight:700;color:white;margin-bottom:8px">🤖 Atlantic Re IA — Assistant de tarification</div>
         <div style="font-size:13px;color:rgba(255,255,255,0.7)">Analyse de votre session en cours...</div>
         </div>""", unsafe_allow_html=True)
     with st.container():
@@ -967,14 +967,14 @@ Style : professionnel, concis, encourageant. Maximum 10 lignes.""",
 elif "accueil_ia_msg" in st.session_state:
     st.markdown("""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
         border-radius:16px;padding:20px 28px;margin-bottom:20px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
-        <div style="font-size:18px;font-weight:700;color:white">🤖 Herve IA — Assistant de tarification</div>
+        <div style="font-size:18px;font-weight:700;color:white">🤖 Atlantic Re IA — Assistant de tarification</div>
         </div>""", unsafe_allow_html=True)
     st.markdown(st.session_state["accueil_ia_msg"])
 
 elif not api_key:
     st.markdown("""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
         border-radius:16px;padding:24px 28px;margin-bottom:20px;">
-        <div style="font-size:18px;font-weight:700;color:white">🤖 Herve IA</div>
+        <div style="font-size:18px;font-weight:700;color:white">🤖 Atlantic Re IA</div>
         <div style="color:rgba(255,255,255,0.8);margin-top:8px;font-size:14px">
             Entrez votre cle API Claude dans la sidebar pour activer l'assistant IA.<br>
             <b>Workflow :</b> Programme → Triangle → BC → Simulation → Market Curve → Rapport
