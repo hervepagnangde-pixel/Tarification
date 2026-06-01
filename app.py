@@ -3079,12 +3079,12 @@ SÉQUENCE OBLIGATOIRE :
 
 RÈGLES DE DÉCISION AUTONOME :
 - Branche longue si portefeuille > 5 ans d'historique avec développement > 3 ans
-- Alpha suspect si < 0.8 ou > 4.0 → signaler mais continuer
+- Alpha suspect si < 0.6 ou > 4.0 → signaler mais continuer
 - Pour tranches cat : méthode = max(simulation, market_curve)
 - Pour tranches travaillantes : méthode = simulation sauf si BC/Sim < 15%
 - Ne JAMAIS demander validation pour des décisions techniques mineures
 - Justifie CHAQUE décision avec des chiffres
-
+Sois en adéquation avec documentation des instituts actuarielles comme CAS, SOA, Institut des actuaires, Institute and Faculty of Actuaries...
 Agis de façon professionnelle et autonome."""
 
         messages = [{"role": "user", "content":
