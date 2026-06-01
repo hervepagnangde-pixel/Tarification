@@ -305,12 +305,12 @@ def generer_pdf_rapport(user_email, gnpi_val, tranches,
                   HRFlowable(width=PW, thickness=1, color=_VERT), Spacer(1, 0.3*cm),
                   Paragraph("Ck = min(max(S'k - D, 0), L) x coeff_stab | "
                              "tau_tech = tau_risque x (1-Rec) / (1-BK-FG-AF)", S["AR_Caption"])]
-        bh = ["Tranche","Type","Charge moy.","Rec","Taux pur","Taux risque","Taux tech.","Taux final"]
+        bh = ["Tranche","Type","Charge moy.","Rec","Taux pur","Taux risque","Taux tech.","Charg. majeurs"]
         br = [[r.get("tranche",""), r.get("type",""),
                f"{r.get('charge_moy', r.get('charge_moy_MAD',0)):,.0f}",
                f"{r.get('Rec',0):.4%}", f"{r.get('taux_pur',0):.4%}",
                f"{r.get('taux_risque',0):.4%}", f"{r.get('taux_technique',0):.4%}",
-               f"{r.get('taux_final',0):.4%}"] for r in resultats_bc]
+               f"{r.get('chargement_majeurs',0):.4%}"] for r in resultats_bc]
         story.append(_pdf_table_rl([bh]+br,
             [PW*0.18,PW*0.12,PW*0.14,PW*0.10,PW*0.11,PW*0.11,PW*0.12,PW*0.12]))
         story.append(Spacer(1, 0.4*cm))
@@ -319,9 +319,9 @@ def generer_pdf_rapport(user_email, gnpi_val, tranches,
     if resultats_sim:
         story += [Paragraph("3. Simulation Pareto / Poisson", S["AR_H1"]),
                   HRFlowable(width=PW, thickness=1, color=_VERT), Spacer(1, 0.3*cm)]
-        sh = ["Tranche","Taux pur","Taux risque","Taux tech.","Taux final","Sans AAL","Sans AAD","Sans reconst."]
+        sh = ["Tranche","Taux pur","Taux risque","Taux tech.","Charg. majeurs","Sans AAL","Sans AAD","Sans reconst."]
         sr = [[r.get("tranche",""), f"{r.get('taux_pur',0):.4%}", f"{r.get('taux_risque',0):.4%}",
-               f"{r.get('taux_technique',0):.4%}", f"{r.get('taux_final',0):.4%}",
+               f"{r.get('taux_technique',0):.4%}", f"{r.get('chargement_majeurs',0):.4%}",
                f"{r.get('sans_aal',0):.4%}", f"{r.get('sans_aad',0):.4%}",
                f"{r.get('sans_rec',0):.4%}"] for r in resultats_sim]
         story.append(_pdf_table_rl([sh]+sr,
@@ -1045,7 +1045,7 @@ with tab1:
                 brokage      = st.number_input("Brokage %",             value=10,  min_value=0, max_value=30,  key=f"brok_{i}")
                 frais        = st.number_input("Frais généraux %",      value=5,   min_value=0, max_value=20,  key=f"frais_{i}")
                 marge        = st.number_input("Marge %",               value=10,  min_value=0, max_value=30,  key=f"marge_{i}")
-                retrocession = st.number_input("Rétrocession %",        value=0,   min_value=0, max_value=50,  key=f"retro_{i}")
+                retrocession = st.number_input("Rétrocession %",        value=0.0, min_value=0.0, max_value=50.0, step=0.01, format="%.2f", key=f"retro_{i}")
         tranches_input.append({
             "numero": i+1, "nom": nom, "type": type_t,
             "priorite": priorite, "portee": portee,
@@ -1344,13 +1344,16 @@ with tab3:
                     charge_moy  = df_ch["charge"].mean()
                     taux_pur    = charge_moy / gnpi
                     taux_risque = taux_pur * 1.20
-                    taux_technique = (taux_risque * (1 - Rec)) / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
-                    taux_final = taux_technique * (1 + t_info["marge"] + t_info["retrocession"])
+                    # τ_tech = τ_risque × (1-Rec) / (1 - BK - FG - Marge - Rétro)
+                    taux_technique = (taux_risque * (1 - Rec)) / (
+                        1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
+                    charg_maj = st.session_state.get("chargement_majeurs", 0.0)
                     resultats_bc.append({
                         "tranche": t_info["nom"], "type": t_info["type"],
                         "charge_moy": charge_moy, "Pr_Rec": Pr_Rec, "Rec": Rec,
                         "taux_pur": taux_pur, "taux_risque": taux_risque,
-                        "taux_technique": taux_technique, "taux_final": taux_final,
+                        "taux_technique": taux_technique,
+                        "chargement_majeurs": charg_maj,
                         "detail_annuel": df_ch.to_dict("records")
                     })
                 st.session_state["resultats_bc"] = resultats_bc
@@ -1368,7 +1371,8 @@ with tab3:
             "Charge moy.": f"{r.get('charge_moy', r.get('charge_moy_MAD', 0)):,.0f} MAD",
             "Pr_Rec": f"{r['Pr_Rec']:.4f}", "Rec": f"{r['Rec']:.4%}",
             "Taux pur": f"{r['taux_pur']:.4%}", "Taux risque": f"{r['taux_risque']:.4%}",
-            "Taux technique": f"{r['taux_technique']:.4%}", "Taux final": f"{r['taux_final']:.4%}",
+            "Taux technique": f"{r['taux_technique']:.4%}",
+            "Charg. majeurs": f"{r.get('chargement_majeurs', 0):.4%}",
         } for r in st.session_state["resultats_bc"]], titre="📊 Résultats Burning Cost")
 
         st.divider()
@@ -1455,19 +1459,19 @@ with tab4:
                     def calc_taux(ch):
                         P0 = np.mean(ch); sig = np.std(ch)
                         tp = P0 / gnpi; tr = (P0 + 0.2 * sig) / gnpi
-                        tt = tr / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
-                        tf = tt * (1 + t_info["marge"] + t_info["retrocession"])
-                        return tp, tr, tt, tf
+                        tt = tr / (1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
+                        return tp, tr, tt
 
                     c_base = simuler(True, True, True); c_sans_aal = simuler(False, True, True)
                     c_sans_aad = simuler(True, False, True); c_sans_rec = simuler(True, True, False)
-                    tp, tr, tt, tf = calc_taux(c_base)
-                    tp2, tr2, tt2, tf2 = calc_taux(c_sans_aal)
-                    tp3, tr3, tt3, tf3 = calc_taux(c_sans_aad)
-                    tp4, tr4, tt4, tf4 = calc_taux(c_sans_rec)
+                    tp, tr, tt = calc_taux(c_base)
+                    tp2, tr2, tt2 = calc_taux(c_sans_aal)
+                    tp3, tr3, tt3 = calc_taux(c_sans_aad)
+                    tp4, tr4, tt4 = calc_taux(c_sans_rec)
                     resultats_sim.append({
                         "tranche": t_info["nom"], "type": t_info["type"],
-                        "taux_pur": tp, "taux_risque": tr, "taux_technique": tt, "taux_final": tf,
+                        "taux_pur": tp, "taux_risque": tr, "taux_technique": tt,
+                        "chargement_majeurs": st.session_state.get("chargement_majeurs", 0.0),
                         "sans_aal": tt2, "sans_aad": tt3, "sans_rec": tt4,
                         "impact_aal": round(tt2 - tt, 6), "impact_aad": round(tt3 - tt, 6), "impact_rec": round(tt4 - tt, 6),
                     })
@@ -1485,8 +1489,9 @@ with tab4:
         tableau_resultats([{
             "Tranche": r["tranche"], "Taux pur": f"{r['taux_pur']:.4%}",
             "Taux risque": f"{r['taux_risque']:.4%}", "Taux technique": f"{r['taux_technique']:.4%}",
-            "Taux final": f"{r['taux_final']:.4%}", "Sans AAL": f"{r['sans_aal']:.4%}",
-            "Sans AAD": f"{r['sans_aad']:.4%}", "Sans reconst.": f"{r['sans_rec']:.4%}",
+            "Charg. majeurs": f"{r.get('chargement_majeurs', 0):.4%}",
+            "Sans AAL": f"{r['sans_aal']:.4%}", "Sans AAD": f"{r['sans_aad']:.4%}",
+            "Sans reconst.": f"{r['sans_rec']:.4%}",
         } for r in st.session_state["resultats_sim"]], titre="📊 Résultats Simulation")
 
         st.divider()
@@ -1584,14 +1589,16 @@ with tab5:
                 rol = predict_rol(x_norm, a, b)
                 taux_pur = rol * (t['portee'] / gnpi)
                 taux_risque = taux_pur * 1.002
-                taux_tech = taux_risque / (1 - t['brokage'] - t['frais'] - 0.0021)
+                taux_tech = taux_risque / (1 - t['brokage'] - t['frais'] - t['marge'] - t['retrocession'])
                 n_rec = t['nb_reconstitutions']; t_r = t['taux_reconstitution'] / 100; L = t['portee']
                 C_rep = taux_pur * gnpi
                 Pr_Rec = sum(t_r * min(L, max(C_rep - (r-1)*L, 0)) for r in range(1, n_rec+1))
                 Pr_Rec /= L if L > 0 else 1
                 Rec = Pr_Rec / (Pr_Rec + 10) if (Pr_Rec + 10) > 0 else 0
+                charg_maj_mkt = st.session_state.get("chargement_majeurs", 0.0)
                 return {"tranche": t["nom"], "type": t["type"], "x_norm": x_norm,
-                        "rol": rol, "taux_pur": taux_pur, "taux_tech": taux_tech, "taux": taux_tech * (1 - Rec)}
+                        "rol": rol, "taux_pur": taux_pur, "taux_tech": taux_tech,
+                        "chargement_majeurs": charg_maj_mkt, "taux": taux_tech}
 
             resultats_mkt = []
             for q in [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]:
@@ -2070,14 +2077,16 @@ Retourne le tableau de synthèse et la prime totale.""",
             charge_moy  = df_ch["charge"].mean()
             taux_pur    = charge_moy / gnpi
             taux_risque = taux_pur * 1.20
-            taux_technique = (taux_risque * (1 - Rec)) / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
-            taux_final = taux_technique * (1 + t_info["marge"] + t_info["retrocession"])
+            taux_technique = (taux_risque * (1 - Rec)) / (
+                1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
+            charg_maj = st.session_state.get("chargement_majeurs", 0.0)
             resultats.append({
                 "tranche": t_info["nom"], "type": t_info["type"],
-                "charge_moy_MAD": round(charge_moy, 2),
+                "charge_moy": round(charge_moy, 2),
                 "Pr_Rec": round(Pr_Rec, 6), "Rec": round(Rec, 6),
                 "taux_pur": round(taux_pur, 6), "taux_risque": round(taux_risque, 6),
-                "taux_technique": round(taux_technique, 6), "taux_final": round(taux_final, 6),
+                "taux_technique": round(taux_technique, 6),
+                "chargement_majeurs": round(charg_maj, 6),
                 "detail_annuel": charges_finales
             })
         st.session_state["resultats_bc"] = resultats
@@ -2116,20 +2125,20 @@ Retourne le tableau de synthèse et la prime totale.""",
             def calc_taux(ch):
                 P0 = np.mean(ch); sig = np.std(ch)
                 tp = P0 / gnpi; tr = (P0 + 0.2 * sig) / gnpi
-                tt = tr / (1 - t_info["brokage"] - t_info["frais"] - 0.0021)
-                tf = tt * (1 + t_info["marge"] + t_info["retrocession"])
-                return round(tp,6), round(tr,6), round(tt,6), round(tf,6)
+                tt = tr / (1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
+                return round(tp,6), round(tr,6), round(tt,6)
             c_base = simuler(True, True, True)
             c_sans_aal = simuler(False, True, True)
             c_sans_aad = simuler(True, False, True)
             c_sans_rec = simuler(True, True, False)
-            tp, tr, tt, tf = calc_taux(c_base)
-            tp2, tr2, tt2, tf2 = calc_taux(c_sans_aal)
-            tp3, tr3, tt3, tf3 = calc_taux(c_sans_aad)
-            tp4, tr4, tt4, tf4 = calc_taux(c_sans_rec)
+            tp, tr, tt = calc_taux(c_base)
+            tp2, tr2, tt2 = calc_taux(c_sans_aal)
+            tp3, tr3, tt3 = calc_taux(c_sans_aad)
+            tp4, tr4, tt4 = calc_taux(c_sans_rec)
             resultats.append({
                 "tranche": t_info["nom"], "type": t_info["type"],
-                "taux_pur": tp, "taux_risque": tr, "taux_technique": tt, "taux_final": tf,
+                "taux_pur": tp, "taux_risque": tr, "taux_technique": tt,
+                "chargement_majeurs": round(st.session_state.get("chargement_majeurs", 0.0), 6),
                 "sans_aal": tt2, "sans_aad": tt3, "sans_rec": tt4,
                 "impact_aal": round(tt2 - tt, 6), "impact_aad": round(tt3 - tt, 6),
                 "impact_rec": round(tt4 - tt, 6)
@@ -2174,7 +2183,8 @@ Retourne le tableau de synthèse et la prime totale.""",
             Rec = Pr / (Pr + 10)
             return {"tranche": t["nom"], "type": t["type"], "x_norm": round(x,6),
                     "rol": round(rol,6), "taux_pur": round(tp,6), "taux_tech": round(tt,6),
-                    "taux": round(tt*(1-Rec),6)}
+                    "chargement_majeurs": round(st.session_state.get("chargement_majeurs",0.0),6),
+                    "taux": round(tt,6)}
 
         resultats_mkt = []
         for q in [0.20, 0.40, 0.60, 0.80, 1.0]:
@@ -2388,7 +2398,7 @@ Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque 
                     "Rec": f"{r['Rec']:.4%}",
                     "Taux pur": f"{r['taux_pur']:.4%}",
                     "Taux technique": f"{r['taux_technique']:.4%}",
-                    "Taux final": f"{r['taux_final']:.4%}",
+                    "Charg. majeurs": f"{r.get('chargement_majeurs',0):.4%}",
                 } for r in st.session_state["resultats_bc"]])
 
                 st.markdown("### 📊 Résultats Simulation")
@@ -2396,6 +2406,7 @@ Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque 
                     "Tranche": r["tranche"],
                     "Taux pur": f"{r['taux_pur']:.4%}",
                     "Taux technique": f"{r['taux_technique']:.4%}",
+                    "Charg. majeurs": f"{r.get('chargement_majeurs',0):.4%}",
                     "Sans AAL": f"{r['sans_aal']:.4%}",
                     "Impact reconst.": f"{r.get('impact_rec', 0):.4%}",
                 } for r in st.session_state["resultats_sim"]])
@@ -2912,7 +2923,8 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
                 Pr=sum(t_r*min(L,max(tp*gnpi_val-(r-1)*L,0)) for r in range(1,n_r+1))/(L or 1)
                 Rec=Pr/(Pr+10)
                 return {"tranche":t["nom"],"type":t["type"],"x_norm":round(x,6),
-                        "rol":round(rol,6),"taux_pur":round(tp,6),"taux_tech":round(tt,6),"taux":round(tt*(1-Rec),6)}
+                        "rol":round(rol,6),"taux_pur":round(tp,6),"taux_tech":round(tt,6),
+                        "chargement_majeurs":round(st.session_state.get("chargement_majeurs",0.0),6),"taux":round(tt,6)}
 
             resultats_p3_mkt = []
             for q in [0.20,0.40,0.60,0.80,1.0]:
@@ -2994,12 +3006,13 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
             Pr/=L if L>0 else 1
             Rec=Pr/(Pr+N) if (Pr+N)>0 else 0.0
             cm=df_ch["charge"].mean(); tp=cm/gnpi_v; tr=tp*1.20
-            tt=(tr*(1-Rec))/(1-t_info["brokage"]-t_info["frais"]-0.0021)
-            tf=tt*(1+t_info["marge"]+t_info["retrocession"])
+            tt=(tr*(1-Rec))/(1-t_info["brokage"]-t_info["frais"]-t_info["marge"]-t_info["retrocession"])
+            charg_maj_p3 = st.session_state.get("chargement_majeurs", 0.0)
             resultats.append({"tranche":t_info["nom"],"type":t_info["type"],
-                "charge_moy_MAD":round(cm,2),"Pr_Rec":round(Pr,6),"Rec":round(Rec,6),
+                "charge_moy":round(cm,2),"Pr_Rec":round(Pr,6),"Rec":round(Rec,6),
                 "taux_pur":round(tp,6),"taux_risque":round(tr,6),
-                "taux_technique":round(tt,6),"taux_final":round(tf,6),
+                "taux_technique":round(tt,6),
+                "chargement_majeurs":round(charg_maj_p3,6),
                 "detail_annuel":cfs})
         st.session_state["resultats_bc"] = resultats
         return {"status":"ok","resultats":[{k:v for k,v in r.items() if k!="detail_annuel"} for r in resultats]}
