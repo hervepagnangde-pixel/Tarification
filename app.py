@@ -395,6 +395,27 @@ def _json_safe(obj):
     if isinstance(obj, np.ndarray): return obj.tolist()
     return obj
 
+
+def _lookup_taux(results_list, nom, idx, key="taux_technique"):
+    """Lookup par nom de tranche. Fallback par index si nom introuvable."""
+    # Recherche par nom exact
+    for r in results_list:
+        if r.get("tranche","") == nom:
+            return r.get(key, 0)
+    # Fallback par index
+    if idx < len(results_list):
+        return results_list[idx].get(key, 0)
+    return 0
+
+def _lookup_result(results_list, nom, idx):
+    """Retourne le dict complet par nom puis par index."""
+    for r in results_list:
+        if r.get("tranche","") == nom:
+            return r
+    if idx < len(results_list):
+        return results_list[idx]
+    return {}
+
 # ════════════════════════════════════════════
 # SET PAGE CONFIG — UNE SEULE FOIS EN HAUT
 # ════════════════════════════════════════════
@@ -1750,15 +1771,15 @@ with tab6:
     if manquants:
         st.warning(f"⚠️ Complétez d'abord : {', '.join(manquants)}")
     else:
-        bc_map  = {r["tranche"]: r for r in st.session_state["resultats_bc"]}
-        sim_map = {r["tranche"]: r for r in st.session_state["resultats_sim"]}
-        mkt_map = {r["tranche"]: r["taux"] for r in st.session_state["taux_mkt_final"]}
+        _bc_list  = st.session_state["resultats_bc"]
+        _sim_list = st.session_state["resultats_sim"]
+        _mkt_list = st.session_state["taux_mkt_final"]
         rows_rapport = []; prime_totale = 0
-        for t in tranches_input:
+        for idx_t, t in enumerate(tranches_input):
             nom = t["nom"]
-            bc_tt  = bc_map.get(nom,{}).get("taux_technique",0)
-            sim_tt = sim_map.get(nom,{}).get("taux_technique",0)
-            mkt    = mkt_map.get(nom, 0)
+            bc_tt  = _lookup_taux(_bc_list,  nom, idx_t, "taux_technique")
+            sim_tt = _lookup_taux(_sim_list, nom, idx_t, "taux_technique")
+            mkt    = _lookup_taux(_mkt_list, nom, idx_t, "taux")
             if t["type"] == "travaillante":
                 ecart = abs(bc_tt-sim_tt)/bc_tt*100 if bc_tt > 0 else 0
                 taux_retenu = sim_tt
@@ -2213,15 +2234,15 @@ Retourne le tableau de synthèse et la prime totale.""",
         """Génère le rapport de synthèse"""
         if not all(k in st.session_state for k in ["resultats_bc","resultats_sim","taux_mkt_final"]):
             return {"erreur": "BC, simulation ou market curve manquant"}
-        bc_map  = {r["tranche"]: r for r in st.session_state["resultats_bc"]}
-        sim_map = {r["tranche"]: r for r in st.session_state["resultats_sim"]}
-        mkt_map = {r["tranche"]: r["taux"] for r in st.session_state["taux_mkt_final"]}
+        _bc_list  = st.session_state["resultats_bc"]
+        _sim_list = st.session_state["resultats_sim"]
+        _mkt_list = st.session_state["taux_mkt_final"]
         rows = []; prime_totale = 0
-        for t in tranches_input:
+        for idx_t, t in enumerate(tranches_input):
             nom   = t["nom"]
-            bc_tt = bc_map.get(nom, {}).get("taux_technique", 0)
-            si_tt = sim_map.get(nom, {}).get("taux_technique", 0)
-            mkt   = mkt_map.get(nom, 0)
+            bc_tt = _lookup_taux(_bc_list,  nom, idx_t, "taux_technique")
+            si_tt = _lookup_taux(_sim_list, nom, idx_t, "taux_technique")
+            mkt   = _lookup_taux(_mkt_list, nom, idx_t, "taux")
             if t["type"] == "travaillante":
                 if methode_travaillante == "bc":             taux = bc_tt; meth = "BC"
                 elif methode_travaillante == "moyenne_bc_sim": taux = (bc_tt + si_tt) / 2; meth = "Moy BC+Sim"
@@ -3021,15 +3042,15 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
     def _executer_rapport_p3(meth_trav, meth_cat, prog, gnpi_v):
         if not all(k in st.session_state for k in ["resultats_bc","resultats_sim","taux_mkt_final"]):
             return {"erreur": "Résultats intermédiaires manquants"}
-        bc_m  = {r["tranche"]:r for r in st.session_state["resultats_bc"]}
-        si_m  = {r["tranche"]:r for r in st.session_state["resultats_sim"]}
-        mk_m  = {r["tranche"]:r["taux"] for r in st.session_state["taux_mkt_final"]}
+        _bc_l = st.session_state["resultats_bc"]
+        _si_l = st.session_state["resultats_sim"]
+        _mk_l = st.session_state["taux_mkt_final"]
         rows=[]; pt=0
-        for t in prog:
+        for idx_t, t in enumerate(prog):
             n=t["nom"]
-            bt=bc_m.get(n,{}).get("taux_technique",0)
-            st_=si_m.get(n,{}).get("taux_technique",0)
-            mk=mk_m.get(n,0)
+            bt  = _lookup_taux(_bc_l, n, idx_t, "taux_technique")
+            st_ = _lookup_taux(_si_l, n, idx_t, "taux_technique")
+            mk  = _lookup_taux(_mk_l, n, idx_t, "taux")
             if t["type"]=="travaillante":
                 if meth_trav=="bc": tx=bt; me="BC"
                 elif meth_trav=="moyenne_bc_sim": tx=(bt+st_)/2; me="Moy BC+Sim"
@@ -3079,12 +3100,12 @@ SÉQUENCE OBLIGATOIRE :
 
 RÈGLES DE DÉCISION AUTONOME :
 - Branche longue si portefeuille > 5 ans d'historique avec développement > 3 ans
-- Alpha suspect si < 0.6 ou > 4.0 → signaler mais continuer
+- Alpha suspect si < 0.8 ou > 4.0 → signaler mais continuer
 - Pour tranches cat : méthode = max(simulation, market_curve)
 - Pour tranches travaillantes : méthode = simulation sauf si BC/Sim < 15%
 - Ne JAMAIS demander validation pour des décisions techniques mineures
 - Justifie CHAQUE décision avec des chiffres
-Sois en adéquation avec documentation des instituts actuarielles comme CAS, SOA, Institut des actuaires, Institute and Faculty of Actuaries...
+
 Agis de façon professionnelle et autonome."""
 
         messages = [{"role": "user", "content":
