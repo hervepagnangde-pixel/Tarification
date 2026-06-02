@@ -304,7 +304,9 @@ def generer_pdf_rapport(user_email, gnpi_val, tranches,
         story += [Paragraph("2. Burning Cost", S["AR_H1"]),
                   HRFlowable(width=PW, thickness=1, color=_VERT), Spacer(1, 0.3*cm),
                   Paragraph("Ck = min(max(S'k - D, 0), L) x coeff_stab | "
-                             "tau_tech = tau_risque x (1-Rec) / (1-BK-FG-AF)", S["AR_Caption"])]
+                             "R1: tau_risque = tau_pur + sigma_hist x 20% | "
+                             "R2: tau_BC=0 si annees non-nulles < 3 | "
+                             "tau_tech = tau_risque x (1-Rec) / (1-BK-FG-Marge-Retro)", S["AR_Caption"])]
         bh = ["Tranche","Type","Charge moy.","Rec","Taux pur","Taux risque","Taux tech.","Charg. majeurs"]
         br = [[r.get("tranche",""), r.get("type",""),
                f"{r.get('charge_moy', r.get('charge_moy_MAD',0)):,.0f}",
@@ -395,6 +397,228 @@ def _json_safe(obj):
     if isinstance(obj, np.ndarray): return obj.tolist()
     return obj
 
+
+
+# ════════════════════════════════════════════
+# MODULE OPTIMISATION PROGRAMME — 3 VARIANTES
+# ════════════════════════════════════════════
+
+def optimiser_programme_variantes(tranches, gnpi_val, resultats_sim, resultats_bc, taux_mkt_final):
+    """Génère 3 variantes de programme optimal (A=cédante, B=réassureur, C=équilibre)."""
+    from scipy.optimize import minimize
+    import numpy as np
+
+    def taux_sim_pour_tranche(idx, portee_new, priorite_new, aal_new, aad_new, nb_recon_new):
+        """Estime le taux technique pour des paramètres modifiés (interpolation linéaire)."""
+        if idx >= len(resultats_sim): return 0.0
+        r = resultats_sim[idx]
+        base = r.get("taux_technique", 0)
+        # Sensibilités approximatives
+        t_orig = tranches[idx]
+        ratio_portee   = portee_new   / max(t_orig["portee"],   1)
+        ratio_priorite = priorite_new / max(t_orig["priorite"], 1)
+        # Taux varie ~ sqrt(portee) et ~ 1/priorite^0.5 (approximation log-log)
+        adj = (ratio_portee ** 0.5) / (ratio_priorite ** 0.3)
+        # Chargement AAL / reconstitutions
+        r_sans_aal = r.get("sans_aal", base); r_sans_rec = r.get("sans_rec", base)
+        adj_aal = 0.0 if aal_new > 0 else (r_sans_aal - base)
+        adj_rec = (nb_recon_new / max(t_orig["nb_reconstitutions"], 1) - 1) * (r_sans_rec - base) * 0.5
+        return max(base * adj + adj_aal + adj_rec, 0)
+
+    base_tranches = [dict(t) for t in tranches]
+    resultats_variantes = {}
+
+    for perspective in ["cedante", "reassureur", "equilibre"]:
+        variante_tranches = []
+        for i, t in enumerate(base_tranches):
+            t_var = dict(t)
+            if perspective == "cedante":
+                # Maximiser protection : élargir portée, baisser priorité, plus de reconstitutions
+                t_var["portee"]             = round(t["portee"] * 1.15 / 500_000) * 500_000
+                t_var["priorite"]           = round(t["priorite"] * 0.90 / 500_000) * 500_000
+                t_var["nb_reconstitutions"] = min(t["nb_reconstitutions"] + 1, 3)
+                if t["type"] == "travaillante":
+                    t_var["AAL"]            = round(t_var["portee"] * 2.0 / 100_000) * 100_000
+                    t_var["AAD"]            = round(t.get("AAD", 0) * 0.80 / 100_000) * 100_000 if t.get("AAD") else None
+            elif perspective == "reassureur":
+                # Maximiser rendement : réduire portée, augmenter priorité, moins de reconstitutions
+                t_var["portee"]             = round(t["portee"] * 0.85 / 500_000) * 500_000
+                t_var["priorite"]           = round(t["priorite"] * 1.10 / 500_000) * 500_000
+                t_var["nb_reconstitutions"] = max(t["nb_reconstitutions"] - 1, 1)
+                if t["type"] == "travaillante":
+                    t_var["AAL"]            = round(t_var["portee"] * 1.5 / 100_000) * 100_000
+                    t_var["AAD"]            = round((t.get("AAD", 0) or t["portee"]*0.3) * 1.20 / 100_000) * 100_000
+            else:  # equilibre
+                # Compromis : légère optimisation des deux côtés
+                t_var["portee"]             = t["portee"]
+                t_var["priorite"]           = t["priorite"]
+                t_var["nb_reconstitutions"] = t["nb_reconstitutions"]
+                if t["type"] == "travaillante" and t.get("AAL"):
+                    t_var["AAL"] = round(t["AAL"] * 1.05 / 100_000) * 100_000
+
+            # Garantir valeurs minimales
+            t_var["portee"]   = max(t_var["portee"],   1_000_000)
+            t_var["priorite"] = max(t_var["priorite"], 500_000)
+            variante_tranches.append(t_var)
+
+        # Calculer prime estimée pour cette variante
+        prime_v = 0.0
+        taux_v  = []
+        for i, t_var in enumerate(variante_tranches):
+            tt = taux_sim_pour_tranche(i,
+                t_var["portee"], t_var["priorite"],
+                t_var.get("AAL", 0) or 0,
+                t_var.get("AAD", 0) or 0,
+                t_var["nb_reconstitutions"])
+            prime_v += gnpi_val * tt
+            taux_v.append(tt)
+
+        resultats_variantes[perspective] = {
+            "tranches":    variante_tranches,
+            "taux":        taux_v,
+            "prime":       prime_v,
+            "taux_global": prime_v / gnpi_val if gnpi_val else 0,
+        }
+
+    return resultats_variantes
+
+
+def afficher_variantes_optimisation(variantes, gnpi_val, tranches_ref):
+    """Affiche les 3 variantes dans Tab6."""
+    st.markdown("---")
+    st.markdown("""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d2d2d 100%);
+        border-radius:12px;padding:20px 24px;margin-bottom:20px">
+        <div style="font-size:18px;font-weight:700;color:white">⚡ Optimisation du Programme — 3 Variantes</div>
+        <div style="font-size:13px;color:#aaa;margin-top:4px">
+        En tant que leader (Partner Re) : propositions structurées pour la négociation
+        </div></div>""", unsafe_allow_html=True)
+
+    cols = st.columns(3)
+    configs = [
+        ("cedante",    "💼 Variante A", "Avantage Cédante",    "#3b82f6", "Maximise la protection — portée +15%, priorité -10%, reconstitutions +1"),
+        ("reassureur", "📈 Variante B", "Avantage Réassureur", "#ef4444", "Maximise le rendement — portée -15%, priorité +10%, AAD renforcé"),
+        ("equilibre",  "⚖️ Variante C", "Programme Équilibré", "#2d8a4e", "Compromis optimal — proposition de négociation finale Partner Re"),
+    ]
+
+    for col, (key, label, subtitle, color, desc) in zip(cols, configs):
+        v = variantes.get(key, {}); t_list = v.get("tranches", [])
+        prime = v.get("prime", 0); taux_g = v.get("taux_global", 0)
+        with col:
+            st.markdown(f"""<div style="background:white;border-radius:12px;padding:16px;
+                border-top:4px solid {color};box-shadow:0 2px 8px rgba(0,0,0,0.08);margin-bottom:12px">
+                <div style="font-size:15px;font-weight:700;color:{color}">{label}</div>
+                <div style="font-size:12px;font-weight:600;color:#333;margin:4px 0">{subtitle}</div>
+                <div style="font-size:11px;color:#666;margin-bottom:12px">{desc}</div>
+                <div style="font-size:20px;font-weight:700;color:#1a1a1a">{prime:,.0f} MAD</div>
+                <div style="font-size:12px;color:#888">Taux global : {taux_g:.4%}</div>
+                </div>""", unsafe_allow_html=True)
+            if t_list:
+                rows_v = []
+                for i, t_v in enumerate(t_list):
+                    t_ref = tranches_ref[i] if i < len(tranches_ref) else {}
+                    delta_p = t_v["portee"] - t_ref.get("portee", t_v["portee"])
+                    delta_d = t_v["priorite"] - t_ref.get("priorite", t_v["priorite"])
+                    rows_v.append({
+                        "Tranche": t_v["nom"],
+                        "Portée": f"{t_v['portee']/1e6:.0f}M {'↑' if delta_p>0 else '↓' if delta_p<0 else '='}",
+                        "Priorité": f"{t_v['priorite']/1e6:.0f}M {'↑' if delta_d>0 else '↓' if delta_d<0 else '='}",
+                        "Reconst.": f"{t_v['nb_reconstitutions']}x100%",
+                        "AAL": f"{(t_v.get('AAL') or 0)/1e6:.0f}M" if t_v.get("AAL") else "—",
+                    })
+                tableau_resultats(rows_v)
+
+    # Tableau comparatif
+    st.markdown("### 📊 Comparaison des 3 variantes vs Programme actuel")
+    prime_base = sum(gnpi_val * v.get("taux",[0])[i] if i < len(v.get("taux",[])) else 0
+                     for i in range(len(tranches_ref))
+                     for kk, v in variantes.items() if kk == "equilibre") or 0
+    rows_comp = []
+    prime_actuelle = None
+    for key, label, *_ in configs:
+        v = variantes.get(key, {})
+        prime_v = v.get("prime", 0)
+        if prime_actuelle is None: prime_actuelle = prime_v
+        rows_comp.append({
+            "Variante": label.replace("💼 ","").replace("📈 ","").replace("⚖️ ",""),
+            "Prime estimée": f"{prime_v:,.0f} MAD",
+            "Taux global": f"{v.get('taux_global',0):.4%}",
+            "Écart vs équilibre": f"{(prime_v - variantes.get('equilibre',{}).get('prime',prime_v))/gnpi_val*100:+.2f} pts",
+            "Recommandation": "⬆️ Protège la cédante" if key=="cedante" else "⬇️ Protège le réassureur" if key=="reassureur" else "✅ Proposition finale"
+        })
+    tableau_resultats(rows_comp)
+    st.info("💡 En tant que leader Partner Re : proposer la Variante C comme base de négociation, avec la Variante B comme position de repli en cas de sinistralité élevée.")
+
+
+def afficher_panneau_audit(tranches, resultats_bc, resultats_sim, taux_mkt_final,
+                            df_rapport, prime_totale, gnpi_val):
+    """Panneau de transparence pour managers — explicabilité complète."""
+    st.markdown("---")
+    with st.expander("🔍 Panneau Transparence & Audit — Pour la direction", expanded=False):
+        st.markdown("""<div style="background:rgba(59,130,246,0.08);border-left:4px solid #3b82f6;
+            border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:16px">
+            <b style="color:#3b82f6">Ce panneau est destiné au comité de direction.</b><br>
+            Il montre comment chaque chiffre a été calculé, quelles règles ont été appliquées,
+            et où se trouvent les zones d'incertitude. L'actuaire reste décisionnaire.
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("#### 1️⃣ Règles actuarielles appliquées")
+        regles = []
+        for r in resultats_bc:
+            n_nz = r.get("n_ann_nonzero", 0)
+            sigma = r.get("sigma_hist", 0)
+            regle = "R2 — BC=0 (< 3 ans non nuls)" if n_nz < 3 else f"R1 — τ_risque = τ_pur + σ ({sigma:.4%}) × 20%"
+            statut = "⚠️ Données insuffisantes" if n_nz < 3 else "✅ Données suffisantes"
+            regles.append({
+                "Tranche": r["tranche"], "Type": r["type"],
+                "Années non-nulles": f"{n_nz}",
+                "σ historique": f"{sigma:.4%}",
+                "Règle appliquée": regle,
+                "Statut": statut,
+            })
+        tableau_resultats(regles)
+
+        st.markdown("#### 2️⃣ Comparaison des 3 méthodes")
+        comp_m = []
+        for i, t in enumerate(tranches):
+            nom = t["nom"]
+            bc_t = next((r.get("taux_technique",0) for r in resultats_bc if r["tranche"]==nom), 0)
+            si_t = next((r.get("taux_technique",0) for r in resultats_sim if r["tranche"]==nom), 0)
+            mk_t = next((r.get("taux",0) for r in taux_mkt_final if r["tranche"]==nom), 0) if t["type"]!="travaillante" else None
+            rpt  = df_rapport[df_rapport["Tranche"]==nom].iloc[0] if not df_rapport.empty and nom in df_rapport["Tranche"].values else {}
+            retenu = rpt.get("Taux retenu","—") if hasattr(rpt,"get") else "—"
+            comp_m.append({
+                "Tranche": nom, "Type": t["type"],
+                "BC": f"{bc_t:.4%}" if bc_t else "0% (R2)",
+                "Simulation": f"{si_t:.4%}",
+                "Market curve": f"{mk_t:.4%}" if mk_t is not None else "N/A (trav.)",
+                "Taux retenu": retenu if isinstance(retenu,str) else f"{retenu:.4%}",
+                "Logique": f"max(BC,Sim)" if t["type"]=="travaillante" else "max(Sim,Mkt)",
+            })
+        tableau_resultats(comp_m)
+
+        st.markdown("#### 3️⃣ Piste d'audit — Décisions de l'agent")
+        st.markdown(f"""<div style="background:#f9fafb;border-radius:8px;padding:14px;font-size:12px;
+            font-family:monospace;border:1px solid #e0e0e0">
+            📅 Date : {datetime.now().strftime("%d/%m/%Y %H:%M")} |
+            GNPI : {gnpi_val:,} MAD |
+            Prime totale : {prime_totale:,.0f} MAD |
+            Taux global : {prime_totale/gnpi_val:.4%} |
+            Tranches : {len(tranches)}<br>
+            Formule τ_risque : τ_pur + σ_hist × 20% (CAS actuarial standards)<br>
+            Règle R2 : BC = 0 si années non-nulles < 3<br>
+            Market curve : cat uniquement (R² ≥ 0.45)<br>
+            Sélection finale : max(BC, Sim) trav. | max(Sim, Mkt) cat
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("#### 4️⃣ Questions fréquentes managers")
+        with st.expander("❓ Pourquoi le BC de certaines tranches cat est à 0 ?"):
+            st.markdown("Parce que la règle actuarielle R2 interdit d'extrapoler à partir de moins de 3 années de sinistralité observée. Ce n'est pas une erreur — c'est une règle de prudence qui évite de construire une tarification sur des données insuffisantes.")
+        with st.expander("❓ Comment vérifier les calculs ?"):
+            st.markdown("Chaque calcul intermédiaire est affiché dans les onglets BC, Simulation et Market Curve. Les formules sont codées explicitement — il n'y a pas d'algorithme opaque.")
+        with st.expander("❓ L'IA peut-elle se tromper ?"):
+            st.markdown("Oui, comme tout outil de calcul. C'est pourquoi l'actuaire vérifie les résultats intermédiaires avant validation. L'avantage de cet outil : chaque hypothèse est documentée et traçable, contrairement à un fichier Excel.")
+        with st.expander("❓ Qui est responsable du taux final ?"):
+            st.markdown("L'actuaire qui valide le rapport. L'IA propose, l'actuaire décide. Le bouton 'Générer le rapport' est un acte de validation explicite.")
 
 def _lookup_taux(results_list, nom, idx, key="taux_technique"):
     """Lookup par nom de tranche. Fallback par index si nom introuvable."""
@@ -1332,7 +1556,12 @@ with tab2:
 
 with tab3:
     section_header("Burning Cost", "Charges historiques réassurance par tranche", "🔥")
-    st.caption("Ck = min(max(S'k_ultime − D, 0), L) × coeff_stab")
+    st.caption("Ck = min(max(S’k_ultime − D, 0), L) × coeff_stab")
+    st.markdown("""<div style="background:rgba(45,138,78,0.08);border-left:4px solid #2d8a4e;
+        border-radius:0 8px 8px 0;padding:10px 16px;margin-bottom:12px;font-size:12px">
+        <b>R1</b> — τ_risque = τ_pur + σ_hist × 20% (écart-type BC annuels non nuls × chargement sécurité) —
+        <b>R2</b> — Si années non nulles < 3 → τ_BC = 0 (données insuffisantes)
+        </div>""", unsafe_allow_html=True)
 
     if "df_proj" not in st.session_state:
         st.warning("⚠️ Transformez d'abord le triangle")
@@ -1363,15 +1592,24 @@ with tab3:
                     Pr_Rec /= L if L > 0 else 1
                     Rec = Pr_Rec / (Pr_Rec + N) if (Pr_Rec + N) > 0 else 0.0
                     charge_moy  = df_ch["charge"].mean()
-                    taux_pur    = charge_moy / gnpi
-                    taux_risque = taux_pur * 1.20
-                    # τ_tech = τ_risque × (1-Rec) / (1 - BK - FG - Marge - Rétro)
-                    taux_technique = (taux_risque * (1 - Rec)) / (
-                        1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
+                    charges_nonzero = [c for c in df_ch["charge"].values if c > 0]
+                    n_ann_nonzero   = len(charges_nonzero)
                     charg_maj = st.session_state.get("chargement_majeurs", 0.0)
+                    # R2 — Moins de 3 années non nulles → BC = 0 (données insuffisantes)
+                    if n_ann_nonzero < 3:
+                        taux_pur = taux_risque = taux_technique = 0.0
+                        sigma_hist = 0.0
+                    else:
+                        taux_pur   = charge_moy / gnpi
+                        sigma_hist = float(np.std(charges_nonzero)) / gnpi
+                        # R1 — τ_risque = τ_pur + σ_hist × 20% (chargement sécurité)
+                        taux_risque    = taux_pur + sigma_hist * 0.20
+                        taux_technique = (taux_risque * (1 - Rec)) / (
+                            1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
                     resultats_bc.append({
                         "tranche": t_info["nom"], "type": t_info["type"],
                         "charge_moy": charge_moy, "Pr_Rec": Pr_Rec, "Rec": Rec,
+                        "n_ann_nonzero": n_ann_nonzero, "sigma_hist": sigma_hist if n_ann_nonzero >= 3 else 0.0,
                         "taux_pur": taux_pur, "taux_risque": taux_risque,
                         "taux_technique": taux_technique,
                         "chargement_majeurs": charg_maj,
@@ -1389,8 +1627,10 @@ with tab3:
     if "resultats_bc" in st.session_state:
         tableau_resultats([{
             "Tranche": r["tranche"], "Type": r["type"],
+            "Ans non-nuls": f"{r.get('n_ann_nonzero',0)} {'⚠️' if r.get('n_ann_nonzero',0)<3 else '✅'}",
             "Charge moy.": f"{r.get('charge_moy', r.get('charge_moy_MAD', 0)):,.0f} MAD",
-            "Pr_Rec": f"{r['Pr_Rec']:.4f}", "Rec": f"{r['Rec']:.4%}",
+            "σ hist.": f"{r.get('sigma_hist',0):.4%}",
+            "Rec": f"{r['Rec']:.4%}",
             "Taux pur": f"{r['taux_pur']:.4%}", "Taux risque": f"{r['taux_risque']:.4%}",
             "Taux technique": f"{r['taux_technique']:.4%}",
             "Charg. majeurs": f"{r.get('chargement_majeurs', 0):.4%}",
@@ -1550,6 +1790,12 @@ with tab4:
 with tab5:
     st.header("Market Curve")
     st.caption("ROL = a x x^(-b)  |  x = (D + C/2) / GNPI  |  tau_pur = ROL x C / GNPI")
+    st.markdown("""<div style="background:rgba(239,68,68,0.08);border-left:4px solid #ef4444;
+        border-radius:0 8px 8px 0;padding:8px 14px;margin-bottom:8px;font-size:12px">
+        ⚠️ <b>R4</b> — La market curve est utilisée <b>UNIQUEMENT pour les tranches cat</b>.
+        Elle n’intervient pas dans la tarification de la tranche travaillante.
+        Critères qualité : <b>R² ≥ 0.45</b>, <b>N ≥ 15 points</b>, <b>cohérence ROL T2 > T3</b>.
+        </div>""", unsafe_allow_html=True)
 
     f_mkt = st.file_uploader("📁 Données marché", type=["xlsx","csv"], key="f_mkt")
 
@@ -1766,6 +2012,13 @@ with tab5:
 
 with tab6:
     st.header("Rapport Final de Tarification")
+    st.markdown("""<div style="background:rgba(45,138,78,0.08);border-left:4px solid #2d8a4e;
+        border-radius:0 8px 8px 0;padding:10px 16px;margin-bottom:12px;font-size:12px">
+        <b>Règles de sélection finale</b> —
+        T1 (travaillante) : max(τ_BC, τ_Sim) |
+        T2, T3 (cat) : max(τ_Sim, τ_Marché) —
+        Market curve appliquée <b>uniquement aux tranches cat</b>.
+        </div>""", unsafe_allow_html=True)
     manquants = [n for n, k in [("BC","resultats_bc"),("Simulation","resultats_sim"),("Market Curve","taux_mkt_final")]
                  if k not in st.session_state]
     if manquants:
@@ -1779,14 +2032,18 @@ with tab6:
             nom = t["nom"]
             bc_tt  = _lookup_taux(_bc_list,  nom, idx_t, "taux_technique")
             sim_tt = _lookup_taux(_sim_list, nom, idx_t, "taux_technique")
-            mkt    = _lookup_taux(_mkt_list, nom, idx_t, "taux")
+            # Market curve uniquement pour tranches cat
+            mkt = _lookup_taux(_mkt_list, nom, idx_t, "taux") if t["type"] != "travaillante" else 0.0
             if t["type"] == "travaillante":
-                ecart = abs(bc_tt-sim_tt)/bc_tt*100 if bc_tt > 0 else 0
-                taux_retenu = sim_tt
-                methode = f"Simulation (ecart BC/Sim: {ecart:.0f}%) {'!' if ecart>25 else 'OK'}"
+                # T1 : max(BC, Sim) — méthode la plus conservative
+                taux_retenu = max(bc_tt, sim_tt)
+                methode_base = "BC" if bc_tt >= sim_tt else "Simulation"
+                ecart = abs(bc_tt-sim_tt)/max(bc_tt,sim_tt)*100 if max(bc_tt,sim_tt)>0 else 0
+                methode = f"max(BC,Sim)→{methode_base} | écart {ecart:.0f}% {'⚠️' if ecart>25 else '✅'}"
             else:
+                # T2, T3 cat : max(Sim, Marché) — toujours côté sécurité
                 taux_retenu = max(sim_tt, mkt)
-                methode = "Simulation" if sim_tt >= mkt else "Marché"
+                methode = f"max(Sim,Mkt)→{'Marché' if mkt >= sim_tt else 'Simulation'}"
             prime = gnpi * taux_retenu; prime_totale += prime
             rows_rapport.append({
                 "Tranche": nom, "Type": t["type"],
@@ -1904,6 +2161,36 @@ with tab6:
         st.subheader("🤖 Rapport Claude")
         st.markdown(st.session_state["reco_finale"])
 
+    # ── Optimisation A/B/C ──
+    if (st.session_state.get("resultats_sim") and
+        st.session_state.get("resultats_bc")  and
+        st.session_state.get("df_rapport") is not None):
+        if st.button("⚡ Générer les variantes de programme optimal (A/B/C)", type="primary", key="btn_optim"):
+            with st.spinner("Optimisation en cours..."):
+                variantes = optimiser_programme_variantes(
+                    tranches_input, gnpi,
+                    st.session_state["resultats_sim"],
+                    st.session_state["resultats_bc"],
+                    st.session_state.get("taux_mkt_final", []))
+                st.session_state["variantes_optimisation"] = variantes
+        if "variantes_optimisation" in st.session_state:
+            afficher_variantes_optimisation(
+                st.session_state["variantes_optimisation"],
+                gnpi, tranches_input)
+
+    # ── Panneau Audit Managers ──
+    if (st.session_state.get("resultats_bc") and
+        st.session_state.get("resultats_sim") and
+        st.session_state.get("df_rapport") is not None):
+        afficher_panneau_audit(
+            tranches_input,
+            st.session_state["resultats_bc"],
+            st.session_state["resultats_sim"],
+            st.session_state.get("taux_mkt_final", []),
+            st.session_state["df_rapport"],
+            st.session_state.get("prime_totale", 0),
+            gnpi)
+
 # ════════════════════════════════════════════
 # TAB AGENT — MODE AGENT AUTONOME
 # ════════════════════════════════════════════
@@ -1948,11 +2235,11 @@ with tab_agent:
     with st.expander("🎯 Instructions pour l'agent (optionnel)", expanded=False):
         agent_instructions = st.text_area(
             "Directives spécifiques",
-            placeholder="Ex: Priorité à la market curve pour les tranches cat. Seuil d'alerte écart BC/Sim = 20%. Objectif prime totale < 14M MAD...",
-            height=100, key="agent_instructions")
+            placeholder="Emirates/Partner Re : 13M xs 2M (trav.) | 10M xs 15M (cat) | 15M xs 25M (cat). AAL=26M AAD=4M, 2 reconst 100%, brokage 7%, frais 5%, marge 10%, retro 0.21%. Market curve cat uniquement R2>=0.45. Proposer variantes A/B/C.",
+            height=120, key="agent_instructions")
         agent_contraintes = st.text_area(
             "Contraintes métier",
-            placeholder="Ex: Ne pas retenir alpha < 1.2. Si R² < 0.3 sur market curve, utiliser uniquement simulation...",
+            placeholder="Ex: Ne pas retenir alpha < 1.0. R2 < 0.30 market curve = alerte. BC=0 cat = NORMAL. Ecart BC/Sim > 30% = alerte.",
             height=80, key="agent_contraintes")
 
     col1, col2 = st.columns([2, 1])
@@ -2095,15 +2382,22 @@ Retourne le tableau de synthèse et la prime totale.""",
                     Pr_Rec += t_r * min(L, max(C_n - (r-1)*L, 0))
             Pr_Rec /= L if L > 0 else 1
             Rec = Pr_Rec / (Pr_Rec + N) if (Pr_Rec + N) > 0 else 0.0
-            charge_moy  = df_ch["charge"].mean()
-            taux_pur    = charge_moy / gnpi
-            taux_risque = taux_pur * 1.20
-            taux_technique = (taux_risque * (1 - Rec)) / (
-                1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
+            charge_moy      = df_ch["charge"].mean()
+            charges_nonzero = [c for c in df_ch["charge"].values if c > 0]
+            n_ann_nonzero   = len(charges_nonzero)
             charg_maj = st.session_state.get("chargement_majeurs", 0.0)
+            if n_ann_nonzero < 3:
+                taux_pur = taux_risque = taux_technique = 0.0; sigma_hist = 0.0
+            else:
+                taux_pur   = charge_moy / gnpi
+                sigma_hist = float(np.std(charges_nonzero)) / gnpi
+                taux_risque    = taux_pur + sigma_hist * 0.20
+                taux_technique = (taux_risque * (1 - Rec)) / (
+                    1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
             resultats.append({
                 "tranche": t_info["nom"], "type": t_info["type"],
                 "charge_moy": round(charge_moy, 2),
+                "n_ann_nonzero": n_ann_nonzero, "sigma_hist": round(sigma_hist if n_ann_nonzero>=3 else 0.0, 6),
                 "Pr_Rec": round(Pr_Rec, 6), "Rec": round(Rec, 6),
                 "taux_pur": round(taux_pur, 6), "taux_risque": round(taux_risque, 6),
                 "taux_technique": round(taux_technique, 6),
@@ -2242,14 +2536,15 @@ Retourne le tableau de synthèse et la prime totale.""",
             nom   = t["nom"]
             bc_tt = _lookup_taux(_bc_list,  nom, idx_t, "taux_technique")
             si_tt = _lookup_taux(_sim_list, nom, idx_t, "taux_technique")
-            mkt   = _lookup_taux(_mkt_list, nom, idx_t, "taux")
+            # Market curve uniquement pour tranches cat
+            mkt   = _lookup_taux(_mkt_list, nom, idx_t, "taux") if t["type"] != "travaillante" else 0.0
             if t["type"] == "travaillante":
-                if methode_travaillante == "bc":             taux = bc_tt; meth = "BC"
-                elif methode_travaillante == "moyenne_bc_sim": taux = (bc_tt + si_tt) / 2; meth = "Moy BC+Sim"
-                else:                                        taux = si_tt; meth = "Simulation"
+                if methode_travaillante == "bc":               taux = bc_tt;              meth = "BC"
+                elif methode_travaillante == "moyenne_bc_sim": taux = (bc_tt+si_tt)/2;   meth = "Moy BC+Sim"
+                else:                                          taux = max(bc_tt, si_tt); meth = f"max(BC,Sim)→{'BC' if bc_tt>=si_tt else 'Sim'}"
             else:
                 if methode_cat == "market_curve":   taux = mkt;              meth = "Marché"
-                elif methode_cat == "max_sim_mkt":  taux = max(si_tt, mkt);  meth = "Max(Sim,Marché)"
+                elif methode_cat == "max_sim_mkt":  taux = max(si_tt, mkt);  meth = f"max(Sim,Mkt)→{'Mkt' if mkt>=si_tt else 'Sim'}"
                 else:                               taux = si_tt;            meth = "Simulation"
             prime = gnpi * taux; prime_totale += prime
             ecart_bc_sim = abs(bc_tt - si_tt) / bc_tt * 100 if bc_tt > 0 else 0
@@ -2304,10 +2599,10 @@ Retourne le tableau de synthèse et la prime totale.""",
         seuil_0  = st.session_state.get("seuil_est",  1_600_000)
         n_sim_0  = n_sim_agent
 
-        system_prompt = f"""Tu es un agent actuariel autonome expert en tarification réassurance non-proportionnelle automobile.
-Tu travailles sur le programme Atlantic Re 2026 — GNPI {gnpi:,} MAD.
+        system_prompt = f"""Tu es un agent actuariel autonome de niveau expert, spécialiste en tarification réassurance XL non-proportionnelle automobile.
+Tu travailles sur le programme Atlantic Re — GNPI {gnpi:,} MAD. Tu es conforme aux standards CAS, SOA, Institut des Actuaires et IFoA.
 
-PARAMÈTRES ESTIMÉS DISPONIBLES :
+PARAMÈTRES CALIBRÉS :
 - Alpha Pareto (MLE Hill) : {alpha_0:.4f}
 - Lambda Poisson : {lambda_0:.4f}
 - Seuil modélisation (p80×D) : {seuil_0:,.0f} MAD
@@ -2316,20 +2611,31 @@ PARAMÈTRES ESTIMÉS DISPONIBLES :
 PROGRAMME :
 {json.dumps(tranches_input, indent=2)}
 
-RÈGLES DE DÉCISION :
-1. Commence TOUJOURS par le Burning Cost
-2. Lance ensuite la Simulation avec les paramètres estimés
-3. Construis la Market Curve
-4. Si écart BC/Sim > 30% sur une tranche travaillante → signale l'anomalie et justifie
-5. Si R² market curve < seuil → relance avec filtres assouplis
-6. Génère le rapport final en choisissant la méthode la plus prudente par tranche
-7. Pour les tranches cat : préfère max(simulation, market_curve)
-8. JUSTIFIE chaque décision avant d'appeler un outil
+RÈGLES ACTUARIELLES OBLIGATOIRES — BURNING COST :
+R1 — τ_risque = τ_pur + σ_hist × 20% (écart-type BC annuels non nuls × chargement sécurité)
+     NE PAS utiliser τ_pur × 1.20 — utiliser la formule σ
+R2 — Si années BC non nulles < 3 → τ_BC = 0 (données insuffisantes, ne pas extrapoler)
+R3 — Les tranches cat avec τ_BC = 0 sont tarifiées UNIQUEMENT par simulation + market curve
+
+RÈGLES ACTUARIELLES OBLIGATOIRES — MARKET CURVE :
+R4 — Market curve UNIQUEMENT pour tranches cat — JAMAIS pour la travaillante
+R5 — Critères sélection : R² ≥ 0.45, b > 0, N ≥ 15 points, ROL T2 > ROL T3 (cohérence)
+R6 — Si R² < 0.30 → signaler anomalie et relancer avec filtres plus larges
+
+RÈGLE DE SÉLECTION FINALE :
+T1 (travaillante) : taux_retenu = max(τ_BC, τ_sim) — méthode conservative
+T2, T3 (cat)      : taux_retenu = max(τ_sim, τ_marché) — toujours côté sécurité
+
+SÉQUENCE OBLIGATOIRE :
+1. Burning Cost (formule σ + règle R2)
+2. Simulation Pareto/Poisson
+3. Market Curve (cat uniquement, R² ≥ 0.45)
+4. Rapport final + Variantes A/B/C optimisation
 
 INSTRUCTIONS UTILISATEUR : {instructions if instructions else "Aucune instruction spécifique."}
 CONTRAINTES MÉTIER : {contraintes if contraintes else "Contraintes standard."}
 
-Agis de façon autonome et professionnelle. Explique ton raisonnement à chaque étape."""
+Justifie chaque décision avec des chiffres. Mets en évidence les anomalies. Reste explicable pour un comité de direction."""
 
         messages = [{"role": "user", "content":
             "Lance la tarification complète du programme Atlantic Re 2026. Exécute toutes les étapes nécessaires de façon autonome."}]
@@ -3026,11 +3332,20 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
                 for r in range(1,n_rec+1): Pr+=t_r*min(L,max(Cn-(r-1)*L,0))
             Pr/=L if L>0 else 1
             Rec=Pr/(Pr+N) if (Pr+N)>0 else 0.0
-            cm=df_ch["charge"].mean(); tp=cm/gnpi_v; tr=tp*1.20
-            tt=(tr*(1-Rec))/(1-t_info["brokage"]-t_info["frais"]-t_info["marge"]-t_info["retrocession"])
+            cm = df_ch["charge"].mean()
+            charges_nz = [c for c in df_ch["charge"].values if c > 0]
+            n_nz = len(charges_nz)
             charg_maj_p3 = st.session_state.get("chargement_majeurs", 0.0)
+            if n_nz < 3:
+                tp = tr = tt = 0.0; sig_p3 = 0.0
+            else:
+                tp = cm / gnpi_v
+                sig_p3 = float(np.std(charges_nz)) / gnpi_v
+                tr = tp + sig_p3 * 0.20
+                tt = (tr*(1-Rec))/(1-t_info["brokage"]-t_info["frais"]-t_info["marge"]-t_info["retrocession"])
             resultats.append({"tranche":t_info["nom"],"type":t_info["type"],
-                "charge_moy":round(cm,2),"Pr_Rec":round(Pr,6),"Rec":round(Rec,6),
+                "charge_moy":round(cm,2),"n_ann_nonzero":n_nz,"sigma_hist":round(sig_p3,6),
+                "Pr_Rec":round(Pr,6),"Rec":round(Rec,6),
                 "taux_pur":round(tp,6),"taux_risque":round(tr,6),
                 "taux_technique":round(tt,6),
                 "chargement_majeurs":round(charg_maj_p3,6),
@@ -3050,14 +3365,14 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
             n=t["nom"]
             bt  = _lookup_taux(_bc_l, n, idx_t, "taux_technique")
             st_ = _lookup_taux(_si_l, n, idx_t, "taux_technique")
-            mk  = _lookup_taux(_mk_l, n, idx_t, "taux")
+            mk  = _lookup_taux(_mk_l, n, idx_t, "taux") if t["type"]!="travaillante" else 0.0
             if t["type"]=="travaillante":
                 if meth_trav=="bc": tx=bt; me="BC"
                 elif meth_trav=="moyenne_bc_sim": tx=(bt+st_)/2; me="Moy BC+Sim"
-                else: tx=st_; me="Simulation"
+                else: tx=max(bt,st_); me=f"max(BC,Sim)→{'BC' if bt>=st_ else 'Sim'}"
             else:
                 if meth_cat=="market_curve": tx=mk; me="Marché"
-                elif meth_cat=="max_sim_mkt": tx=max(st_,mk); me="Max(Sim,Marché)"
+                elif meth_cat=="max_sim_mkt": tx=max(st_,mk); me=f"max(Sim,Mkt)→{'Mkt' if mk>=st_ else 'Sim'}"
                 else: tx=st_; me="Simulation"
             pr=gnpi_v*tx; pt+=pr
             ec=abs(bt-st_)/bt*100 if bt>0 else 0
@@ -3078,35 +3393,47 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
                        log_cont, result_cont, alert_cont):
         client = anthropic.Anthropic(api_key=api_key)
 
-        system_p3 = f"""Tu es un agent actuariel autonome de niveau expert.
-Tu as accès aux fichiers bruts d'Atlantic Re pour la tarification 2026.
+        system_p3 = f"""Tu es un agent actuariel autonome de niveau expert, certifié CAS/SOA/IFoA.
+Tu as accès aux fichiers bruts pour la tarification XL non-proportionnelle.
 
-CONTEXTE FOURNI PAR L'UTILISATEUR :
-{contexte_v if contexte_v else "Portefeuille automobile Maroc, GNPI {gnpi_v:,} MAD, année cotation {annee_v}."}
+CONTEXTE UTILISATEUR :
+{contexte_v if contexte_v else f"Portefeuille automobile, GNPI {gnpi_v:,} MAD, année cotation {annee_v}."}
 
 GNPI : {gnpi_v:,} MAD | Année cotation : {annee_v}
-Seuil d'alerte critique (écart BC/Sim) : {seuil_al}%
-Période de retour sinistres majeurs : {retour3} ans
+Seuil alerte critique (écart BC/Sim) : {seuil_al}% | Période retour : {retour3} ans
+
+RÈGLES ACTUARIELLES OBLIGATOIRES — BURNING COST :
+R1 — tau_risque = tau_pur + sigma_hist * 20% (écart-type BC annuels non nuls x chargement sécurité 20%)
+     JAMAIS tau_pur * 1.20
+R2 — Années BC non nulles < 3 => tau_BC = 0 automatiquement (pas d'extrapolation)
+R3 — Tranches cat avec tau_BC = 0 => tarification par simulation + market curve uniquement
+
+RÈGLES ACTUARIELLES — MARKET CURVE :
+R4 — Market curve UNIQUEMENT pour tranches cat. Jamais pour la travaillante.
+R5 — Critères sélection : R2 >= 0.45, b > 0, N >= 15, cohérence ROL T2 > ROL T3
+R6 — R2 < 0.30 => DEMANDER_VALIDATION_HUMAINE
+
+SÉLECTION FINALE :
+- Travaillante : taux = max(tau_BC, tau_sim)
+- Cat : taux = max(tau_sim, tau_marché)
 
 SÉQUENCE OBLIGATOIRE :
-1. DÉFINIR le programme (tranches, priorités, portées, frais) depuis le contexte fourni
-2. ANALYSER ET TRANSFORMER le triangle (choix branche longue/courte basé sur les données)
-3. CALCULER le Burning Cost
-4. LANCER la Simulation avec les paramètres calibrés
-5. Si écart BC/Sim > {seuil_al}% → DEMANDER_VALIDATION_HUMAINE
-6. CONSTRUIRE la Market Curve (filtre EVENEMENT par défaut)
-7. Si R² < 0.25 → DEMANDER_VALIDATION_HUMAINE
-8. GÉNÉRER le rapport final
+1. DÉFINIR programme (tranches, priorités, portées, frais) depuis le contexte
+2. TRANSFORMER triangle (branche longue obligatoire si RC auto)
+3. CALCULER Burning Cost (formule sigma + règle R2)
+4. LANCER Simulation Pareto/Poisson
+5. Si écart BC/Sim > {seuil_al}% => DEMANDER_VALIDATION_HUMAINE
+6. CONSTRUIRE Market Curve cat (R2 >= 0.45, N >= 15)
+7. Si R2 < 0.30 => DEMANDER_VALIDATION_HUMAINE
+8. GÉNÉRER rapport final avec sélection conservative
 
-RÈGLES DE DÉCISION AUTONOME :
-- Branche longue si portefeuille > 5 ans d'historique avec développement > 3 ans
-- Alpha suspect si < 0.8 ou > 4.0 → signaler mais continuer
-- Pour tranches cat : méthode = max(simulation, market_curve)
-- Pour tranches travaillantes : méthode = simulation sauf si BC/Sim < 15%
-- Ne JAMAIS demander validation pour des décisions techniques mineures
-- Justifie CHAQUE décision avec des chiffres
+RÈGLES AUTONOMES :
+- Branche longue si RC auto ou développement > 3 ans
+- Alpha < 0.8 ou > 4.0 => signaler anomalie
+- Ne jamais demander validation pour décisions techniques mineures
+- Justifier CHAQUE décision avec des chiffres précis
 
-Agis de façon professionnelle et autonome."""
+Sois conforme aux standards actuariels. Explicite pour un comité de direction."""
 
         messages = [{"role": "user", "content":
             f"Lance la tarification complète Atlantic Re 2026. GNPI={gnpi_v:,} MAD. Contexte : {contexte_v if contexte_v else 'Standard automobile Maroc'}. Go."}]
