@@ -964,16 +964,22 @@ La precision prime sur l'exhaustivite.
     return prompt.strip()
 
 
-def claude_stream(api_key, prompt, max_tokens=2000, session_key=""):
+def claude_stream(api_key, prompt, max_tokens=2000, session_key="", use_opus=False):
+    """
+    use_opus=True  → claude-opus-4-5   (agent autonome, calculs complexes)
+    use_opus=False → claude-haiku-4-5  (analyses copilote, 20x moins cher)
+    """
+    model = "claude-opus-4-5" if use_opus else "claude-haiku-4-5-20251001"
     client = anthropic.Anthropic(api_key=api_key)
     placeholder = st.empty()
     full_text = ""
-    with st.status("🤖 Agent Claude en cours...", expanded=True) as status:
+    label_model = "Opus" if use_opus else "Haiku ⚡"
+    with st.status(f"🤖 Agent Claude ({label_model}) en cours...", expanded=True) as status:
         st.write("🔗 Connexion au modèle...")
         st.write("📊 Chargement des données actuarielles...")
         try:
             with client.messages.stream(
-                model="claude-opus-4-5", max_tokens=max_tokens,
+                model=model, max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}]
             ) as stream:
                 st.write("✍️ Génération de l'analyse...")
@@ -1081,7 +1087,10 @@ with st.sidebar:
     if st.button("🏠 Accueil"):
         st.session_state["page"] = "landing"; st.rerun()
     st.markdown("### ⚙️ Configuration")
-    api_key = st.text_input("🔑 Clé API Claude", type="password", placeholder="sk-ant-...")
+    api_key = st.text_input("🔑 Clé API Claude", type="password", placeholder="sk-ant-...",
+                           help="Analyses copilote : Haiku (économique) | Agent autonome : Opus (puissant)")
+    if api_key:
+        st.caption("⚡ Haiku pour analyses | 🔬 Opus pour agents autonomes uniquement")
     gnpi    = st.number_input("💰 GNPI (MAD)", value=183_000_000, step=1_000_000)
     st.divider()
     st.markdown("### 📊 Statut des étapes")
@@ -1183,53 +1192,60 @@ with st.sidebar:
 # ACCUEIL INTELLIGENT
 # ════════════════════════════════════════════
 
-if api_key and "accueil_ia_done" not in st.session_state:
-    etapes_faites     = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
-                          ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
-                          ("Market Curve","resultats_mkt")] if k in st.session_state]
-    etapes_manquantes = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
-                          ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
-                          ("Market Curve","resultats_mkt")] if k not in st.session_state]
-    prompt_accueil = build_prompt(
-        role="Assistant actuariel expert en reassurance non-proportionnelle automobile. Tu accueilles un utilisateur sur l'outil de tarification XL Atlantic Re.",
-        task="""Genere un message d'accueil intelligent en 3 parties :
-1. ACCUEIL PERSONNALISE (2 lignes max)
-2. GUIDE RAPIDE (etapes numerotees) : Programme -> Triangle -> BC -> Simulation -> Market Curve -> Rapport
-3. RECOMMANDATION INTELLIGENTE selon l'etat actuel
-Style : professionnel, concis, encourageant. Maximum 10 lignes.""",
-        data=f"Etapes completes : {etapes_faites if etapes_faites else 'Aucune'}\nEtapes restantes : {etapes_manquantes if etapes_manquantes else 'Toutes completes !'}\nGNPI : {gnpi:,} MAD | Utilisateur : {st.session_state.get('user_email', '')}",
-        contexte_global=st.session_state.get("instructions_globales", ""),
-        contraintes="- Concis max 10 lignes\n- Emojis\n- Ne pas inventer de donnees")
-    st.markdown("""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
-        border-radius:16px;padding:24px 28px;margin-bottom:20px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
-        <div style="font-size:18px;font-weight:700;color:white;margin-bottom:8px">🤖 Atlantic Re IA — Assistant de tarification</div>
-        <div style="font-size:13px;color:rgba(255,255,255,0.7)">Analyse de votre session en cours...</div>
-        </div>""", unsafe_allow_html=True)
-    with st.container():
-        claude_stream(api_key, prompt_accueil, max_tokens=600, session_key="accueil_ia_msg")
-        st.session_state["accueil_ia_done"] = True
+# ── Bandeau accueil statique (0 token) ──
+etapes_faites     = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
+                      ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
+                      ("Market Curve","resultats_mkt")] if k in st.session_state]
+etapes_manquantes = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
+                      ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
+                      ("Market Curve","resultats_mkt")] if k not in st.session_state]
+etapes_html = " → ".join([f"<span style='color:#2d8a4e;font-weight:700'>{e}</span>" for e in etapes_faites]) if etapes_faites else "Aucune étape complétée"
+prochaine   = etapes_manquantes[0] if etapes_manquantes else "✅ Toutes les étapes complétées !"
+st.markdown(f"""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
+    border-radius:16px;padding:20px 28px;margin-bottom:16px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
+    <div style="font-size:17px;font-weight:700;color:white">🤖 Atlantic Re IA — Tarification XL Non-Proportionnelle</div>
+    <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:6px">
+        Workflow : <b style="color:white">Programme → Triangle → BC → Simulation → Market Curve → Rapport</b>
+    </div>
+    <div style="font-size:12px;color:rgba(255,255,255,0.6);margin-top:4px">
+        ✅ Complétées : {etapes_html if etapes_faites else '<span style="color:#aaa">Aucune</span>'}
+        &nbsp;|&nbsp; ⏭️ Prochaine étape : <b style="color:#f59e0b">{prochaine}</b>
+    </div></div>""", unsafe_allow_html=True)
 
-elif "accueil_ia_msg" in st.session_state:
-    st.markdown("""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
-        border-radius:16px;padding:20px 28px;margin-bottom:20px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
-        <div style="font-size:18px;font-weight:700;color:white">🤖 Atlantic Re IA — Assistant de tarification</div>
-        </div>""", unsafe_allow_html=True)
-    st.markdown(st.session_state["accueil_ia_msg"])
+# ── Analyse IA sur demande uniquement (évite les appels automatiques coûteux) ──
+if "accueil_ia_msg" in st.session_state:
+    with st.expander("🤖 Dernière analyse IA", expanded=False):
+        st.markdown(st.session_state["accueil_ia_msg"])
 
-elif not api_key:
-    st.markdown("""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
-        border-radius:16px;padding:24px 28px;margin-bottom:20px;">
-        <div style="font-size:18px;font-weight:700;color:white">🤖 Atlantic Re IA</div>
-        <div style="color:rgba(255,255,255,0.8);margin-top:8px;font-size:14px">
-            Entrez votre cle API Claude dans la sidebar pour activer l'assistant IA.<br>
-            <b>Workflow :</b> Programme → Triangle → BC → Simulation → Market Curve → Rapport
-        </div></div>""", unsafe_allow_html=True)
-
-if "accueil_ia_done" in st.session_state:
-    if st.button("🔄 Actualiser les recommandations IA", key="reset_accueil"):
-        st.session_state.pop("accueil_ia_done", None)
-        st.session_state.pop("accueil_ia_msg", None)
-        st.rerun()
+if api_key:
+    col_ia1, col_ia2 = st.columns([3, 1])
+    with col_ia2:
+        if st.button("🤖 Analyser ma session", key="btn_accueil_ia", use_container_width=True,
+                     help="Appel API payant — utiliser avec parcimonie"):
+            etapes_faites_2     = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
+                                  ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
+                                  ("Market Curve","resultats_mkt")] if k in st.session_state]
+            etapes_manquantes_2 = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
+                                  ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
+                                  ("Market Curve","resultats_mkt")] if k not in st.session_state]
+            prompt_accueil = build_prompt(
+                role="Assistant actuariel expert en reassurance non-proportionnelle automobile.",
+                task="Genere un message d'accueil intelligent : 1. Etat de la session 2. Prochaine action recommandee 3. Point d'attention si anomalie. Maximum 8 lignes.",
+                data=f"Etapes completes : {etapes_faites_2}\nEtapes restantes : {etapes_manquantes_2}\nGNPI : {gnpi:,} MAD",
+                contexte_global=st.session_state.get("instructions_globales",""),
+                contraintes="- Maximum 8 lignes\n- Concis\n- Ne pas inventer")
+            with st.spinner("🤖 Analyse en cours..."):
+                client_acc = __import__('anthropic').Anthropic(api_key=api_key)
+                try:
+                    msg = client_acc.messages.create(
+                        model="claude-haiku-4-5-20251001",
+                        max_tokens=400,
+                        messages=[{"role":"user","content":prompt_accueil}])
+                    txt = msg.content[0].text
+                    st.session_state["accueil_ia_msg"] = txt
+                    st.rerun()
+                except Exception as e_acc:
+                    st.error(f"Erreur : {e_acc}")
 
 # ════════════════════════════════════════════
 # TABS
@@ -2650,7 +2666,7 @@ Justifie chaque décision avec des chiffres. Mets en évidence les anomalies. Re
                 st.markdown(f"**Tour {tour}/{max_tours}** — Appel Claude...")
 
             response = client.messages.create(
-                model="claude-opus-4-5",
+                model="claude-opus-4-5",  # Opus requis pour le mode agent autonome
                 max_tokens=4096,
                 system=system_prompt,
                 tools=AGENT_TOOLS,
