@@ -1227,8 +1227,8 @@ elif not api_key:
 
 if "accueil_ia_done" in st.session_state:
     if st.button("🔄 Actualiser les recommandations IA", key="reset_accueil"):
-        del st.session_state["accueil_ia_done"]
-        del st.session_state["accueil_ia_msg"]
+        st.session_state.pop("accueil_ia_done", None)
+        st.session_state.pop("accueil_ia_msg", None)
         st.rerun()
 
 # ════════════════════════════════════════════
