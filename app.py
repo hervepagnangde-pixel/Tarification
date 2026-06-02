@@ -1290,29 +1290,57 @@ with tab1:
                 nom      = st.text_input("Nom", value=f"Tranche {i+1}", key=f"nom_{i}")
                 type_idx = ["travaillante","non_travaillante","cat"].index(d["type"])
                 type_t   = st.selectbox("Type", ["travaillante","non_travaillante","cat"], index=type_idx, key=f"type_{i}")
-                priorite = st.number_input("Priorité (MAD)", value=d["priorite"], step=500_000, key=f"prio_{i}", format="%d")
-                portee   = st.number_input("Portée (MAD)",   value=d["portee"],   step=500_000, key=f"port_{i}", format="%d")
+                priorite = st.number_input("Priorité (MAD)", value=float(d["priorite"]), step=500_000.0,
+                                           format="%.0f", key=f"prio_{i}")
+                portee   = st.number_input("Portée (MAD)",   value=float(d["portee"]),   step=500_000.0,
+                                           format="%.0f", key=f"port_{i}")
             with c2:
                 st.markdown("**Conditions contractuelles**")
                 has_aal  = st.checkbox("AAL", key=f"aal_{i}")
-                aal_val  = st.number_input("Montant AAL", value=0, step=100_000, key=f"aal_v_{i}", disabled=not has_aal)
+                aal_val  = st.number_input("Montant AAL (MAD)", value=0.0, step=100_000.0,
+                                           format="%.2f", key=f"aal_v_{i}", disabled=not has_aal)
                 has_aad  = st.checkbox("AAD", key=f"aad_{i}")
-                aad_val  = st.number_input("Montant AAD", value=0, step=100_000, key=f"aad_v_{i}", disabled=not has_aad)
+                aad_val  = st.number_input("Montant AAD (MAD)", value=0.0, step=100_000.0,
+                                           format="%.2f", key=f"aad_v_{i}", disabled=not has_aad)
                 has_indices = st.checkbox("Clause d'indexation", key=f"idx_{i}")
             with c3:
-                st.markdown("**Frais & Reconstitutions**")
-                nb_recon     = st.number_input("Nb reconstitutions",    value=1,   min_value=0, max_value=5,   key=f"recon_{i}")
-                tx_recon     = st.number_input("Taux reconstitution %", value=100, min_value=0, max_value=200, key=f"txrecon_{i}")
-                brokage      = st.number_input("Brokage %",             value=10,  min_value=0, max_value=30,  key=f"brok_{i}")
-                frais        = st.number_input("Frais généraux %",      value=5,   min_value=0, max_value=20,  key=f"frais_{i}")
-                marge        = st.number_input("Marge %",               value=10,  min_value=0, max_value=30,  key=f"marge_{i}")
-                retrocession = st.number_input("Rétrocession %",        value=0.0, min_value=0.0, max_value=50.0, step=0.01, format="%.2f", key=f"retro_{i}")
+                st.markdown("**Frais & Charges**")
+                brokage      = st.number_input("Brokage %",       value=10.0, min_value=0.0, max_value=30.0,
+                                               step=0.01, format="%.2f", key=f"brok_{i}")
+                frais        = st.number_input("Frais généraux %", value=5.0,  min_value=0.0, max_value=20.0,
+                                               step=0.01, format="%.2f", key=f"frais_{i}")
+                marge        = st.number_input("Marge %",          value=10.0, min_value=0.0, max_value=30.0,
+                                               step=0.01, format="%.2f", key=f"marge_{i}")
+                retrocession = st.number_input("Rétrocession %",   value=0.0,  min_value=0.0, max_value=50.0,
+                                               step=0.01, format="%.2f", key=f"retro_{i}")
+
+            # ── Reconstitutions : nb + taux individuel par reconstitution ──
+            st.markdown("**Reconstitutions**")
+            nb_recon = st.number_input("Nombre de reconstitutions", value=1, min_value=0, max_value=5,
+                                       step=1, key=f"recon_{i}")
+            taux_recons = []
+            if nb_recon > 0:
+                cols_rec = st.columns(min(nb_recon, 5))
+                for r_idx in range(nb_recon):
+                    with cols_rec[r_idx]:
+                        t_r = st.number_input(
+                            f"Reconst. {r_idx+1} %",
+                            value=100.0, min_value=0.0, max_value=200.0,
+                            step=0.5, format="%.1f",
+                            key=f"txrecon_{i}_{r_idx}",
+                            help=f"Taux de la {r_idx+1}ᵉ reconstitution")
+                        taux_recons.append(t_r)
+            if taux_recons:
+                st.caption(f"Reconstitutions : {' | '.join([f'{r_idx+1}ᵉ→{t:.1f}%' for r_idx,t in enumerate(taux_recons)])}")
+
         tranches_input.append({
             "numero": i+1, "nom": nom, "type": type_t,
-            "priorite": priorite, "portee": portee,
-            "AAL": aal_val if has_aal else None,
-            "AAD": aad_val if has_aad else None,
-            "nb_reconstitutions": nb_recon, "taux_reconstitution": tx_recon,
+            "priorite": float(priorite), "portee": float(portee),
+            "AAL": float(aal_val) if has_aal else None,
+            "AAD": float(aad_val) if has_aad else None,
+            "nb_reconstitutions": int(nb_recon),
+            "taux_reconstitution": taux_recons[0] if taux_recons else 100.0,  # compat. ancienne formule
+            "taux_reconstitutions": taux_recons,   # ← liste individuelle
             "indices": has_indices,
             "brokage": brokage/100, "frais": frais/100,
             "marge": marge/100, "retrocession": retrocession/100
@@ -1321,12 +1349,13 @@ with tab1:
         st.session_state["tranches_input"] = tranches_input
         st.session_state["df_prog"] = pd.DataFrame([{
             "Tranche": t["nom"], "Type": t["type"],
-            "Priorité": f"{t['priorite']:,}", "Portée": f"{t['portee']:,}",
-            "AAL": f"{t['AAL']:,}" if t["AAL"] else "—",
-            "AAD": f"{t['AAD']:,}" if t["AAD"] else "—",
-            "Reconst.": f"{t['nb_reconstitutions']} x {t['taux_reconstitution']}%",
+            "Priorité": f"{t['priorite']:,.0f}", "Portée": f"{t['portee']:,.0f}",
+            "AAL": f"{t['AAL']:,.0f}" if t["AAL"] else "—",
+            "AAD": f"{t['AAD']:,.0f}" if t["AAD"] else "—",
+            "Reconst.": " | ".join([f"{r_idx+1}→{tr:.0f}%" for r_idx,tr in enumerate(t['taux_reconstitutions'])]) if t.get("taux_reconstitutions") else f"{t['nb_reconstitutions']}x{t['taux_reconstitution']:.0f}%",
             "Indices": "✅" if t["indices"] else "—",
-            "Brokage": f"{t['brokage']:.0%}", "Marge": f"{t['marge']:.0%}",
+            "Brokage": f"{t['brokage']:.2%}", "Frais": f"{t['frais']:.2%}",
+            "Marge": f"{t['marge']:.2%}", "Rétro": f"{t['retrocession']:.2%}",
         } for t in tranches_input])
         st.success("✅ Programme validé !")
     if "df_prog" in st.session_state:
@@ -1601,10 +1630,12 @@ with tab3:
                         ch = min(ch, cap)
                         charges_finales.append({"annee": ann, "charge": ch})
                     df_ch = pd.DataFrame(charges_finales); N = len(df_ch)
+                    # Reconstitutions avec taux individuels par reconstitution
+                    taux_rec_list = t_info.get("taux_reconstitutions", [t_info.get("taux_reconstitution", 100)] * n_rec)
                     Pr_Rec = 0.0
                     for C_n in df_ch["charge"].values:
-                        for r in range(1, n_rec + 1):
-                            Pr_Rec += t_r * min(L, max(C_n - (r-1)*L, 0))
+                        for r_idx, t_r_i in enumerate(taux_rec_list):
+                            Pr_Rec += (t_r_i / 100) * min(L, max(C_n - r_idx * L, 0))
                     Pr_Rec /= L if L > 0 else 1
                     Rec = Pr_Rec / (Pr_Rec + N) if (Pr_Rec + N) > 0 else 0.0
                     charge_moy  = df_ch["charge"].mean()
@@ -1651,6 +1682,42 @@ with tab3:
             "Taux technique": f"{r['taux_technique']:.4%}",
             "Charg. majeurs": f"{r.get('chargement_majeurs', 0):.4%}",
         } for r in st.session_state["resultats_bc"]], titre="📊 Résultats Burning Cost")
+
+        # ── Triangle de développement réel utilisé pour le BC ──
+        with st.expander("📐 Triangle de développement utilisé pour le BC (données réelles)", expanded=False):
+            st.caption("Ce tableau est construit à partir de votre fichier uploadé — colonnes = années de développement, lignes = années de survenance")
+            if "df_liq" in st.session_state:
+                df_liq_bc = st.session_state["df_liq"].copy()
+                # Reconstruire triangle Sprime (après As-If + Stabilisation) par sinistre agrégé par année
+                # On prend la valeur max dev disponible pour chaque sinistre (point ultime observé)
+                df_ultime = df_liq_bc.sort_values("dev").groupby(["annee_surv","dev"])["S_prime_k"].sum().reset_index()
+                pivot = df_ultime.pivot_table(index="annee_surv", columns="dev", values="S_prime_k", aggfunc="sum")
+                pivot.index.name = "Année survenance"
+                pivot.columns = [f"Dev {int(c)}" for c in pivot.columns]
+                # Format milliers
+                st.dataframe(pivot.applymap(lambda x: f"{x:,.0f}" if pd.notna(x) else "—"),
+                             use_container_width=True)
+                st.caption(f"Valeurs S'k stabilisées (As-If + clause stabilisation) — {len(df_liq_bc['annee_surv'].unique())} années de survenance")
+            if "df_proj" in st.session_state:
+                st.markdown("**Sinistres projetés à l'ultime (S'prime_ultime) — base du BC :**")
+                df_proj_show = st.session_state["df_proj"][["sinistre_id","annee_surv","dev_max","Sprime_ultime","coeff_stab"]].copy()
+                df_proj_show["Sprime_ultime"] = df_proj_show["Sprime_ultime"].apply(lambda x: f"{x:,.0f}")
+                df_proj_show["coeff_stab"]    = df_proj_show["coeff_stab"].apply(lambda x: f"{x:.4f}")
+                df_proj_show.columns = ["ID sinistre","Année surv.","Dev max obs.","S'prime ultime (MAD)","Coeff stab."]
+                st.dataframe(df_proj_show, use_container_width=True, height=300)
+                st.caption(f"Total : {len(df_proj_show)} sinistres | Années : {st.session_state['df_proj']['annee_surv'].min():.0f}–{st.session_state['df_proj']['annee_surv'].max():.0f}")
+
+            # Charges BC annuelles par tranche
+            st.markdown("**Charges BC annuelles par tranche :**")
+            for r in st.session_state["resultats_bc"]:
+                detail = r.get("detail_annuel", [])
+                if detail:
+                    df_det = pd.DataFrame(detail)
+                    df_det["charge"] = df_det["charge"].apply(lambda x: f"{x:,.0f}")
+                    df_det.columns = ["Année","Charge nette (MAD)"]
+                    with st.expander(f"  → {r['tranche']} ({r['type']})", expanded=False):
+                        st.dataframe(df_det, use_container_width=True)
+
 
         st.divider()
         guide_prompt("Burning Cost",
