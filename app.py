@@ -1424,41 +1424,123 @@ with tab2:
 
             progress.progress(20, text="Parsing triangle...")
             df_raw = pd.read_excel(f_triangle, header=None)
-            ligne_annees = df_raw.iloc[0].tolist(); ligne_types = df_raw.iloc[1].tolist()
-            annee_courante = None; col_info = []
-            for i, (ann, typ) in enumerate(zip(ligne_annees, ligne_types)):
-                if i == 0: col_info.append(('UW_YEAR', '')); continue
-                try:
-                    a = int(float(str(ann).strip().replace('.0','')))
-                    if 2010 <= a <= 2050: annee_courante = a
-                except: pass
-                col_info.append((annee_courante, str(typ).strip().upper() if pd.notna(typ) else ''))
 
-            df_data = df_raw.iloc[2:].reset_index(drop=True)
+            # ══════════════════════════════════════════════════════════
+            # PARSER ROBUSTE — Format : UW Year | PAID OS TOTAL par an
+            # ══════════════════════════════════════════════════════════
+
+            # ── ÉTAPE 1 : Trouver la ligne des années de règlement ──
+            # C'est la ligne qui contient le plus de valeurs numériques 2000-2050
+            header_year_row = 0
+            best_year_count = 0
+            for row_idx in range(min(8, len(df_raw))):
+                row_vals = df_raw.iloc[row_idx].tolist()
+                cnt = 0
+                for v in row_vals:
+                    try:
+                        vi = int(float(str(v).strip()))
+                        if 1990 <= vi <= 2060: cnt += 1
+                    except: pass
+                if cnt > best_year_count:
+                    best_year_count = cnt
+                    header_year_row = row_idx
+            header_type_row = header_year_row + 1
+            data_start_row  = header_type_row + 1
+
+            st.info(f"📋 En-têtes : ligne {header_year_row+1} (années) | ligne {header_type_row+1} (PAID/OS/TOTAL) | Données à partir de la ligne {data_start_row+1}")
+
+            # ── ÉTAPE 2 : Construire col_info — (annee_regl, type) par colonne ──
+            ligne_annees = df_raw.iloc[header_year_row].tolist()
+            ligne_types  = df_raw.iloc[header_type_row].tolist()
+            annee_courante = None
+            col_info = []  # liste de (annee_regl, type_normalise) pour chaque colonne
+            for i, (ann, typ) in enumerate(zip(ligne_annees, ligne_types)):
+                if i == 0:
+                    col_info.append(('UW_YEAR', 'UW_YEAR'))
+                    continue
+                # Mise à jour de l'année courante si on trouve une année valide
+                try:
+                    a = int(float(str(ann).strip()))
+                    if 1990 <= a <= 2060:
+                        annee_courante = a
+                except: pass
+                # Normalisation du type de colonne
+                typ_str = str(typ).strip().upper() if pd.notna(typ) and str(typ).strip() not in ('nan','NaN','') else ''
+                # Mapping vers types normalisés
+                if   typ_str in ('TOTAL', 'TOT', 'CUMUL', 'AMOUNT', 'MONTANT', 'INCURRED'):
+                    typ_norm = 'TOTAL'
+                elif typ_str in ('PAID', 'PAY', 'PAID LOSS', 'PAYE', 'PAYÉ', 'REGLEMENT', 'RÈGLEMENT'):
+                    typ_norm = 'PAID'
+                elif typ_str in ('OS', 'O/S', 'OUTSTANDING', 'RESERVE', 'RÉSERVE', 'SUSPENS', 'IBNR'):
+                    typ_norm = 'OS'
+                else:
+                    typ_norm = typ_str  # garder tel quel
+                col_info.append((annee_courante, typ_norm))
+
+            # Résumé des colonnes détectées
+            cols_total = [(i, a) for i,(a,t) in enumerate(col_info) if t=='TOTAL']
+            cols_paid  = [(i, a) for i,(a,t) in enumerate(col_info) if t=='PAID']
+            cols_os    = [(i, a) for i,(a,t) in enumerate(col_info) if t=='OS']
+            annees_reg_detectees = sorted(set(a for a,t in col_info if t=='TOTAL' and a is not None))
+            st.success(f"✅ Colonnes détectées — TOTAL : {len(cols_total)} | PAID : {len(cols_paid)} | OS : {len(cols_os)} | Années règlement : {annees_reg_detectees[0] if annees_reg_detectees else '?'} → {annees_reg_detectees[-1] if annees_reg_detectees else '?'}")
+
+            if len(cols_total) == 0:
+                st.error("❌ Aucune colonne TOTAL trouvée. Vérifiez que la ligne des types contient bien 'TOTAL'.")
+                st.dataframe(df_raw.iloc[:data_start_row], use_container_width=True)
+                st.stop()
+
+            # ── ÉTAPE 3 : Extraire les données — 1 ligne = 1 sinistre ──
+            df_data = df_raw.iloc[data_start_row:].reset_index(drop=True)
+            # Propagation de l'année de survenance (cellules fusionnées → ffill)
             df_data.iloc[:, 0] = df_data.iloc[:, 0].ffill()
 
-            progress.progress(30, text="Extraction TOTAL...")
+            progress.progress(30, text="Extraction sinistres...")
             records = []
+            sinistre_counter = {}  # {annee_surv: compteur} pour numéroter les sinistres
             for idx_row, row in df_data.iterrows():
+                # Lire l'année de survenance (colonne A)
                 try:
-                    annee_surv = int(float(str(row.iloc[0]).strip().replace('.0','')))
-                    if not (2010 <= annee_surv <= 2050): continue
+                    raw_uw = str(row.iloc[0]).strip().replace('.0','')
+                    annee_surv = int(float(raw_uw))
+                    if not (1990 <= annee_surv <= 2060): continue
                 except: continue
-                sinistre_id = f"{annee_surv}_{idx_row}"
+
+                # Numéroter chaque sinistre dans l'année de survenance
+                sinistre_counter[annee_surv] = sinistre_counter.get(annee_surv, 0) + 1
+                sin_num = sinistre_counter[annee_surv]
+                sinistre_id = f"{annee_surv}_S{sin_num:04d}"
+
+                # Lire les colonnes TOTAL pour chaque année de règlement
                 for col_idx, (annee_reg, typ) in enumerate(col_info):
                     if typ != 'TOTAL' or annee_reg is None: continue
                     val = row.iloc[col_idx]
                     try:
+                        if pd.isna(val): continue
                         if isinstance(val, str):
-                            val = val.strip().replace(',','.').replace(' ','')
-                            if any(c.isalpha() for c in val) or '#' in val: continue
+                            val = val.strip().replace(',','.').replace(' ','').replace('\xa0','')
+                            if not val or any(c.isalpha() for c in val) or '#' in val: continue
                         val = float(val)
-                        if val <= 0 or np.isnan(val): continue
+                        if val <= 0 or np.isnan(val) or np.isinf(val): continue
                     except: continue
                     dev = annee_reg - annee_surv
-                    if dev < 0 or dev > 9: continue
-                    records.append({'sinistre_id': sinistre_id, 'annee_surv': annee_surv,
-                                    'annee_reg': annee_reg, 'dev': dev, 'total': val})
+                    if dev < 0 or dev > 15: continue  # max 15 ans de dev (flexible)
+                    records.append({
+                        'sinistre_id': sinistre_id,
+                        'annee_surv':  annee_surv,
+                        'annee_reg':   annee_reg,
+                        'dev':         dev,
+                        'total':       val
+                    })
+
+            if not records:
+                st.error("❌ Aucune donnée extraite. Vérifiez le format du fichier.")
+                st.markdown("**5 premières lignes du fichier brut :**")
+                st.dataframe(df_raw.head(5), use_container_width=True)
+                st.stop()
+
+            # Résumé du parsing
+            annees_surv_uniq = sorted(set(r['annee_surv'] for r in records))
+            st.success(f"✅ Extraction OK — {len(records):,} observations | {len(annees_surv_uniq)} années de survenance ({annees_surv_uniq[0]}→{annees_surv_uniq[-1]}) | {sum(sinistre_counter.values()):,} sinistres")
 
             df_liq = pd.DataFrame(records)
             progress.progress(50, text="As-If...")
@@ -1566,10 +1648,52 @@ with tab2:
             st.success("✅ Transformation terminée !")
 
     if "df_liq" in st.session_state:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Observations", len(st.session_state['df_liq']))
-        c2.metric("Sinistres",    st.session_state['df_liq']['sinistre_id'].nunique())
-        c3.metric("Années",       st.session_state['df_liq']['annee_surv'].nunique())
+        # ── DIAGNOSTIC — ce que le parser a réellement lu ──
+        with st.expander("🔎 Diagnostic parsing — Vérifiez que le triangle est bien lu", expanded=True):
+            df_liq_diag = st.session_state["df_liq"]
+            annees_surv  = sorted(df_liq_diag["annee_surv"].unique().tolist())
+            annees_regl  = sorted(df_liq_diag["annee_reg"].unique().tolist())
+            devs         = sorted(df_liq_diag["dev"].unique().tolist())
+            st.markdown(f"""<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+                <div style="background:#f0fff4;border:1px solid #2d8a4e;border-radius:8px;padding:10px 16px">
+                    <b style="color:#2d8a4e">Années de survenance (UW Year)</b><br>
+                    <span style="font-size:13px">{annees_surv[0]} → {annees_surv[-1]} | {len(annees_surv)} années</span>
+                </div>
+                <div style="background:#f0fff4;border:1px solid #2d8a4e;border-radius:8px;padding:10px 16px">
+                    <b style="color:#2d8a4e">Années de règlement (colonnes)</b><br>
+                    <span style="font-size:13px">{annees_regl[0]} → {annees_regl[-1]} | {len(annees_regl)} années</span>
+                </div>
+                <div style="background:#f0fff4;border:1px solid #2d8a4e;border-radius:8px;padding:10px 16px">
+                    <b style="color:#2d8a4e">Développements trouvés</b><br>
+                    <span style="font-size:13px">{devs}</span>
+                </div>
+                <div style="background:#f0fff4;border:1px solid #2d8a4e;border-radius:8px;padding:10px 16px">
+                    <b style="color:#2d8a4e">Total observations</b><br>
+                    <span style="font-size:13px">{len(df_liq_diag):,} lignes | {df_liq_diag['sinistre_id'].nunique():,} sinistres</span>
+                </div></div>""", unsafe_allow_html=True)
+
+            # Tableau récapitulatif par année de survenance
+            recap = df_liq_diag.groupby("annee_surv").agg(
+                nb_sinistres=("sinistre_id","nunique"),
+                dev_max=("dev","max"),
+                total_brut=("total","sum"),
+                S_prime_moy=("S_prime_k","mean")
+            ).reset_index()
+            recap.columns = ["UW Year","Nb sinistres","Dev max obs.","Total brut (MAD)","S'k moyen (MAD)"]
+            recap["Total brut (MAD)"] = recap["Total brut (MAD)"].apply(lambda x: f"{x:,.0f}")
+            recap["S'k moyen (MAD)"]  = recap["S'k moyen (MAD)"].apply(lambda x: f"{x:,.0f}")
+            st.markdown("**Résumé par année de survenance — si les années ne correspondent pas à votre fichier, vérifiez ci-dessous :**")
+            st.dataframe(recap, use_container_width=True)
+
+            # Afficher les 5 premières lignes brutes pour déboguer
+            with st.expander("🔬 Données brutes parsées (5 premières lignes)", expanded=False):
+                st.dataframe(df_liq_diag.head(10), use_container_width=True)
+                st.caption("Si les années de survenance ou les montants sont faux → votre fichier a probablement une ligne de titre supplémentaire en haut, ou les colonnes TOTAL sont nommées différemment.")
+
+        c1b, c2b, c3b = st.columns(3)
+        c1b.metric("Observations", len(st.session_state['df_liq']))
+        c2b.metric("Sinistres",    st.session_state['df_liq']['sinistre_id'].nunique())
+        c3b.metric("Années",       st.session_state['df_liq']['annee_surv'].nunique())
         branch_label = "Longue" if st.session_state.get("is_long") else "Courte"
         st.info(f"🌿 Branche : **{branch_label}** | I_cotation({st.session_state.get('annee_cotation')}) = {st.session_state.get('I_cotation',1):.4f}")
         st.info(f"📐 Seuil : {st.session_state.get('seuil_est',0):,.0f} | Pm P99.5 : {st.session_state.get('Pm_proxy',0):,.0f} | Alpha : {st.session_state.get('alpha_est',0):.4f} | Lambda : {st.session_state.get('lambda_est',0):.4f}")
