@@ -1819,7 +1819,8 @@ with tab3:
                 pivot.index.name = "Année survenance"
                 pivot.columns = [f"Dev {int(c)}" for c in pivot.columns]
                 # Format milliers
-                st.dataframe(pivot.applymap(lambda x: f"{x:,.0f}" if pd.notna(x) else "—"),
+                fmt_fn = getattr(pivot, "map", None) or getattr(pivot, "applymap", None)
+                st.dataframe(fmt_fn(lambda x: f"{x:,.0f}" if pd.notna(x) else "—"),
                              use_container_width=True)
                 st.caption(f"Valeurs S'k stabilisées (As-If + clause stabilisation) — {len(df_liq_bc['annee_surv'].unique())} années de survenance")
             if "df_proj" in st.session_state:
