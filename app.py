@@ -1807,41 +1807,69 @@ with tab3:
             "Charg. majeurs": f"{r.get('chargement_majeurs', 0):.4%}",
         } for r in st.session_state["resultats_bc"]], titre="📊 Résultats Burning Cost")
 
-        # ── Triangle de développement réel utilisé pour le BC ──
-        with st.expander("📐 Triangle de développement utilisé pour le BC (données réelles)", expanded=False):
-            st.caption("Ce tableau est construit à partir de votre fichier uploadé — colonnes = années de développement, lignes = années de survenance")
+        # ── Triangle individuel + traçabilité ──
+        with st.expander("📐 Triangle individuel — 1 ligne = 1 sinistre", expanded=False):
             if "df_liq" in st.session_state:
                 df_liq_bc = st.session_state["df_liq"].copy()
-                # Reconstruire triangle Sprime (après As-If + Stabilisation) par sinistre agrégé par année
-                # On prend la valeur max dev disponible pour chaque sinistre (point ultime observé)
-                df_ultime = df_liq_bc.sort_values("dev").groupby(["annee_surv","dev"])["S_prime_k"].sum().reset_index()
-                pivot = df_ultime.pivot_table(index="annee_surv", columns="dev", values="S_prime_k", aggfunc="sum")
-                pivot.index.name = "Année survenance"
-                pivot.columns = [f"Dev {int(c)}" for c in pivot.columns]
-                # Format milliers
-                fmt_fn = getattr(pivot, "map", None) or getattr(pivot, "applymap", None)
+                st.markdown("""<div style="background:#f0fff4;border-left:4px solid #2d8a4e;
+                    border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:12px;font-size:12px">
+                    <b>Logique :</b> 1️⃣ Chaque sinistre est projeté individuellement à l'ultime →
+                    2️⃣ Charge XL individuelle : <code>Ck = min(max(S'ultime − D, 0), L)</code> →
+                    3️⃣ Agrégation par UW Year = BC annuel
+                    </div>""", unsafe_allow_html=True)
+
+                etape_view = st.radio(
+                    "Montants à afficher :",
+                    ["1 Bruts Excel (TOTAL=PAID+OS)",
+                     "2 As-If Sk",
+                     "3 Stabilises Sprimek"],
+                    key="tri_etape_view", horizontal=True)
+
+                col_val = "total" if etape_view.startswith("1") else ("Sk" if etape_view.startswith("2") else "S_prime_k")
+
+                # Triangle individuel : 1 ligne = 1 sinistre, colonnes = années règlement
+                pivot_ind = df_liq_bc.pivot_table(
+                    index=["annee_surv", "sinistre_id"],
+                    columns="annee_reg",
+                    values=col_val,
+                    aggfunc="last"
+                )
+                pivot_ind.index.names = ["UW Year", "ID Sinistre"]
+                pivot_ind.columns = [str(int(c)) for c in pivot_ind.columns]
+                fmt_fn = getattr(pivot_ind, "map", getattr(pivot_ind, "applymap", None))
+                st.markdown(f"**{len(pivot_ind)} sinistres × {len(pivot_ind.columns)} années de règlement**")
                 st.dataframe(fmt_fn(lambda x: f"{x:,.0f}" if pd.notna(x) else "—"),
-                             use_container_width=True)
-                st.caption(f"Valeurs S'k stabilisées (As-If + clause stabilisation) — {len(df_liq_bc['annee_surv'].unique())} années de survenance")
+                             use_container_width=True, height=400)
+
+                if etape_view.startswith("1"):
+                    st.markdown("**Lignes brutes (30 premières) — comparez avec votre Excel :**")
+                    df_chk = df_liq_bc[["sinistre_id","annee_surv","annee_reg","dev","total"]].head(30).copy()
+                    df_chk["total"] = df_chk["total"].apply(lambda x: f"{x:,.0f}")
+                    df_chk.columns = ["ID Sinistre","UW Year","Année règlement","Dev","TOTAL brut"]
+                    st.dataframe(df_chk, use_container_width=True)
+
             if "df_proj" in st.session_state:
-                st.markdown("**Sinistres projetés à l'ultime (S'prime_ultime) — base du BC :**")
-                df_proj_show = st.session_state["df_proj"][["sinistre_id","annee_surv","dev_max","Sprime_ultime","coeff_stab"]].copy()
+                st.divider()
+                st.markdown("**S'prime_ultime individuel — projection de chaque sinistre à l'ultime :**")
+                df_proj_show = st.session_state["df_proj"][
+                    ["sinistre_id","annee_surv","dev_max","Sprime_ultime","coeff_stab"]].copy()
                 df_proj_show["Sprime_ultime"] = df_proj_show["Sprime_ultime"].apply(lambda x: f"{x:,.0f}")
                 df_proj_show["coeff_stab"]    = df_proj_show["coeff_stab"].apply(lambda x: f"{x:.4f}")
-                df_proj_show.columns = ["ID sinistre","Année surv.","Dev max obs.","S'prime ultime (MAD)","Coeff stab."]
+                df_proj_show.columns = ["ID Sinistre","UW Year","Dev max","S'prime ultime","Coeff stab."]
                 st.dataframe(df_proj_show, use_container_width=True, height=300)
-                st.caption(f"Total : {len(df_proj_show)} sinistres | Années : {st.session_state['df_proj']['annee_surv'].min():.0f}–{st.session_state['df_proj']['annee_surv'].max():.0f}")
+                st.caption(f"{len(df_proj_show)} sinistres individuels projetés")
 
-            # Charges BC annuelles par tranche
-            st.markdown("**Charges BC annuelles par tranche :**")
+            st.divider()
+            st.markdown("**BC agrégé par UW Year (somme des Ck individuels) :**")
             for r in st.session_state["resultats_bc"]:
                 detail = r.get("detail_annuel", [])
                 if detail:
                     df_det = pd.DataFrame(detail)
                     df_det["charge"] = df_det["charge"].apply(lambda x: f"{x:,.0f}")
-                    df_det.columns = ["Année","Charge nette (MAD)"]
-                    with st.expander(f"  → {r['tranche']} ({r['type']})", expanded=False):
+                    df_det.columns   = ["UW Year","Charge XL nette (MAD)"]
+                    with st.expander(f"  {r['tranche']} | {r['type']} | tau_pur={r['taux_pur']:.4%}", expanded=False):
                         st.dataframe(df_det, use_container_width=True)
+
 
 
         st.divider()
