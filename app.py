@@ -6685,9 +6685,22 @@ Merci et bon usage.
         users = get_users()
 
         st.markdown("#### 👥 Utilisateurs autorisés")
+        def get_roles():
+            try:
+                return dict(st.secrets["roles"])
+            except:
+                return {}
+        
+        roles = get_roles()
+        
         st.dataframe(
             pd.DataFrame([
-                {"Email": e, "Code": c, "Statut": "Actif"}
+                {
+                    "Email": e,
+                    "Code": c,
+                    "Poste": roles.get(e, "Utilisateur"),
+                    "Statut": "Actif"
+                }
                 for e, c in users.items()
             ]),
             use_container_width=True
