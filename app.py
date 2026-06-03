@@ -6633,16 +6633,43 @@ with tab_hist:
 
 with tab_admin:
     st.header("🔐 Interface Administrateur")
+
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#1a1a1a,#2d8a4e);
+        border-radius:14px;padding:22px 26px;margin-bottom:22px;
+        box-shadow:0 4px 14px rgba(0,0,0,0.18);">
+        <div style="color:white;font-size:20px;font-weight:800;margin-bottom:8px;">
+            Atlantic Re IA — Signature concepteur
+        </div>
+        <div style="color:#e8f5ec;font-size:14px;line-height:1.6;">
+            Cet outil a été conçu et développé par <b>Hervé NONGPANGA</b>,
+            stagiaire actuaire tarificateur chez <b>Atlantic Re</b>.
+            Il a été pensé pour faciliter une tarification rapide des affaires
+            de réassurance non-proportionnelle et accompagner l’analyse actuarielle
+            dans un cadre structuré, traçable et professionnel.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
+
     if admin_pwd == get_admin_password():
         st.success("✅ Accès accordé")
+
+        st.info(
+            "Outil conçu par Hervé NONGPANGA — stagiaire actuaire tarificateur chez Atlantic Re — "
+            "pour accélérer la tarification et accompagner l’analyse des affaires."
+        )
+
         users = get_users()
         st.markdown("#### 👥 Utilisateurs autorisés")
         st.dataframe(pd.DataFrame([{"Email": e, "Code": c, "Statut": "Actif"}
                                     for e, c in users.items()]), use_container_width=True)
+
         st.divider()
         st.markdown("#### ⚙️ Gérer les utilisateurs")
         st.info("Allez sur Streamlit Cloud -> Settings -> Secrets et ajoutez :\nadmin_password = 'VotreMDP'\n[users]\n'email@ex.com' = 'CODE'")
+
         st.divider()
         st.markdown("#### 🎲 Générateur de code")
         col1, col2 = st.columns(2)
@@ -6651,9 +6678,11 @@ with tab_admin:
         with col2:
             if st.button("Générer un code"):
                 st.session_state["generated_code"] = secrets_lib.token_hex(4).upper()
+
         if "generated_code" in st.session_state:
             st.success(f"Code généré : **{st.session_state['generated_code']}**")
             if email_new:
                 st.code(f'"{email_new}" = "{st.session_state["generated_code"]}"')
+
     elif admin_pwd:
         st.error("❌ Mot de passe incorrect")
