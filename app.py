@@ -6627,6 +6627,7 @@ with tab_hist:
                     except Exception as _e:
                         st.error(str(_e))
 
+
 # ════════════════════════════════════════════
 # TAB ADMIN
 # ════════════════════════════════════════════
@@ -6634,77 +6635,88 @@ with tab_hist:
 with tab_admin:
     st.header("🔐 Interface Administrateur")
 
-if st.button("ℹ️ À propos de l’outil", use_container_width=True):
-    st.session_state["show_about_tool"] = True
+    if st.button("ℹ️ À propos de l’outil", use_container_width=True):
+        st.session_state["show_about_tool"] = not st.session_state.get("show_about_tool", False)
 
-if st.session_state.get("show_about_tool", False):
-    with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
-        st.markdown("""
-        ### Atlantic Re IA — Assistant actuariel de tarification
+    if st.session_state.get("show_about_tool", False):
+        with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
+            st.markdown("""
+            ### Atlantic Re IA — Assistant actuariel de tarification
 
-        **Atlantic Re IA** est un outil d’aide à la tarification en réassurance
-        non-proportionnelle, conçu pour accélérer l’analyse des affaires,
-        structurer les calculs actuariels et produire une vision claire des
-        résultats techniques.
+            **Hervé NONGPANGA :**
 
-        L’outil permet notamment de :
+            Atlantic Re IA a été développé pour accompagner le processus de
+            tarification des affaires de réassurance non-proportionnelle.
 
-        - construire un programme de réassurance par tranches ;
-        - calculer les taux par approche **Burning Cost** ;
-        - réaliser des simulations fréquentielles et sévérité ;
-        - intégrer une approche **Market Curve** ;
-        - comparer plusieurs méthodes de tarification ;
-        - générer une synthèse finale avec prime totale et taux global ;
-        - produire un rapport PDF professionnel ;
-        - accompagner l’analyse par un agent IA ;
-        - conserver des sessions et résultats pour audit et traçabilité.
+            L’outil regroupe les principales méthodes de calcul et d’analyse
+            utilisées dans l’étude des programmes de réassurance, tout en offrant
+            des fonctionnalités d’automatisation, de reporting et d’assistance à
+            l’interprétation des résultats.
 
-        ---
+            Il permet notamment de :
 
-        ### Concepteur
+            - construire et analyser des programmes par tranches ;
+            - réaliser une tarification par **Burning Cost** ;
+            - effectuer des simulations fréquence/sévérité ;
+            - intégrer une approche **Market Curve** ;
+            - comparer les différentes méthodes de tarification ;
+            - proposer des variantes d’optimisation du programme ;
+            - générer un rapport technique professionnel ;
+            - conserver les résultats pour l’audit et la traçabilité.
 
-        Cet outil a été conçu et développé par **Hervé NONGPANGA**,
-        **stagiaire actuaire tarificateur chez Atlantic Re**.
+            Son objectif est de fournir un cadre de travail structuré permettant
+            d’améliorer l’efficacité, la cohérence et la documentation des analyses
+            réalisées.
 
-        Il a été développé dans l’objectif de faciliter une tarification rapide,
-        fiable et structurée des affaires, tout en offrant un accompagnement
-        dans l’analyse actuarielle, la comparaison des méthodes et la préparation
-        des décisions techniques.
-
-        > L’outil ne remplace pas le jugement actuariel : il sert de support
-        > d’analyse, de calcul, de documentation et d’aide à la décision.
-        """)
+            Cet outil constitue un support d’analyse et d’aide à la décision.
+            La validation des hypothèses et des résultats demeure de la
+            responsabilité de l’actuaire.
+            """)
 
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
 
     if admin_pwd == get_admin_password():
         st.success("✅ Accès accordé")
 
-        st.info(
-            "Outil conçu par Hervé NONGPANGA — stagiaire actuaire tarificateur chez Atlantic Re — "
-            "pour accélérer la tarification et accompagner l’analyse des affaires."
+        users = get_users()
+
+        st.markdown("#### 👥 Utilisateurs autorisés")
+        st.dataframe(
+            pd.DataFrame([
+                {"Email": e, "Code": c, "Statut": "Actif"}
+                for e, c in users.items()
+            ]),
+            use_container_width=True
         )
 
-        users = get_users()
-        st.markdown("#### 👥 Utilisateurs autorisés")
-        st.dataframe(pd.DataFrame([{"Email": e, "Code": c, "Statut": "Actif"}
-                                    for e, c in users.items()]), use_container_width=True)
-
         st.divider()
+
         st.markdown("#### ⚙️ Gérer les utilisateurs")
-        st.info("Allez sur Streamlit Cloud -> Settings -> Secrets et ajoutez :\nadmin_password = 'VotreMDP'\n[users]\n'email@ex.com' = 'CODE'")
+        st.info(
+            "Allez sur Streamlit Cloud -> Settings -> Secrets et ajoutez :\n"
+            "admin_password = 'VotreMDP'\n"
+            "[users]\n"
+            "'email@ex.com' = 'CODE'"
+        )
 
         st.divider()
+
         st.markdown("#### 🎲 Générateur de code")
         col1, col2 = st.columns(2)
+
         with col1:
-            email_new = st.text_input("Email du nouvel utilisateur", key="new_email")
+            email_new = st.text_input(
+                "Email du nouvel utilisateur",
+                key="new_email"
+            )
+
         with col2:
             if st.button("Générer un code"):
                 st.session_state["generated_code"] = secrets_lib.token_hex(4).upper()
 
         if "generated_code" in st.session_state:
             st.success(f"Code généré : **{st.session_state['generated_code']}**")
+
             if email_new:
                 st.code(f'"{email_new}" = "{st.session_state["generated_code"]}"')
 
