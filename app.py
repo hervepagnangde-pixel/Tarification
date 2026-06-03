@@ -6638,41 +6638,40 @@ with tab_admin:
     if st.button("ℹ️ À propos de l’outil", use_container_width=True):
         st.session_state["show_about_tool"] = not st.session_state.get("show_about_tool", False)
 
-    if st.session_state.get("show_about_tool", False):
-        with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
-            st.markdown("""
-            ### Atlantic Re IA — Assistant actuariel de tarification
+   if st.session_state.get("show_about_tool", False):
+    with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
+        st.markdown("""
+### Atlantic Re IA — Assistant actuariel de tarification
 
-            **Hervé NONGPANGA :**
+**Hervé NONGPANGA :**
 
-            Atlantic Re IA a été développé pour accompagner le processus de
-            tarification des affaires de réassurance non-proportionnelle.
+Bonjour,
 
-            L’outil regroupe les principales méthodes de calcul et d’analyse
-            utilisées dans l’étude des programmes de réassurance, tout en offrant
-            des fonctionnalités d’automatisation, de reporting et d’assistance à
-            l’interprétation des résultats.
+Avant de commencer, il convient de noter que **Atlantic Re IA** a été développé pour accompagner le processus de tarification des affaires de réassurance non-proportionnelle.
 
-            Il permet notamment de :
+L’outil regroupe les principales méthodes de calcul et d’analyse utilisées dans l’étude des programmes de réassurance, tout en offrant des fonctionnalités d’automatisation, de reporting et d’assistance à l’interprétation des résultats.
 
-            - construire et analyser des programmes par tranches ;
-            - réaliser une tarification par **Burning Cost** ;
-            - effectuer des simulations fréquence/sévérité ;
-            - intégrer une approche **Market Curve** ;
-            - comparer les différentes méthodes de tarification ;
-            - proposer des variantes d’optimisation du programme ;
-            - générer un rapport technique professionnel ;
-            - conserver les résultats pour l’audit et la traçabilité.
+Il permet notamment de :
 
-            Son objectif est de fournir un cadre de travail structuré permettant
-            d’améliorer l’efficacité, la cohérence et la documentation des analyses
-            réalisées.
+- construire et analyser des programmes par tranches ;
+- réaliser une tarification par **Burning Cost** ;
+- effectuer des simulations fréquence/sévérité ;
+- intégrer une approche **Market Curve** ;
+- comparer les différentes méthodes de tarification ;
+- proposer des variantes d’optimisation du programme ;
+- générer un rapport technique professionnel ;
+- conserver les résultats pour l’audit et la traçabilité.
 
-            Cet outil constitue un support d’analyse et d’aide à la décision.
-            La validation des hypothèses et des résultats demeure de la
-            responsabilité de l’actuaire.
-            """)
+Son objectif est de fournir un cadre de travail structuré permettant d’améliorer l’efficacité, la cohérence et la documentation des analyses réalisées.
 
+Cet outil constitue un support d’analyse et d’aide à la décision. La validation des hypothèses, des résultats et des conclusions demeure de la responsabilité de l’actuaire.
+
+Atlantic Re IA, comme tout outil, peut comporter certaines limites, que ce soit au niveau de son fonctionnement en **code agent** ou en **agent LLM**. Les résultats doivent donc être interprétés avec discernement et confrontés au jugement actuariel.
+
+L’outil est encore en phase d’amélioration continue et s’enrichit progressivement à travers les cas traités, les retours d’expérience et les évolutions apportées.
+
+Merci et bon usage.
+""")
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
 
     if admin_pwd == get_admin_password():
