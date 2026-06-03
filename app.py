@@ -2152,120 +2152,260 @@ with tab2:
         c3b.metric("Années",       st.session_state['df_liq']['annee_surv'].nunique())
         branch_label = "Longue" if st.session_state.get("is_long") else "Courte"
         st.info(f"🌿 Branche : **{branch_label}** | I_cotation({st.session_state.get('annee_cotation')}) = {st.session_state.get('I_cotation',1):.4f}")
-        st.info(f"Seuil : {st.session_state.get('seuil_est',0):,.0f} | Pm P99.5 : {st.session_state.get('Pm_proxy',0):,.0f} | Alpha : {st.session_state.get('alpha_est',0):.4f} | Lambda : {st.session_state.get('lambda_est',0):.4f}")
+        st.info(f"Seuil modélisation : {st.session_state.get('seuil_est',0):,.0f} MAD | Alpha : {st.session_state.get('alpha_est',0):.4f} | Lambda : {st.session_state.get('lambda_est',0):.4f}")
 
-        # ── Bouton pour relancer l'analyse GPD sans re-uploader ──
-        if "df_proj" in st.session_state and "alpha_est" in st.session_state:
-            col_gpd1, col_gpd2 = st.columns([3,1])
-            with col_gpd2:
-                if st.button("Relancer analyse GPD", key="btn_rerun_gpd", use_container_width=True):
-                    with st.spinner("Fit GPD en cours..."):
-                        res_new = identifier_sinistres_majeurs_gpd(
-                            df_proj        = st.session_state["df_proj"],
-                            gnpi           = gnpi,
-                            tranches_input = tranches_input,
-                            nb_annees_obs  = st.session_state["df_proj"]["annee_surv"].nunique(),
-                            retour_ans     = 20,
-                            pct_seuil      = st.session_state.get("pct_seuil_pareto", 0.80)
-                        )
-                    st.session_state["res_majeurs"]             = res_new
-                    st.session_state["chargement_majeurs"]      = res_new["chargement"]
-                    st.session_state["chargements_par_tranche"] = res_new.get("chargements_par_tranche", {})
-                    st.rerun()
+        if "df_proj" in st.session_state:
+            import matplotlib.pyplot as plt
+            from scipy import stats as _sp_gpd
 
-        if "res_majeurs" in st.session_state:
-            res  = st.session_state["res_majeurs"]
-            diag = res.get("gpd_diag", {})
+            charges_all = st.session_state["df_proj"]["Sprime_ultime"].values
+            charges_all = charges_all[charges_all > 0]
+            charges_sorted_desc = np.sort(charges_all)[::-1]
+            n_all = len(charges_all)
 
-            # Détecter session ancienne format (pas de GPD)
-            if not diag or diag.get("u", 0) == 0:
-                st.warning("Données GPD absentes — cliquez sur 'Relancer analyse GPD' pour recalculer.")
-            else:
-                # ── Métriques clés ──
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Sinistres majeurs",     res["n_majeurs"])
-                c2.metric("Sinistres courants",    res["n_courants"])
-                c3.metric("Pm — niveau de retour", f"{res['Pm']:,.0f} MAD")
-                c4.metric("Chargement trav.",      f"{res['chargement']:.4%}")
+            st.markdown("---")
+            st.markdown("#### Identification des sinistres majeurs — Choix du seuil u (TVE/GPD)")
+            st.caption(
+                "u est le seuil au-dessus duquel on ajuste une GPD pour calculer le niveau de retour Pm. "
+                "Il est distinct du seuil de modélisation (utilisé pour alpha/lambda). "
+                "Analysez les graphiques ci-dessous pour le choisir manuellement."
+            )
 
-                # ── Résumé GPD ──
-                with st.expander("Analyse TVE — GPD · Paramètres · Diagnostics", expanded=True):
-                    st.markdown("#### Paramètres GPD ajustés")
-                    c1g,c2g,c3g,c4g,c5g = st.columns(5)
-                    c1g.metric("Seuil u (MAD)",       f"{diag['u']:,.0f}")
-                    c2g.metric("xi (forme)",            f"{diag['xi']:.4f}")
-                    c3g.metric("sigma (échelle)",       f"{diag['sigma_gpd']:.0f}")
-                    c4g.metric("N excédances",          diag['n_excesses'])
-                    c5g.metric("Pm retour 20 ans",      f"{diag['Pm']:,.0f}")
+            # ════════════════════════════════════════════════
+            # ÉTAPE 1 — Graphiques diagnostiques (Hill, MEF, Gertensgarbe)
+            # ════════════════════════════════════════════════
+            with st.expander("Étape 1 — Graphiques de sélection du seuil u (Hill · MEF · Gertensgarbe)", expanded=True):
 
-                    tableau_resultats([{"Indicateur": k, "Valeur": v} for k,v in {
-                        "n_total sinistres":   diag.get("n_excesses","—"),
-                        "Seuil u (MAD)":       f"{diag['u']:,.0f}",
-                        "xi (forme GPD)":      f"{diag['xi']:.4f}",
-                        "sigma (échelle MAD)": f"{diag['sigma_gpd']:.2f}",
-                        "P(X > u)":            f"{diag['survie_P_X_gt_u']:.6f}",
-                        "Observations > u":    diag['n_excesses'],
-                        "Fréq. annuelle":      f"{diag['freq_annuelle']:.4f} sin/an",
-                        "m (retour × fréq.)":  f"{diag['m']:.2f}",
-                        "Pm (retour 20 ans)":  f"{diag['Pm']:,.0f} MAD",
-                        "Nb sinistres majeurs":res["n_majeurs"],
-                        "Nb sinistres courants":res["n_courants"],
-                    }.items()])
+                k_max_hill = min(len(charges_sorted_desc)-1, 150)
+                ks_h = np.arange(1, k_max_hill+1)
+                hills_h = np.array([
+                    k / np.sum(np.log(charges_sorted_desc[:k] / charges_sorted_desc[k]))
+                    if np.sum(np.log(charges_sorted_desc[:k] / charges_sorted_desc[k])) > 0 else np.nan
+                    for k in ks_h
+                ])
 
-                    # ── PP-plot et QQ-plot ──
-                    excesses = np.array(diag.get("excesses", []))
-                    if len(excesses) >= 5:
-                        import matplotlib.pyplot as plt
-                        from scipy import stats as _sp
-                        xi_v  = float(diag["xi"])
-                        sig_v = float(diag["sigma_gpd"])
-                        pp         = np.arange(1, len(excesses)+1) / (len(excesses)+1)
-                        exc_sorted = np.sort(excesses)
-                        fig_d, axes = plt.subplots(1, 2, figsize=(10,4))
-                        fig_d.patch.set_facecolor('#f5f5f5')
-                        # PP
-                        cdf_gpd = _sp.genpareto.cdf(exc_sorted, xi_v, loc=0, scale=sig_v)
-                        axes[0].scatter(pp, cdf_gpd, color="#2d8a4e", s=20, alpha=0.7)
-                        axes[0].plot([0,1],[0,1],"r--",lw=1.5)
-                        axes[0].set_xlabel("Probabilités empiriques")
-                        axes[0].set_ylabel("Probabilités GPD théoriques")
-                        axes[0].set_title("PP-plot GPD"); axes[0].grid(alpha=0.3)
-                        # QQ
-                        q_gpd = _sp.genpareto.ppf(pp, xi_v, loc=0, scale=sig_v)
-                        axes[1].scatter(q_gpd, exc_sorted, color="#2d8a4e", s=20, alpha=0.7)
-                        mn_v = min(q_gpd.min(), exc_sorted.min())
-                        mx_v = max(q_gpd.max(), exc_sorted.max())
-                        axes[1].plot([mn_v,mx_v],[mn_v,mx_v],"r--",lw=1.5)
-                        axes[1].set_xlabel("Quantiles GPD théoriques (MAD)")
-                        axes[1].set_ylabel("Quantiles empiriques (MAD)")
-                        axes[1].set_title("QQ-plot GPD"); axes[1].grid(alpha=0.3)
-                        plt.tight_layout(); st.pyplot(fig_d); plt.close()
-                        st.caption("Alignement sur la diagonale = bon ajustement. Déviation en queue haute = sous-estimation des extrêmes.")
+                # Gertensgarbe : détection du point de changement
+                valid_h = ~np.isnan(hills_h)
+                h_v = hills_h[valid_h]; k_v = ks_h[valid_h]; n_v = len(h_v)
+                s_prog = np.zeros(n_v); s_reg = np.zeros(n_v)
+                for i in range(1, n_v):
+                    s_prog[i] = s_prog[i-1] + sum(1 for j in range(i) if h_v[j] < h_v[i])
+                h_rev = h_v[::-1]
+                for i in range(1, n_v):
+                    s_reg[i] = s_reg[i-1] + sum(1 for j in range(i) if h_rev[j] < h_rev[i])
+                s_reg = s_reg[::-1]
+                cross = np.where(np.diff(np.sign(s_prog - s_reg)))[0]
+                k_gert = int(k_v[cross[0]]) if len(cross) > 0 else int(k_v[len(k_v)//2])
+                u_gert = float(charges_sorted_desc[k_gert]) if k_gert < len(charges_sorted_desc) else float(np.percentile(charges_all, 80))
+                alpha_gert = float(hills_h[k_gert-1]) if k_gert <= len(hills_h) else 1.5
 
-                # ── Chargements par tranche ──
-                charg_par_t = res.get("chargements_par_tranche", {})
-                if charg_par_t:
-                    with st.expander("Chargements sinistres majeurs par tranche", expanded=True):
-                        st.caption("Chargement = sum((1/T) × min(max(X−D, 0), C)) / GNPI | T = 20 ans")
-                        tableau_resultats([{
-                            "Tranche": n, "Type": ct["type"],
-                            "Priorité D": f"{ct['D']:,.0f}",
-                            "Portée C":   f"{ct['C']:,.0f}",
-                            "Pm (MAD)":   f"{res['Pm']:,.0f}",
-                            "N majeurs":  res["n_majeurs"],
-                            "Chargement": f"{ct['chargement']:.6f}",
-                            "Charg. %":   f"{ct['chargement']:.4%}",
-                        } for n,ct in charg_par_t.items()])
+                # MEF
+                u_vals = np.linspace(np.percentile(charges_all, 40), np.percentile(charges_all, 95), 50)
+                mef_vals = np.array([
+                    np.mean(charges_all[charges_all > u] - u) if np.sum(charges_all > u) >= 5 else np.nan
+                    for u in u_vals
+                ])
 
-                # ── Détail sinistres majeurs ──
-                with st.expander("Détail sinistres majeurs (data_extremes)"):
-                    if len(res.get("df_chargements", [])) > 0:
-                        st.dataframe(res["df_chargements"], use_container_width=True)
+                fig_sel, axes_s = plt.subplots(1, 3, figsize=(15, 4))
+                fig_sel.patch.set_facecolor('#f5f5f5')
+
+                # Hill plot (style evir::hill)
+                # x-axis = threshold values (ordre décroissant), y-axis = alpha(k)
+                u_hill_axis = charges_sorted_desc[ks_h - 1]  # seuils correspondant à k excédances
+                axes_s[0].plot(u_hill_axis, hills_h, color="#1a1a1a", lw=1.5, label="Hill alpha(k)")
+                axes_s[0].axvline(u_gert, color="#ef4444", ls="--", lw=1.5,
+                                   label=f"Gertensgarbe u={u_gert:,.0f}")
+                u_mod = float(st.session_state.get("seuil_est", 0))
+                if u_mod > 0:
+                    axes_s[0].axvline(u_mod, color="#3b82f6", ls=":", lw=1.5,
+                                       label=f"Seuil modélis. u2={u_mod:,.0f}")
+                axes_s[0].set_xlabel("Seuil u (MAD)")
+                axes_s[0].set_ylabel("alpha(k)")
+                axes_s[0].set_title("Hill Plot — chercher zone stable")
+                axes_s[0].legend(fontsize=7); axes_s[0].grid(alpha=0.3)
+
+                # Gertensgarbe overlay
+                ax2 = axes_s[0].twinx()
+                ax2.plot(u_hill_axis[:len(s_prog)], s_prog, color="#2d8a4e", lw=1, alpha=0.5, label="S progressif")
+                ax2.plot(u_hill_axis[:len(s_reg)],  s_reg,  color="#f59e0b", lw=1, alpha=0.5, label="S régressif")
+                ax2.set_ylabel("Statistiques Gertensgarbe", fontsize=7)
+                ax2.legend(fontsize=6, loc="upper right")
+
+                # MEF
+                axes_s[1].plot(u_vals, mef_vals, color="#2d8a4e", lw=2)
+                axes_s[1].axvline(u_gert, color="#ef4444", ls="--", lw=1.5,
+                                   label=f"Gertensgarbe u={u_gert:,.0f}")
+                if u_mod > 0:
+                    axes_s[1].axvline(u_mod, color="#3b82f6", ls=":", lw=1.5, label="Seuil modélis. u2")
+                axes_s[1].set_xlabel("Seuil u (MAD)")
+                axes_s[1].set_ylabel("e(u) = E[X−u | X>u]")
+                axes_s[1].set_title("Mean Excess Function\nlinéaire croissante = queue Pareto")
+                axes_s[1].legend(fontsize=7); axes_s[1].grid(alpha=0.3)
+
+                # Histogramme sinistres
+                axes_s[2].hist(charges_all, bins=40, color="#2d8a4e", alpha=0.6, density=True)
+                axes_s[2].axvline(u_gert, color="#ef4444", ls="--", lw=1.5,
+                                   label=f"Gertensgarbe u={u_gert:,.0f}")
+                if u_mod > 0:
+                    axes_s[2].axvline(u_mod, color="#3b82f6", ls=":", lw=1.5, label="Seuil modélis.")
+                axes_s[2].set_xlabel("Montant (MAD)")
+                axes_s[2].set_title("Distribution des sinistres")
+                axes_s[2].legend(fontsize=7); axes_s[2].grid(alpha=0.3)
+
+                plt.tight_layout()
+                st.pyplot(fig_sel); plt.close()
+
+                st.info(
+                    f"Suggestion Gertensgarbe : u = {u_gert:,.0f} MAD "
+                    f"(k = {k_gert}, alpha = {alpha_gert:.4f}) — "
+                    "Vérifiez la stabilité sur le Hill plot et la linéarité sur le MEF avant de valider."
+                )
+
+            # ════════════════════════════════════════════════
+            # ÉTAPE 2 — Saisie manuelle de u
+            # ════════════════════════════════════════════════
+            with st.expander("Étape 2 — Saisie du seuil u retenu", expanded=True):
+                st.caption(
+                    "u ≠ seuil de modélisation. "
+                    "u est choisi sur toute la base pour le fit GPD et le calcul de Pm. "
+                    "u2 (seuil de modélisation) est sur les données courants pour alpha/lambda."
+                )
+                col_u1, col_u2, col_u3 = st.columns(3)
+                with col_u1:
+                    u_default = st.session_state.get("u_gpd_retenu", round(u_gert / 10000) * 10000)
+                    u_choisi = st.number_input(
+                        "u retenu (MAD)",
+                        value=float(u_default),
+                        min_value=float(np.percentile(charges_all, 10)),
+                        max_value=float(np.percentile(charges_all, 99)),
+                        step=50_000.0, format="%.0f",
+                        key="u_gpd_input",
+                        help="Seuil choisi après analyse Hill + MEF + Gertensgarbe"
+                    )
+                with col_u2:
+                    retour_gpd = st.number_input("Période de retour (ans)", value=20, min_value=5, max_value=100, step=5, key="retour_gpd")
+                with col_u3:
+                    nb_ann_gpd = st.number_input("Nb années observation", value=int(st.session_state["df_proj"]["annee_surv"].nunique()), min_value=1, max_value=50, key="nb_ann_gpd")
+
+                # Preview instantané du fit GPD avec le u choisi
+                excesses_preview = charges_all[charges_all >= u_choisi] - u_choisi
+                n_exc_prev = len(excesses_preview)
+                st.caption(f"Avec u = {u_choisi:,.0f} MAD → {n_exc_prev} excédances ({n_exc_prev/n_all:.1%} des sinistres)")
+                if n_exc_prev < 5:
+                    st.warning("Moins de 5 excédances — relevez u ou réduisez-le.")
+                else:
+                    xi_prev, _, sig_prev = _sp_gpd.genpareto.fit(excesses_preview, floc=0)
+                    survie_prev = n_exc_prev / n_all
+                    m_prev = retour_gpd * (n_all / nb_ann_gpd)
+                    ms_prev = m_prev * survie_prev
+                    if abs(xi_prev) > 1e-10:
+                        Pm_prev = u_choisi + (sig_prev / xi_prev) * (ms_prev**xi_prev - 1)
                     else:
-                        st.info("Aucun sinistre au-dessus de Pm.")
+                        Pm_prev = u_choisi + sig_prev * np.log(ms_prev)
+                    Pm_prev = max(Pm_prev, float(np.percentile(charges_all, 95)))
+                    st.markdown(
+                        f"**Aperçu GPD** : xi = {xi_prev:.4f} | sigma = {sig_prev:,.0f} MAD | "
+                        f"P(X>u) = {survie_prev:.4f} | **Pm = {Pm_prev:,.0f} MAD** "
+                        f"({sum(charges_all >= Pm_prev)} sinistres au-dessus)"
+                    )
+
+                if st.button("Valider ce seuil u et calculer Pm", type="primary", key="btn_valider_u"):
+                    if n_exc_prev >= 5:
+                        with st.spinner("Fit GPD et identification des sinistres majeurs..."):
+                            res_new = identifier_sinistres_majeurs_gpd(
+                                df_proj        = st.session_state["df_proj"],
+                                gnpi           = gnpi,
+                                tranches_input = tranches_input,
+                                nb_annees_obs  = int(nb_ann_gpd),
+                                retour_ans     = int(retour_gpd),
+                                u              = float(u_choisi),
+                            )
+                        st.session_state["res_majeurs"]             = res_new
+                        st.session_state["chargement_majeurs"]      = res_new["chargement"]
+                        st.session_state["chargements_par_tranche"] = res_new.get("chargements_par_tranche", {})
+                        st.session_state["u_gpd_retenu"]            = float(u_choisi)
+                        st.rerun()
+                    else:
+                        st.error("Augmentez ou réduisez u pour avoir au moins 5 excédances.")
+
+            # ════════════════════════════════════════════════
+            # ÉTAPE 3 — Résultats GPD + PP/QQ plots
+            # ════════════════════════════════════════════════
+            if "res_majeurs" in st.session_state:
+                res  = st.session_state["res_majeurs"]
+                diag = res.get("gpd_diag", {})
+
+                if diag and diag.get("u", 0) > 0:
+                    with st.expander("Étape 3 — Résultats GPD et diagnostics", expanded=True):
+                        c1,c2,c3,c4 = st.columns(4)
+                        c1.metric("Pm (niveau de retour)", f"{res['Pm']:,.0f} MAD")
+                        c2.metric("xi (forme GPD)",        f"{diag['xi']:.4f}")
+                        c3.metric("sigma (échelle)",       f"{diag['sigma_gpd']:,.0f} MAD")
+                        c4.metric("N excédances",          diag['n_excesses'])
+
+                        tableau_resultats([{"Indicateur": k, "Valeur": v} for k,v in {
+                            "Seuil u retenu (MAD)":  f"{diag['u']:,.0f}",
+                            "xi (forme GPD)":        f"{diag['xi']:.4f}",
+                            "sigma (échelle, MAD)":  f"{diag['sigma_gpd']:.2f}",
+                            "P(X > u)":              f"{diag['survie_P_X_gt_u']:.6f}",
+                            "Observations > u":      diag['n_excesses'],
+                            "Fréquence annuelle":    f"{diag['freq_annuelle']:.4f} sin/an",
+                            "m":                     f"{diag['m']:.2f}",
+                            "Pm retour 20 ans":      f"{diag['Pm']:,.0f} MAD",
+                            "Nb sinistres majeurs":  res["n_majeurs"],
+                            "Nb sinistres courants": res["n_courants"],
+                        }.items()])
+
+                        # PP-plot et QQ-plot
+                        excesses_gpd = np.array(diag.get("excesses", []))
+                        if len(excesses_gpd) >= 5:
+                            xi_v = float(diag["xi"]); sig_v = float(diag["sigma_gpd"])
+                            pp_g = np.arange(1, len(excesses_gpd)+1) / (len(excesses_gpd)+1)
+                            exc_s = np.sort(excesses_gpd)
+                            fig_g, ax_g = plt.subplots(1, 2, figsize=(10, 4))
+                            fig_g.patch.set_facecolor('#f5f5f5')
+                            # PP
+                            cdf_g = _sp_gpd.genpareto.cdf(exc_s, xi_v, loc=0, scale=sig_v)
+                            ax_g[0].scatter(pp_g, cdf_g, color="#2d8a4e", s=20, alpha=0.7)
+                            ax_g[0].plot([0,1],[0,1],"r--",lw=1.5)
+                            ax_g[0].set_xlabel("Probabilités empiriques")
+                            ax_g[0].set_ylabel("Probabilités GPD théoriques")
+                            ax_g[0].set_title("PP-plot GPD"); ax_g[0].grid(alpha=0.3)
+                            # QQ
+                            q_g = _sp_gpd.genpareto.ppf(pp_g, xi_v, loc=0, scale=sig_v)
+                            ax_g[1].scatter(q_g, exc_s, color="#2d8a4e", s=20, alpha=0.7)
+                            mn_g = min(q_g.min(), exc_s.min()); mx_g = max(q_g.max(), exc_s.max())
+                            ax_g[1].plot([mn_g,mx_g],[mn_g,mx_g],"r--",lw=1.5)
+                            ax_g[1].set_xlabel("Quantiles GPD théoriques (MAD)")
+                            ax_g[1].set_ylabel("Quantiles empiriques (MAD)")
+                            ax_g[1].set_title("QQ-plot GPD"); ax_g[1].grid(alpha=0.3)
+                            plt.tight_layout(); st.pyplot(fig_g); plt.close()
+                            st.caption("Alignement diagonal = bon ajustement. Déviation en queue haute = sous-estimation des extrêmes → relever u.")
+
+                    # Chargements par tranche
+                    charg_par_t = res.get("chargements_par_tranche", {})
+                    if charg_par_t:
+                        with st.expander("Chargements par tranche (data_extremes)", expanded=True):
+                            st.caption("Chargement = sum((1/T) × min(max(Xj − D, 0), C)) / GNPI | T = période de retour")
+                            tableau_resultats([{
+                                "Tranche":    n,  "Type": ct["type"],
+                                "D (MAD)":    f"{ct['D']:,.0f}",
+                                "C (MAD)":    f"{ct['C']:,.0f}",
+                                "Pm (MAD)":   f"{res['Pm']:,.0f}",
+                                "N majeurs":  res["n_majeurs"],
+                                "Chargement": f"{ct['chargement']:.6f}",
+                                "Charg. %":   f"{ct['chargement']:.4%}",
+                            } for n,ct in charg_par_t.items()])
+
+                    with st.expander("Détail sinistres majeurs (data_extremes)"):
+                        df_ch = res.get("df_chargements", pd.DataFrame())
+                        if len(df_ch) > 0:
+                            st.dataframe(df_ch, use_container_width=True)
+                        else:
+                            st.info("Aucun sinistre au-dessus de Pm.")
 
             if "df_seuils_pareto" in st.session_state:
-                with st.expander("Sélection seuil Pareto (TVE)"):
+                with st.expander("Tableau seuils Pareto (KS)"):
                     st.dataframe(st.session_state["df_seuils_pareto"], use_container_width=True)
 
         with st.expander("Triangle — vérification stabilisation"):
