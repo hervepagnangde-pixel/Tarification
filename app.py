@@ -1248,6 +1248,299 @@ if api_key:
                 except Exception as e_acc:
                     st.error(f"Erreur : {e_acc}")
 
+
+
+
+
+
+# ══════════════════════════════════════════════════════════
+# MODULE ANALYSE DISTRIBUTIONS — Seuils · Fits · CDF · Tests
+# ══════════════════════════════════════════════════════════
+
+def _hill_estimates(sorted_desc, k_max=None):
+    n = len(sorted_desc)
+    if k_max is None: k_max = min(n-1, 200)
+    hills, ks = [], []
+    for k in range(1, k_max+1):
+        log_ratios = np.log(sorted_desc[:k] / sorted_desc[k])
+        h = k / np.sum(log_ratios) if np.sum(log_ratios) > 0 else np.nan
+        hills.append(h); ks.append(k)
+    return np.array(ks), np.array(hills)
+
+
+def _mean_excess(data, n_points=40):
+    data_s = np.sort(data)
+    u_min, u_max = np.percentile(data_s, 50), np.percentile(data_s, 95)
+    thresholds = np.linspace(u_min, u_max, n_points)
+    mef = []
+    for u in thresholds:
+        exc = data_s[data_s > u] - u
+        mef.append(np.mean(exc) if len(exc) >= 5 else np.nan)
+    return thresholds, np.array(mef)
+
+
+def _gertensgarbe_k(ks, hills):
+    valid = ~np.isnan(hills)
+    h = hills[valid]; k = ks[valid]
+    if len(h) < 10: return k[len(k)//2]
+    n = len(h)
+    s_prog = np.zeros(n); s_reg = np.zeros(n)
+    for i in range(1, n):
+        s_prog[i] = s_prog[i-1] + sum(1 for j in range(i) if h[j] < h[i])
+    h_rev = h[::-1]
+    for i in range(1, n):
+        s_reg[i] = s_reg[i-1] + sum(1 for j in range(i) if h_rev[j] < h_rev[i])
+    s_reg = s_reg[::-1]
+    crossings = np.where(np.diff(np.sign(s_prog - s_reg)))[0]
+    idx = crossings[0] if len(crossings) > 0 else np.argmin(np.abs(hills - np.nanmedian(hills)))
+    return int(k[min(idx, len(k)-1)])
+
+
+def _fit_severity(exceedances, threshold):
+    from scipy import stats
+    results = {}
+    x = exceedances
+    if len(x) < 10: return results
+    try:
+        alpha_h = len(x) / np.sum(np.log(x / threshold))
+        ks_p, pval_p = stats.kstest(x, lambda v: 1-(v/threshold)**(-alpha_h))
+        results["Pareto"] = {"alpha": alpha_h, "xm": threshold, "ks": ks_p, "pval": pval_p}
+    except: pass
+    try:
+        log_x = np.log(x); mu_ln, sigma_ln = np.mean(log_x), np.std(log_x)
+        ks_ln, pval_ln = stats.kstest(x, lambda v: stats.lognorm.cdf(v, s=sigma_ln, scale=np.exp(mu_ln)))
+        results["Log-Normale"] = {"mu": mu_ln, "sigma": sigma_ln, "ks": ks_ln, "pval": pval_ln}
+    except: pass
+    try:
+        y = x - threshold
+        xi, loc, beta = stats.genpareto.fit(y, floc=0)
+        ks_gp, pval_gp = stats.kstest(y, lambda v: stats.genpareto.cdf(v, xi, loc=0, scale=beta))
+        results["GPD"] = {"xi": xi, "beta": beta, "ks": ks_gp, "pval": pval_gp, "threshold": threshold}
+    except: pass
+    return results
+
+
+def _fit_frequency(counts):
+    from scipy import stats
+    results = {}
+    if len(counts) < 3: return results
+    mu = np.mean(counts); var = np.var(counts)
+    try:
+        ks_po, pval_po = stats.kstest(counts, lambda v: stats.poisson.cdf(v, mu))
+        results["Poisson"] = {"lambda": mu, "ks": ks_po, "pval": pval_po}
+    except: pass
+    try:
+        if var > mu:
+            r_nb = mu**2 / (var - mu); p_nb = r_nb / (r_nb + mu)
+            ks_nb, pval_nb = stats.kstest(counts, lambda v: stats.nbinom.cdf(v, r_nb, p_nb))
+            results["BN"] = {"r": r_nb, "p": p_nb, "ks": ks_nb, "pval": pval_nb}
+        else:
+            results["BN"] = {"note": "var <= mean — BN non applicable"}
+    except: pass
+    return results
+
+
+def _threshold_table(data, thresholds_pct):
+    from scipy import stats
+    rows = []
+    for pct in thresholds_pct:
+        u = np.percentile(data, pct)
+        exc = data[data > u]; n_exc = len(exc)
+        if n_exc < 5:
+            rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
+                         "Alpha Hill": "—", "KS stat": "—", "p-val KS": "—", "AD stat": "—", "Qualite": "Insuf."})
+            continue
+        alpha_h = n_exc / np.sum(np.log(exc / u))
+        ks_s, pval_ks = stats.kstest(exc, lambda v: 1-(v/u)**(-alpha_h))
+        try:
+            cdf_v = np.sort(1-(np.sort(exc)/u)**(-alpha_h))
+            nn = len(cdf_v); i_a = np.arange(1, nn+1)
+            ad_stat = -nn - np.mean((2*i_a-1)*(np.log(np.clip(cdf_v,1e-10,1-1e-10))+
+                                               np.log(np.clip(1-cdf_v[::-1],1e-10,1-1e-10))))
+        except: ad_stat = np.nan
+        qual = "Bon" if pval_ks>0.05 and not np.isnan(ad_stat) and ad_stat<2.5 else                "Acceptable" if pval_ks>0.01 else "Rejeté"
+        rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
+                     "Alpha Hill": f"{alpha_h:.4f}", "KS stat": f"{ks_s:.4f}",
+                     "p-val KS": f"{pval_ks:.4f}",
+                     "AD stat": f"{ad_stat:.4f}" if not np.isnan(ad_stat) else "—", "Qualite": qual})
+    return rows
+
+
+def section_analyse_distributions():
+    import matplotlib.pyplot as plt
+    from scipy import stats as sp_stats
+
+    if "df_proj" not in st.session_state or "alpha_est" not in st.session_state:
+        st.info("Transformez d\'abord le triangle.")
+        return
+
+    df_proj  = st.session_state["df_proj"]
+    seuil_0  = float(st.session_state["seuil_est"])
+    alpha_0  = float(st.session_state["alpha_est"])
+    lambda_0 = float(st.session_state["lambda_est"])
+
+    all_sev  = df_proj["Sprime_ultime"].values; all_sev = all_sev[all_sev > 0]
+    sev_data = all_sev[all_sev > seuil_0]
+    freq_data = df_proj.groupby("annee_surv").size().values
+
+    if len(sev_data) < 10:
+        st.warning(f"Seulement {len(sev_data)} sinistres au-dessus du seuil — augmentez le triangle ou réduisez le seuil.")
+        return
+
+    tabs_d = st.tabs(["Sélection du seuil", "Sévérité — Fits & CDF", "Fréquence", "Paramètres manuels"])
+
+    # ── Onglet A : seuil ──
+    with tabs_d[0]:
+        sorted_desc = np.sort(all_sev)[::-1]
+        ks_arr, hills_arr = _hill_estimates(sorted_desc, k_max=min(len(sorted_desc)-1, 150))
+        k_gert = _gertensgarbe_k(ks_arr, hills_arr)
+        alpha_gert = float(hills_arr[k_gert-1]) if k_gert <= len(hills_arr) else alpha_0
+
+        col_h, col_m = st.columns(2)
+        with col_h:
+            fig_h, ax_h = plt.subplots(figsize=(6,3))
+            ax_h.plot(ks_arr, hills_arr, color="#1a1a1a", lw=1.5)
+            ax_h.axvline(k_gert, color="#ef4444", ls="--", lw=1.5,
+                         label=f"Gertensgarbe k={k_gert} → α={alpha_gert:.3f}")
+            ax_h.axhline(alpha_0, color="#2d8a4e", ls=":", lw=1.2, label=f"α actuel={alpha_0:.3f}")
+            ax_h.set_xlabel("k"); ax_h.set_ylabel("α(k)"); ax_h.set_title("Hill Plot")
+            ax_h.legend(fontsize=8); ax_h.grid(alpha=0.3)
+            st.pyplot(fig_h); plt.close()
+        with col_m:
+            u_mef, e_mef = _mean_excess(all_sev)
+            fig_m, ax_m = plt.subplots(figsize=(6,3))
+            ax_m.plot(u_mef, e_mef, color="#2d8a4e", lw=2)
+            ax_m.axvline(seuil_0, color="#ef4444", ls="--", lw=1.5, label=f"Seuil={seuil_0:,.0f}")
+            ax_m.set_xlabel("u"); ax_m.set_ylabel("e(u)"); ax_m.set_title("Mean Excess Function")
+            ax_m.legend(fontsize=8); ax_m.grid(alpha=0.3)
+            st.pyplot(fig_m); plt.close()
+
+        pcts = [50, 60, 70, 75, 80, 85, 90, 95]
+        rows_s = _threshold_table(all_sev, pcts)
+        df_s = pd.DataFrame(rows_s)
+        st.dataframe(df_s, use_container_width=True)
+        st.caption("Bon = KS p-val > 5% et AD < 2.5 | Acceptable = KS p-val > 1%")
+
+        best_row = next((r for r in rows_s if r["Qualite"] == "Bon"), None)
+        if best_row:
+            st.success(f"Recommandé : {best_row['Seuil %']} = {best_row['Seuil MAD']} MAD — α={best_row['Alpha Hill']}")
+            if st.button("Appliquer", key="btn_apply_seuil"):
+                st.session_state["seuil_est"] = float(best_row["Seuil MAD"].replace(",","").replace(" ",""))
+                st.session_state["alpha_est"] = float(best_row["Alpha Hill"])
+                st.rerun()
+
+    # ── Onglet B : sévérité ──
+    with tabs_d[1]:
+        fits_sev = _fit_severity(sev_data, seuil_0)
+        if fits_sev:
+            st.dataframe(pd.DataFrame([{
+                "Distribution": n,
+                "Paramètres": (f"α={f['alpha']:.4f}" if n=="Pareto" else
+                               f"μ={f['mu']:.3f} σ={f['sigma']:.3f}" if n=="Log-Normale" else
+                               f"ξ={f['xi']:.4f} β={f['beta']:.0f}"),
+                "KS": f"{f['ks']:.4f}", "p-val": f"{f['pval']:.4f}",
+                "Adéquation": "Bon" if f["pval"]>0.05 else "Acceptable" if f["pval"]>0.01 else "Rejeté"
+            } for n, f in fits_sev.items()]), use_container_width=True)
+
+        fig_c, axes_c = plt.subplots(1, 2, figsize=(12,4))
+        x_s = np.sort(sev_data)
+        axes_c[0].plot(x_s, np.arange(1,len(x_s)+1)/len(x_s), "k-", lw=2.5, label="Empirique")
+        colors_d = {"Pareto":"#ef4444","Log-Normale":"#3b82f6","GPD":"#2d8a4e"}
+        for nom, f in fits_sev.items():
+            try:
+                col = colors_d.get(nom,"#888")
+                if nom=="Pareto": y = np.clip(1-(x_s/f["xm"])**(-f["alpha"]),0,1)
+                elif nom=="Log-Normale": y = sp_stats.lognorm.cdf(x_s, s=f["sigma"], scale=np.exp(f["mu"]))
+                elif nom=="GPD": y = sp_stats.genpareto.cdf(x_s-seuil_0, f["xi"], loc=0, scale=f["beta"])
+                else: continue
+                axes_c[0].plot(x_s, y, "--", color=col, lw=1.8, label=f"{nom} p={f['pval']:.3f}")
+            except: pass
+        axes_c[0].set_xlabel("MAD"); axes_c[0].set_ylabel("F(x)")
+        axes_c[0].set_title("CDF Sévérité"); axes_c[0].legend(fontsize=8); axes_c[0].grid(alpha=0.3)
+        # QQ-Plot
+        log_x = np.log(np.sort(sev_data)/seuil_0); n_q = len(log_x)
+        th_q = -np.log(1-(np.arange(1,n_q+1)/(n_q+1)))
+        axes_c[1].scatter(th_q, log_x, color="#2d8a4e", s=15, alpha=0.7)
+        mn_q = min(th_q.min(), log_x.min()); mx_q = max(th_q.max(), log_x.max())
+        axes_c[1].plot([mn_q,mx_q],[mn_q,mx_q],"r--",lw=1.5)
+        axes_c[1].set_xlabel("Quantiles Exp(1)"); axes_c[1].set_ylabel("log(X/seuil)")
+        axes_c[1].set_title("QQ-Plot Pareto"); axes_c[1].grid(alpha=0.3)
+        st.pyplot(fig_c); plt.close()
+
+    # ── Onglet C : fréquence ──
+    with tabs_d[2]:
+        fits_freq = _fit_frequency(freq_data)
+        if fits_freq:
+            rows_fr = []
+            for nom, f in fits_freq.items():
+                if "note" in f: rows_fr.append({"Distribution":nom,"Paramètres":f["note"],"KS":"—","p-val":"—","Adéquation":"—"})
+                else: rows_fr.append({"Distribution":nom,
+                    "Paramètres": f"λ={f['lambda']:.3f}" if nom=="Poisson" else f"r={f['r']:.3f} p={f['p']:.4f}",
+                    "KS": f"{f['ks']:.4f}", "p-val": f"{f['pval']:.4f}",
+                    "Adéquation": "Bon" if f["pval"]>0.05 else "Acceptable" if f["pval"]>0.01 else "Rejeté"})
+            st.dataframe(pd.DataFrame(rows_fr), use_container_width=True)
+
+        fig_fr, ax_fr = plt.subplots(figsize=(8,4))
+        v, c = np.unique(freq_data, return_counts=True)
+        ax_fr.bar(v, c/len(freq_data), color="#2d8a4e", alpha=0.7, label="Observée", zorder=3)
+        x_r = np.arange(0, max(freq_data)+2)
+        if "Poisson" in fits_freq and "pval" in fits_freq["Poisson"]:
+            ax_fr.plot(x_r, sp_stats.poisson.pmf(x_r, fits_freq["Poisson"]["lambda"]),
+                       "r--o", ms=5, lw=1.5, label=f"Poisson(λ={fits_freq['Poisson']['lambda']:.2f})")
+        if "BN" in fits_freq and "r" in fits_freq["BN"]:
+            f_nb = fits_freq["BN"]
+            ax_fr.plot(x_r, sp_stats.nbinom.pmf(x_r, f_nb["r"], f_nb["p"]),
+                       "b--s", ms=5, lw=1.5, label=f"BN(r={f_nb['r']:.2f})")
+        ax_fr.set_xlabel("Sinistres/an"); ax_fr.set_title("Fréquence annuelle")
+        ax_fr.legend(); ax_fr.grid(alpha=0.3)
+        st.pyplot(fig_fr); plt.close()
+        disp_ratio = float(np.var(freq_data)/max(np.mean(freq_data),0.01))
+        st.info(f"Indice de dispersion = {disp_ratio:.2f} ({'surdispersion → BN pertinente' if disp_ratio>1.2 else 'équidispersion → Poisson adapté'})")
+
+    # ── Onglet D : manuel ──
+    with tabs_d[3]:
+        c1,c2,c3 = st.columns(3)
+        with c1: alpha_m  = st.slider("Alpha",  0.5, 5.0,  float(alpha_0),  0.05, key="alpha_manual")
+        with c2: lambda_m = st.slider("Lambda", 0.5, 30.0, float(lambda_0), 0.5,  key="lambda_manual")
+        with c3:
+            p40 = int(np.percentile(all_sev, 40)); p92 = int(np.percentile(all_sev, 92))
+            seuil_m = st.slider("Seuil MAD", p40, p92, int(seuil_0), 50000, key="seuil_manual")
+
+        exc_m = all_sev[all_sev > seuil_m]
+        if len(exc_m) >= 5:
+            fig_mn, ax_mn = plt.subplots(figsize=(8,3))
+            xs_m = np.sort(exc_m)
+            ax_mn.plot(xs_m, np.arange(1,len(xs_m)+1)/len(xs_m), "k-", lw=2, label="Empirique")
+            ax_mn.plot(xs_m, np.clip(1-(xs_m/seuil_m)**(-alpha_m),0,1), "r--", lw=1.8,
+                       label=f"Pareto(α={alpha_m:.2f})")
+            ax_mn.set_xlabel("MAD"); ax_mn.set_title("CDF Sévérité — paramètres manuels")
+            ax_mn.legend(); ax_mn.grid(alpha=0.3)
+            st.pyplot(fig_mn); plt.close()
+        if st.button("Appliquer ces paramètres", type="primary", key="apply_manual"):
+            st.session_state["alpha_est"]  = alpha_m
+            st.session_state["lambda_est"] = lambda_m
+            st.session_state["seuil_est"]  = float(seuil_m)
+            st.success(f"Paramètres mis à jour : α={alpha_m:.4f}, λ={lambda_m:.4f}, seuil={seuil_m:,.0f}")
+            st.rerun()
+
+    # Stocker pour l\'agent LLM
+    try:
+        fits_sev_stored = _fit_severity(sev_data, seuil_0)
+        fits_freq_stored = _fit_frequency(freq_data)
+        st.session_state["dist_fit_results"] = {
+            "severity": {k: {kk: float(vv) if isinstance(vv,(int,float,np.floating)) else vv
+                             for kk,vv in v.items() if kk != "threshold"}
+                         for k,v in fits_sev_stored.items()},
+            "frequency": {k: {kk: float(vv) if isinstance(vv,(int,float,np.floating)) else vv
+                               for kk,vv in v.items()}
+                          for k,v in fits_freq_stored.items()},
+            "n_exceedances": int(len(sev_data)),
+            "overdispersion_ratio": float(np.var(freq_data)/max(np.mean(freq_data),0.01)),
+            "alpha_gert": alpha_gert,
+        }
+    except: pass
+
+
 # ════════════════════════════════════════════
 # TABS
 # ════════════════════════════════════════════
@@ -3171,293 +3464,6 @@ def _executer_market_curve(rol_min, rol_max, r2_min, tolerance):
         "taux_par_tranche": best["taux_tranches"]})
 
 
-
-# ══════════════════════════════════════════════════════════
-# MODULE ANALYSE DISTRIBUTIONS — Seuils · Fits · CDF · Tests
-# ══════════════════════════════════════════════════════════
-
-def _hill_estimates(sorted_desc, k_max=None):
-    n = len(sorted_desc)
-    if k_max is None: k_max = min(n-1, 200)
-    hills, ks = [], []
-    for k in range(1, k_max+1):
-        log_ratios = np.log(sorted_desc[:k] / sorted_desc[k])
-        h = k / np.sum(log_ratios) if np.sum(log_ratios) > 0 else np.nan
-        hills.append(h); ks.append(k)
-    return np.array(ks), np.array(hills)
-
-
-def _mean_excess(data, n_points=40):
-    data_s = np.sort(data)
-    u_min, u_max = np.percentile(data_s, 50), np.percentile(data_s, 95)
-    thresholds = np.linspace(u_min, u_max, n_points)
-    mef = []
-    for u in thresholds:
-        exc = data_s[data_s > u] - u
-        mef.append(np.mean(exc) if len(exc) >= 5 else np.nan)
-    return thresholds, np.array(mef)
-
-
-def _gertensgarbe_k(ks, hills):
-    valid = ~np.isnan(hills)
-    h = hills[valid]; k = ks[valid]
-    if len(h) < 10: return k[len(k)//2]
-    n = len(h)
-    s_prog = np.zeros(n); s_reg = np.zeros(n)
-    for i in range(1, n):
-        s_prog[i] = s_prog[i-1] + sum(1 for j in range(i) if h[j] < h[i])
-    h_rev = h[::-1]
-    for i in range(1, n):
-        s_reg[i] = s_reg[i-1] + sum(1 for j in range(i) if h_rev[j] < h_rev[i])
-    s_reg = s_reg[::-1]
-    crossings = np.where(np.diff(np.sign(s_prog - s_reg)))[0]
-    idx = crossings[0] if len(crossings) > 0 else np.argmin(np.abs(hills - np.nanmedian(hills)))
-    return int(k[min(idx, len(k)-1)])
-
-
-def _fit_severity(exceedances, threshold):
-    from scipy import stats
-    results = {}
-    x = exceedances
-    if len(x) < 10: return results
-    try:
-        alpha_h = len(x) / np.sum(np.log(x / threshold))
-        ks_p, pval_p = stats.kstest(x, lambda v: 1-(v/threshold)**(-alpha_h))
-        results["Pareto"] = {"alpha": alpha_h, "xm": threshold, "ks": ks_p, "pval": pval_p}
-    except: pass
-    try:
-        log_x = np.log(x); mu_ln, sigma_ln = np.mean(log_x), np.std(log_x)
-        ks_ln, pval_ln = stats.kstest(x, lambda v: stats.lognorm.cdf(v, s=sigma_ln, scale=np.exp(mu_ln)))
-        results["Log-Normale"] = {"mu": mu_ln, "sigma": sigma_ln, "ks": ks_ln, "pval": pval_ln}
-    except: pass
-    try:
-        y = x - threshold
-        xi, loc, beta = stats.genpareto.fit(y, floc=0)
-        ks_gp, pval_gp = stats.kstest(y, lambda v: stats.genpareto.cdf(v, xi, loc=0, scale=beta))
-        results["GPD"] = {"xi": xi, "beta": beta, "ks": ks_gp, "pval": pval_gp, "threshold": threshold}
-    except: pass
-    return results
-
-
-def _fit_frequency(counts):
-    from scipy import stats
-    results = {}
-    if len(counts) < 3: return results
-    mu = np.mean(counts); var = np.var(counts)
-    try:
-        ks_po, pval_po = stats.kstest(counts, lambda v: stats.poisson.cdf(v, mu))
-        results["Poisson"] = {"lambda": mu, "ks": ks_po, "pval": pval_po}
-    except: pass
-    try:
-        if var > mu:
-            r_nb = mu**2 / (var - mu); p_nb = r_nb / (r_nb + mu)
-            ks_nb, pval_nb = stats.kstest(counts, lambda v: stats.nbinom.cdf(v, r_nb, p_nb))
-            results["BN"] = {"r": r_nb, "p": p_nb, "ks": ks_nb, "pval": pval_nb}
-        else:
-            results["BN"] = {"note": "var <= mean — BN non applicable"}
-    except: pass
-    return results
-
-
-def _threshold_table(data, thresholds_pct):
-    from scipy import stats
-    rows = []
-    for pct in thresholds_pct:
-        u = np.percentile(data, pct)
-        exc = data[data > u]; n_exc = len(exc)
-        if n_exc < 5:
-            rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
-                         "Alpha Hill": "—", "KS stat": "—", "p-val KS": "—", "AD stat": "—", "Qualite": "Insuf."})
-            continue
-        alpha_h = n_exc / np.sum(np.log(exc / u))
-        ks_s, pval_ks = stats.kstest(exc, lambda v: 1-(v/u)**(-alpha_h))
-        try:
-            cdf_v = np.sort(1-(np.sort(exc)/u)**(-alpha_h))
-            nn = len(cdf_v); i_a = np.arange(1, nn+1)
-            ad_stat = -nn - np.mean((2*i_a-1)*(np.log(np.clip(cdf_v,1e-10,1-1e-10))+
-                                               np.log(np.clip(1-cdf_v[::-1],1e-10,1-1e-10))))
-        except: ad_stat = np.nan
-        qual = "Bon" if pval_ks>0.05 and not np.isnan(ad_stat) and ad_stat<2.5 else                "Acceptable" if pval_ks>0.01 else "Rejeté"
-        rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
-                     "Alpha Hill": f"{alpha_h:.4f}", "KS stat": f"{ks_s:.4f}",
-                     "p-val KS": f"{pval_ks:.4f}",
-                     "AD stat": f"{ad_stat:.4f}" if not np.isnan(ad_stat) else "—", "Qualite": qual})
-    return rows
-
-
-def section_analyse_distributions():
-    import matplotlib.pyplot as plt
-    from scipy import stats as sp_stats
-
-    if "df_proj" not in st.session_state or "alpha_est" not in st.session_state:
-        st.info("Transformez d\'abord le triangle.")
-        return
-
-    df_proj  = st.session_state["df_proj"]
-    seuil_0  = float(st.session_state["seuil_est"])
-    alpha_0  = float(st.session_state["alpha_est"])
-    lambda_0 = float(st.session_state["lambda_est"])
-
-    all_sev  = df_proj["Sprime_ultime"].values; all_sev = all_sev[all_sev > 0]
-    sev_data = all_sev[all_sev > seuil_0]
-    freq_data = df_proj.groupby("annee_surv").size().values
-
-    if len(sev_data) < 10:
-        st.warning(f"Seulement {len(sev_data)} sinistres au-dessus du seuil — augmentez le triangle ou réduisez le seuil.")
-        return
-
-    tabs_d = st.tabs(["Sélection du seuil", "Sévérité — Fits & CDF", "Fréquence", "Paramètres manuels"])
-
-    # ── Onglet A : seuil ──
-    with tabs_d[0]:
-        sorted_desc = np.sort(all_sev)[::-1]
-        ks_arr, hills_arr = _hill_estimates(sorted_desc, k_max=min(len(sorted_desc)-1, 150))
-        k_gert = _gertensgarbe_k(ks_arr, hills_arr)
-        alpha_gert = float(hills_arr[k_gert-1]) if k_gert <= len(hills_arr) else alpha_0
-
-        col_h, col_m = st.columns(2)
-        with col_h:
-            fig_h, ax_h = plt.subplots(figsize=(6,3))
-            ax_h.plot(ks_arr, hills_arr, color="#1a1a1a", lw=1.5)
-            ax_h.axvline(k_gert, color="#ef4444", ls="--", lw=1.5,
-                         label=f"Gertensgarbe k={k_gert} → α={alpha_gert:.3f}")
-            ax_h.axhline(alpha_0, color="#2d8a4e", ls=":", lw=1.2, label=f"α actuel={alpha_0:.3f}")
-            ax_h.set_xlabel("k"); ax_h.set_ylabel("α(k)"); ax_h.set_title("Hill Plot")
-            ax_h.legend(fontsize=8); ax_h.grid(alpha=0.3)
-            st.pyplot(fig_h); plt.close()
-        with col_m:
-            u_mef, e_mef = _mean_excess(all_sev)
-            fig_m, ax_m = plt.subplots(figsize=(6,3))
-            ax_m.plot(u_mef, e_mef, color="#2d8a4e", lw=2)
-            ax_m.axvline(seuil_0, color="#ef4444", ls="--", lw=1.5, label=f"Seuil={seuil_0:,.0f}")
-            ax_m.set_xlabel("u"); ax_m.set_ylabel("e(u)"); ax_m.set_title("Mean Excess Function")
-            ax_m.legend(fontsize=8); ax_m.grid(alpha=0.3)
-            st.pyplot(fig_m); plt.close()
-
-        pcts = [50, 60, 70, 75, 80, 85, 90, 95]
-        rows_s = _threshold_table(all_sev, pcts)
-        df_s = pd.DataFrame(rows_s)
-        st.dataframe(df_s, use_container_width=True)
-        st.caption("Bon = KS p-val > 5% et AD < 2.5 | Acceptable = KS p-val > 1%")
-
-        best_row = next((r for r in rows_s if r["Qualite"] == "Bon"), None)
-        if best_row:
-            st.success(f"Recommandé : {best_row['Seuil %']} = {best_row['Seuil MAD']} MAD — α={best_row['Alpha Hill']}")
-            if st.button("Appliquer", key="btn_apply_seuil"):
-                st.session_state["seuil_est"] = float(best_row["Seuil MAD"].replace(",","").replace(" ",""))
-                st.session_state["alpha_est"] = float(best_row["Alpha Hill"])
-                st.rerun()
-
-    # ── Onglet B : sévérité ──
-    with tabs_d[1]:
-        fits_sev = _fit_severity(sev_data, seuil_0)
-        if fits_sev:
-            st.dataframe(pd.DataFrame([{
-                "Distribution": n,
-                "Paramètres": (f"α={f['alpha']:.4f}" if n=="Pareto" else
-                               f"μ={f['mu']:.3f} σ={f['sigma']:.3f}" if n=="Log-Normale" else
-                               f"ξ={f['xi']:.4f} β={f['beta']:.0f}"),
-                "KS": f"{f['ks']:.4f}", "p-val": f"{f['pval']:.4f}",
-                "Adéquation": "Bon" if f["pval"]>0.05 else "Acceptable" if f["pval"]>0.01 else "Rejeté"
-            } for n, f in fits_sev.items()]), use_container_width=True)
-
-        fig_c, axes_c = plt.subplots(1, 2, figsize=(12,4))
-        x_s = np.sort(sev_data)
-        axes_c[0].plot(x_s, np.arange(1,len(x_s)+1)/len(x_s), "k-", lw=2.5, label="Empirique")
-        colors_d = {"Pareto":"#ef4444","Log-Normale":"#3b82f6","GPD":"#2d8a4e"}
-        for nom, f in fits_sev.items():
-            try:
-                col = colors_d.get(nom,"#888")
-                if nom=="Pareto": y = np.clip(1-(x_s/f["xm"])**(-f["alpha"]),0,1)
-                elif nom=="Log-Normale": y = sp_stats.lognorm.cdf(x_s, s=f["sigma"], scale=np.exp(f["mu"]))
-                elif nom=="GPD": y = sp_stats.genpareto.cdf(x_s-seuil_0, f["xi"], loc=0, scale=f["beta"])
-                else: continue
-                axes_c[0].plot(x_s, y, "--", color=col, lw=1.8, label=f"{nom} p={f['pval']:.3f}")
-            except: pass
-        axes_c[0].set_xlabel("MAD"); axes_c[0].set_ylabel("F(x)")
-        axes_c[0].set_title("CDF Sévérité"); axes_c[0].legend(fontsize=8); axes_c[0].grid(alpha=0.3)
-        # QQ-Plot
-        log_x = np.log(np.sort(sev_data)/seuil_0); n_q = len(log_x)
-        th_q = -np.log(1-(np.arange(1,n_q+1)/(n_q+1)))
-        axes_c[1].scatter(th_q, log_x, color="#2d8a4e", s=15, alpha=0.7)
-        mn_q = min(th_q.min(), log_x.min()); mx_q = max(th_q.max(), log_x.max())
-        axes_c[1].plot([mn_q,mx_q],[mn_q,mx_q],"r--",lw=1.5)
-        axes_c[1].set_xlabel("Quantiles Exp(1)"); axes_c[1].set_ylabel("log(X/seuil)")
-        axes_c[1].set_title("QQ-Plot Pareto"); axes_c[1].grid(alpha=0.3)
-        st.pyplot(fig_c); plt.close()
-
-    # ── Onglet C : fréquence ──
-    with tabs_d[2]:
-        fits_freq = _fit_frequency(freq_data)
-        if fits_freq:
-            rows_fr = []
-            for nom, f in fits_freq.items():
-                if "note" in f: rows_fr.append({"Distribution":nom,"Paramètres":f["note"],"KS":"—","p-val":"—","Adéquation":"—"})
-                else: rows_fr.append({"Distribution":nom,
-                    "Paramètres": f"λ={f['lambda']:.3f}" if nom=="Poisson" else f"r={f['r']:.3f} p={f['p']:.4f}",
-                    "KS": f"{f['ks']:.4f}", "p-val": f"{f['pval']:.4f}",
-                    "Adéquation": "Bon" if f["pval"]>0.05 else "Acceptable" if f["pval"]>0.01 else "Rejeté"})
-            st.dataframe(pd.DataFrame(rows_fr), use_container_width=True)
-
-        fig_fr, ax_fr = plt.subplots(figsize=(8,4))
-        v, c = np.unique(freq_data, return_counts=True)
-        ax_fr.bar(v, c/len(freq_data), color="#2d8a4e", alpha=0.7, label="Observée", zorder=3)
-        x_r = np.arange(0, max(freq_data)+2)
-        if "Poisson" in fits_freq and "pval" in fits_freq["Poisson"]:
-            ax_fr.plot(x_r, sp_stats.poisson.pmf(x_r, fits_freq["Poisson"]["lambda"]),
-                       "r--o", ms=5, lw=1.5, label=f"Poisson(λ={fits_freq['Poisson']['lambda']:.2f})")
-        if "BN" in fits_freq and "r" in fits_freq["BN"]:
-            f_nb = fits_freq["BN"]
-            ax_fr.plot(x_r, sp_stats.nbinom.pmf(x_r, f_nb["r"], f_nb["p"]),
-                       "b--s", ms=5, lw=1.5, label=f"BN(r={f_nb['r']:.2f})")
-        ax_fr.set_xlabel("Sinistres/an"); ax_fr.set_title("Fréquence annuelle")
-        ax_fr.legend(); ax_fr.grid(alpha=0.3)
-        st.pyplot(fig_fr); plt.close()
-        disp_ratio = float(np.var(freq_data)/max(np.mean(freq_data),0.01))
-        st.info(f"Indice de dispersion = {disp_ratio:.2f} ({'surdispersion → BN pertinente' if disp_ratio>1.2 else 'équidispersion → Poisson adapté'})")
-
-    # ── Onglet D : manuel ──
-    with tabs_d[3]:
-        c1,c2,c3 = st.columns(3)
-        with c1: alpha_m  = st.slider("Alpha",  0.5, 5.0,  float(alpha_0),  0.05, key="alpha_manual")
-        with c2: lambda_m = st.slider("Lambda", 0.5, 30.0, float(lambda_0), 0.5,  key="lambda_manual")
-        with c3:
-            p40 = int(np.percentile(all_sev, 40)); p92 = int(np.percentile(all_sev, 92))
-            seuil_m = st.slider("Seuil MAD", p40, p92, int(seuil_0), 50000, key="seuil_manual")
-
-        exc_m = all_sev[all_sev > seuil_m]
-        if len(exc_m) >= 5:
-            fig_mn, ax_mn = plt.subplots(figsize=(8,3))
-            xs_m = np.sort(exc_m)
-            ax_mn.plot(xs_m, np.arange(1,len(xs_m)+1)/len(xs_m), "k-", lw=2, label="Empirique")
-            ax_mn.plot(xs_m, np.clip(1-(xs_m/seuil_m)**(-alpha_m),0,1), "r--", lw=1.8,
-                       label=f"Pareto(α={alpha_m:.2f})")
-            ax_mn.set_xlabel("MAD"); ax_mn.set_title("CDF Sévérité — paramètres manuels")
-            ax_mn.legend(); ax_mn.grid(alpha=0.3)
-            st.pyplot(fig_mn); plt.close()
-        if st.button("Appliquer ces paramètres", type="primary", key="apply_manual"):
-            st.session_state["alpha_est"]  = alpha_m
-            st.session_state["lambda_est"] = lambda_m
-            st.session_state["seuil_est"]  = float(seuil_m)
-            st.success(f"Paramètres mis à jour : α={alpha_m:.4f}, λ={lambda_m:.4f}, seuil={seuil_m:,.0f}")
-            st.rerun()
-
-    # Stocker pour l\'agent LLM
-    try:
-        fits_sev_stored = _fit_severity(sev_data, seuil_0)
-        fits_freq_stored = _fit_frequency(freq_data)
-        st.session_state["dist_fit_results"] = {
-            "severity": {k: {kk: float(vv) if isinstance(vv,(int,float,np.floating)) else vv
-                             for kk,vv in v.items() if kk != "threshold"}
-                         for k,v in fits_sev_stored.items()},
-            "frequency": {k: {kk: float(vv) if isinstance(vv,(int,float,np.floating)) else vv
-                               for kk,vv in v.items()}
-                          for k,v in fits_freq_stored.items()},
-            "n_exceedances": int(len(sev_data)),
-            "overdispersion_ratio": float(np.var(freq_data)/max(np.mean(freq_data),0.01)),
-            "alpha_gert": alpha_gert,
-        }
-    except: pass
 
 
 # ════════════════════════════════════════════
