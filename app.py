@@ -2174,91 +2174,125 @@ with tab2:
             # ════════════════════════════════════════════════
             # ÉTAPE 1 — Graphiques diagnostiques (Hill, MEF, Gertensgarbe)
             # ════════════════════════════════════════════════
-            with st.expander("Étape 1 — Graphiques de sélection du seuil u (Hill · MEF · Gertensgarbe)", expanded=True):
+            with st.expander("Étape 1 — Hill · MEF · Gertensgarbe", expanded=True):
 
-                k_max_hill = min(len(charges_sorted_desc)-1, 150)
-                ks_h = np.arange(1, k_max_hill+1)
-                hills_h = np.array([
+                import matplotlib.pyplot as plt
+                import matplotlib.ticker as mticker
+
+                k_max = min(len(charges_sorted_desc) - 1, 200)
+                ks    = np.arange(1, k_max + 1)
+
+                # ── Hill estimates α(k) = k / Σ log(X_(i)/X_(k+1)) ──
+                hills = np.array([
                     k / np.sum(np.log(charges_sorted_desc[:k] / charges_sorted_desc[k]))
-                    if np.sum(np.log(charges_sorted_desc[:k] / charges_sorted_desc[k])) > 0 else np.nan
-                    for k in ks_h
+                    if charges_sorted_desc[k] > 0 and
+                       np.sum(np.log(charges_sorted_desc[:k] / charges_sorted_desc[k])) > 0
+                    else np.nan
+                    for k in ks
                 ])
+                # IC 95 % : α ± 1.96 × α/√k
+                with np.errstate(invalid='ignore'):
+                    ci_up  = hills + 1.96 * hills / np.sqrt(ks)
+                    ci_low = np.maximum(hills - 1.96 * hills / np.sqrt(ks), 0)
 
-                # Gertensgarbe : détection du point de changement
-                valid_h = ~np.isnan(hills_h)
-                h_v = hills_h[valid_h]; k_v = ks_h[valid_h]; n_v = len(h_v)
-                s_prog = np.zeros(n_v); s_reg = np.zeros(n_v)
-                for i in range(1, n_v):
-                    s_prog[i] = s_prog[i-1] + sum(1 for j in range(i) if h_v[j] < h_v[i])
-                h_rev = h_v[::-1]
-                for i in range(1, n_v):
-                    s_reg[i] = s_reg[i-1] + sum(1 for j in range(i) if h_rev[j] < h_rev[i])
-                s_reg = s_reg[::-1]
-                cross = np.where(np.diff(np.sign(s_prog - s_reg)))[0]
-                k_gert = int(k_v[cross[0]]) if len(cross) > 0 else int(k_v[len(k_v)//2])
-                u_gert = float(charges_sorted_desc[k_gert]) if k_gert < len(charges_sorted_desc) else float(np.percentile(charges_all, 80))
-                alpha_gert = float(hills_h[k_gert-1]) if k_gert <= len(hills_h) else 1.5
+                # ── Gertensgarbe — Mann-Kendall progressif / régressif sur α(k) ──
+                ok   = ~np.isnan(hills)
+                h_ok = hills[ok]; k_ok = ks[ok]; nk = len(h_ok)
 
-                # MEF
-                u_vals = np.linspace(np.percentile(charges_all, 40), np.percentile(charges_all, 95), 50)
-                mef_vals = np.array([
-                    np.mean(charges_all[charges_all > u] - u) if np.sum(charges_all > u) >= 5 else np.nan
-                    for u in u_vals
+                u_fwd = np.zeros(nk)
+                for i in range(2, nk):
+                    s = sum(1 for j in range(i) if h_ok[j] < h_ok[i])
+                    e_s = i * (i - 1) / 4
+                    v_s = i * (i - 1) * (2 * i + 5) / 72
+                    u_fwd[i] = (s - e_s) / np.sqrt(v_s)
+
+                h_rev  = h_ok[::-1]
+                u_bwd_rev = np.zeros(nk)
+                for i in range(2, nk):
+                    s = sum(1 for j in range(i) if h_rev[j] < h_rev[i])
+                    e_s = i * (i - 1) / 4
+                    v_s = i * (i - 1) * (2 * i + 5) / 72
+                    u_bwd_rev[i] = (s - e_s) / np.sqrt(v_s)
+                u_bwd = u_bwd_rev[::-1]
+
+                diff_gb   = u_fwd - u_bwd
+                cross_idx = np.where(np.diff(np.sign(diff_gb)))[0]
+                k_gert    = int(k_ok[cross_idx[0]]) if len(cross_idx) > 0 else int(k_ok[nk // 2])
+                u_gert    = float(charges_sorted_desc[k_gert - 1]) if k_gert <= len(charges_sorted_desc) else float(np.percentile(charges_all, 80))
+                alpha_gert = float(hills[k_gert - 1]) if k_gert - 1 < len(hills) else 1.5
+
+                # ── MEF — cercles ouverts sur chaque valeur triée (style meplot R) ──
+                # On prend toutes les valeurs uniques triées sauf la dernière
+                u_sorted = np.sort(np.unique(charges_all))
+                # Limiter à ~80 points pour la lisibilité
+                step  = max(1, len(u_sorted) // 80)
+                u_mef = u_sorted[::step][:-1]
+                mef   = np.array([
+                    float(np.mean(charges_all[charges_all > u] - u))
+                    if np.sum(charges_all > u) >= 2 else np.nan
+                    for u in u_mef
                 ])
+                valid_mef = ~np.isnan(mef)
+                # Seuil MeanExc : valeur médiane de la zone de linéarité
+                s_mef = float(st.session_state.get("seuil_est", float(np.percentile(charges_all, 60))))
 
-                fig_sel, axes_s = plt.subplots(1, 3, figsize=(15, 4))
-                fig_sel.patch.set_facecolor('#f5f5f5')
+                # ════════════════════════════════
+                fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+                for ax in axes:
+                    ax.set_facecolor("white")
+                    ax.spines[['top', 'right']].set_visible(False)
+                fig.patch.set_facecolor("white")
 
-                # Hill plot (style evir::hill)
-                # x-axis = threshold values (ordre décroissant), y-axis = alpha(k)
-                u_hill_axis = charges_sorted_desc[ks_h - 1]  # seuils correspondant à k excédances
-                axes_s[0].plot(u_hill_axis, hills_h, color="#1a1a1a", lw=1.5, label="Hill alpha(k)")
-                axes_s[0].axvline(u_gert, color="#ef4444", ls="--", lw=1.5,
-                                   label=f"Gertensgarbe u={u_gert:,.0f}")
-                u_mod = float(st.session_state.get("seuil_est", 0))
-                if u_mod > 0:
-                    axes_s[0].axvline(u_mod, color="#3b82f6", ls=":", lw=1.5,
-                                       label=f"Seuil modélis. u2={u_mod:,.0f}")
-                axes_s[0].set_xlabel("Seuil u (MAD)")
-                axes_s[0].set_ylabel("alpha(k)")
-                axes_s[0].set_title("Hill Plot — chercher zone stable")
-                axes_s[0].legend(fontsize=7); axes_s[0].grid(alpha=0.3)
+                # ── (1) Hill plot ──
+                ax1 = axes[0]
+                ax1.plot(k_ok, h_ok, color="black", lw=1.2)
+                ax1.fill_between(ks[ok], ci_low[ok], ci_up[ok],
+                                 color="steelblue", alpha=0.25, label="IC 95 %")
+                ax1.axvline(k_gert, color="red", ls="--", lw=2,
+                            label=f"k = {k_gert}")
+                ax1.set_xlabel("Order Statistics")
+                ax1.set_ylabel("Tail Index")
+                ax1.set_title("Hill Plot")
+                ax1.legend(fontsize=8)
+                ax1.grid(alpha=0.2, linestyle="--")
 
-                # Gertensgarbe overlay
-                ax2 = axes_s[0].twinx()
-                ax2.plot(u_hill_axis[:len(s_prog)], s_prog, color="#2d8a4e", lw=1, alpha=0.5, label="S progressif")
-                ax2.plot(u_hill_axis[:len(s_reg)],  s_reg,  color="#f59e0b", lw=1, alpha=0.5, label="S régressif")
-                ax2.set_ylabel("Statistiques Gertensgarbe", fontsize=7)
-                ax2.legend(fontsize=6, loc="upper right")
+                # ── (2) MEF — cercles ouverts, style meplot(X) ──
+                ax2 = axes[1]
+                ax2.scatter(u_mef[valid_mef], mef[valid_mef],
+                            s=30, facecolors="none", edgecolors="black",
+                            linewidths=0.8)
+                ax2.axvline(s_mef, color="red", ls="--", lw=2,
+                            label=f"s = {s_mef:,.0f}")
+                ax2.set_xlabel("Threshold")
+                ax2.set_ylabel("Mean Excess")
+                ax2.set_title("Mean Excess Function")
+                ax2.xaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+                ax2.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+                ax2.ticklabel_format(axis='both', style='sci', scilimits=(0, 0))
+                ax2.legend(fontsize=8)
+                ax2.grid(alpha=0.2, linestyle="--")
 
-                # MEF
-                axes_s[1].plot(u_vals, mef_vals, color="#2d8a4e", lw=2)
-                axes_s[1].axvline(u_gert, color="#ef4444", ls="--", lw=1.5,
-                                   label=f"Gertensgarbe u={u_gert:,.0f}")
-                if u_mod > 0:
-                    axes_s[1].axvline(u_mod, color="#3b82f6", ls=":", lw=1.5, label="Seuil modélis. u2")
-                axes_s[1].set_xlabel("Seuil u (MAD)")
-                axes_s[1].set_ylabel("e(u) = E[X−u | X>u]")
-                axes_s[1].set_title("Mean Excess Function\nlinéaire croissante = queue Pareto")
-                axes_s[1].legend(fontsize=7); axes_s[1].grid(alpha=0.3)
-
-                # Histogramme sinistres
-                axes_s[2].hist(charges_all, bins=40, color="#2d8a4e", alpha=0.6, density=True)
-                axes_s[2].axvline(u_gert, color="#ef4444", ls="--", lw=1.5,
-                                   label=f"Gertensgarbe u={u_gert:,.0f}")
-                if u_mod > 0:
-                    axes_s[2].axvline(u_mod, color="#3b82f6", ls=":", lw=1.5, label="Seuil modélis.")
-                axes_s[2].set_xlabel("Montant (MAD)")
-                axes_s[2].set_title("Distribution des sinistres")
-                axes_s[2].legend(fontsize=7); axes_s[2].grid(alpha=0.3)
+                # ── (3) Gertensgarbe — deux courbes croisées ──
+                ax3 = axes[2]
+                ax3.plot(k_ok, u_fwd, color="black", lw=1.5, label="U progressif")
+                ax3.plot(k_ok, u_bwd, color="black", lw=1.5, ls="--",
+                         label="U régressif")
+                ax3.axhline(0, color="black", lw=0.6, alpha=0.4)
+                ax3.axvline(k_gert, color="red", ls="--", lw=2,
+                            label=f"k* = {k_gert}  (u ≈ {u_gert:,.0f})")
+                ax3.set_xlabel("Order Statistics")
+                ax3.set_ylabel("Statistique U(k)")
+                ax3.set_title("Gertensgarbe-Werner")
+                ax3.legend(fontsize=8)
+                ax3.grid(alpha=0.2, linestyle="--")
 
                 plt.tight_layout()
-                st.pyplot(fig_sel); plt.close()
+                st.pyplot(fig); plt.close()
 
                 st.info(
-                    f"Suggestion Gertensgarbe : u = {u_gert:,.0f} MAD "
-                    f"(k = {k_gert}, alpha = {alpha_gert:.4f}) — "
-                    "Vérifiez la stabilité sur le Hill plot et la linéarité sur le MEF avant de valider."
+                    f"Gertensgarbe → k* = {k_gert}  |  u suggéré = {u_gert:,.0f} MAD  |  "
+                    f"α = {alpha_gert:.4f}  |  "
+                    "Cherchez la zone stable du Hill et la linéarité du MEF pour confirmer u."
                 )
 
             # ════════════════════════════════════════════════
