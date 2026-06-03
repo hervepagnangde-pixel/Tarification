@@ -1049,30 +1049,146 @@ def selectionner_seuil_pareto(X, D):
     return pd.DataFrame(resultats), seuils.get("p80", 0.80*D)
 
 
-def identifier_sinistres_majeurs(df_proj, gnpi, D, C_tranche,
-                                  nb_annees_obs=10, retour_ans=20, percentile_seuil=99.5):
-    X = df_proj['Sprime_ultime'].values; X = X[X > 0]
-    Pm = np.percentile(X, percentile_seuil)
-    mask_maj = df_proj['Sprime_ultime'] >= Pm
-    df_majeurs = df_proj[mask_maj].copy(); df_courants = df_proj[~mask_maj].copy()
-    seuil_model = 0.80 * D
-    X_model = X[(X >= seuil_model) & (X < Pm)]
-    if len(X_model) < 3: X_model = X[X >= seuil_model]
-    t_min = np.min(X_model) if len(X_model) > 0 else seuil_model
-    n_model = len(X_model)
-    alpha_hat = n_model / np.sum(np.log(X_model / t_min)) if n_model > 0 else 1.5
-    def charge_nette(x): return min(max(x - D, 0), C_tranche)
+def identifier_sinistres_majeurs_gpd(df_proj, gnpi, tranches_input,
+                                      nb_annees_obs=10, retour_ans=20,
+                                      u=None, pct_seuil=0.80):
+    """
+    Identification des sinistres majeurs par TVE — fit GPD (scipy).
+    Traduction exacte du code R evir::gpd.
+    Chargement calculé par tranche : chargement = sum((1/T) * min(max(X-D,0),C) / GNPI)
+
+    Paramètres
+    ----------
+    u            : seuil TVE (si None → p80 × priorité travaillante)
+    pct_seuil    : percentile pour calcul automatique du seuil
+    retour_ans   : période de retour pour Pm
+    nb_annees_obs: nombre d'années d'observation
+    """
+    from scipy import stats
+
+    charges = df_proj['Sprime_ultime'].values
+    charges = charges[charges > 0]
+    n_total = len(charges)
+
+    # ── Seuil TVE ──
+    if u is None:
+        D_trav = next((t['priorite'] for t in tranches_input if t['type'] == 'travaillante'),
+                      charges[charges > 0].mean())
+        u = pct_seuil * D_trav
+
+    # ── Excédances au-dessus du seuil ──
+    excesses = charges[charges >= u] - u
+    n_excesses = len(excesses)
+
+    if n_excesses < 5:
+        # Fallback si trop peu de données : Pm = p99.5
+        Pm = float(np.percentile(charges, 99.5))
+        xi = 0.0; sigma_gpd = float(np.std(excesses)) if n_excesses > 0 else 1.0
+        survie = n_excesses / max(n_total, 1)
+        freq_annuelle = n_total / nb_annees_obs
+        m = retour_ans * freq_annuelle
+        fit_ok = False
+    else:
+        # ── Fit GPD (xi=forme, loc=0 fixé, sigma=échelle) ──
+        xi, loc_gpd, sigma_gpd = stats.genpareto.fit(excesses, floc=0)
+        survie       = n_excesses / n_total
+        freq_annuelle = n_total / nb_annees_obs
+        m             = retour_ans * freq_annuelle
+
+        # ── Niveau de retour Pm (formule R evir) ──
+        ms = m * survie
+        if abs(xi) > 1e-10:
+            Pm = u + (sigma_gpd / xi) * (ms**xi - 1)
+        else:
+            Pm = u + sigma_gpd * np.log(ms)
+        fit_ok = True
+
+    Pm = max(Pm, float(np.percentile(charges, 95)))  # garde-fou minimal
+
+    # ── Séparation majeurs / courants ──
+    mask_maj    = df_proj['Sprime_ultime'] >= Pm
+    df_majeurs  = df_proj[mask_maj].copy()
+    df_courants = df_proj[~mask_maj].copy()
+
+    # ── Chargements par tranche (formule R) ──
+    # chargement_tranche = sum((1/T) * min(max(X-D,0),C)) / GNPI
+    chargements_par_tranche = {}
+    for t in tranches_input:
+        D = t['priorite']; C = t['portee']
+        if len(df_majeurs) > 0:
+            X_maj = df_majeurs['Sprime_ultime'].values
+            charges_nettes = np.minimum(np.maximum(X_maj - D, 0), C)
+            chargement_t   = float(np.sum((1.0 / retour_ans) * charges_nettes) / gnpi)
+        else:
+            charges_nettes = np.array([])
+            chargement_t   = 0.0
+        chargements_par_tranche[t['nom']] = {
+            'chargement': round(chargement_t, 8),
+            'type':        t['type'],
+            'D':           D, 'C': C,
+            'charges_nettes': charges_nettes.tolist(),
+        }
+
+    # ── Tableau détaillé sinistres majeurs ──
     rows_charg = []
     for _, row in df_majeurs.iterrows():
-        x = row['Sprime_ultime']; cn = charge_nette(x); chg = (1/retour_ans) * cn / gnpi
-        rows_charg.append({"Annee": row.get('annee_surv','—'), "Montant_stab": round(x),
-                            "Charge_nette": round(cn), "p_j": round(1/retour_ans, 4),
-                            "Chargement": round(chg, 6)})
+        x = row['Sprime_ultime']
+        row_d = {"Annee": row.get('annee_surv', '—'), "Montant_stab": round(x),
+                 "p_j": round(1.0/retour_ans, 4)}
+        for t in tranches_input:
+            D = t['priorite']; C = t['portee']
+            cn  = float(min(max(x - D, 0), C))
+            chg = (1.0/retour_ans) * cn / gnpi
+            row_d[f"Ck {t['nom'][:8]}"]   = round(cn, 0)
+            row_d[f"Charg {t['nom'][:8]}"] = round(chg, 6)
+        rows_charg.append(row_d)
     df_chargements = pd.DataFrame(rows_charg)
-    chargement_total = df_chargements['Chargement'].sum() if len(df_chargements) > 0 else 0.0
-    return {"df_majeurs": df_majeurs, "df_courants": df_courants, "Pm": Pm,
-            "chargement": chargement_total, "df_chargements": df_chargements,
-            "alpha": alpha_hat, "n_majeurs": len(df_majeurs), "n_courants": len(df_courants)}
+
+    # Chargement de référence = tranche travaillante (compat. code existant)
+    chargement_ref = next(
+        (v['chargement'] for k,v in chargements_par_tranche.items() if v['type']=='travaillante'),
+        sum(v['chargement'] for v in chargements_par_tranche.values()))
+
+    # ── Diagnostics GPD ──
+    gpd_diag = {
+        "u": round(float(u), 0),
+        "xi": round(float(xi), 4),
+        "sigma_gpd": round(float(sigma_gpd), 2),
+        "survie_P_X_gt_u": round(float(survie), 6),
+        "n_excesses": int(n_excesses),
+        "freq_annuelle": round(float(freq_annuelle), 4),
+        "m": round(float(m), 2),
+        "Pm": round(float(Pm), 0),
+        "fit_ok": fit_ok,
+        "excesses": excesses.tolist() if fit_ok else [],
+    }
+
+    return {
+        "df_majeurs":              df_majeurs,
+        "df_courants":             df_courants,
+        "Pm":                      float(Pm),
+        "chargement":              chargement_ref,
+        "chargements_par_tranche": chargements_par_tranche,
+        "df_chargements":          df_chargements,
+        "alpha":                   float(-1/xi) if abs(xi) > 1e-4 else 1.5,
+        "n_majeurs":               int(len(df_majeurs)),
+        "n_courants":              int(len(df_courants)),
+        "gpd_diag":                gpd_diag,
+    }
+
+
+# Alias pour compat. code existant
+def identifier_sinistres_majeurs(df_proj, gnpi, D, C_tranche,
+                                  nb_annees_obs=10, retour_ans=20, percentile_seuil=99.5):
+    """Wrapper de compatibilité — appelle la version GPD complète."""
+    tranches_compat = [{"nom": "Tranche", "type": "travaillante",
+                         "priorite": D, "portee": C_tranche}]
+    return identifier_sinistres_majeurs_gpd(
+        df_proj, gnpi, tranches_compat,
+        nb_annees_obs=nb_annees_obs, retour_ans=retour_ans,
+        pct_seuil=0.995)
+
+
 
 
 # ════════════════════════════════════════════
@@ -1962,9 +2078,15 @@ with tab2:
             coeffs = coeffs_raw[(coeffs_raw > 0) & np.isfinite(coeffs_raw)]
 
             C_trav = next((t['portee'] for t in tranches_input if t['type'] == 'travaillante'), 13_000_000)
-            res_maj = identifier_sinistres_majeurs(df_proj=df_proj, gnpi=gnpi, D=D_trav, C_tranche=C_trav,
-                nb_annees_obs=df_proj['annee_surv'].nunique(), retour_ans=20)
+            # ── Identification sinistres majeurs par TVE GPD (toutes tranches) ──
+            res_maj = identifier_sinistres_majeurs_gpd(
+                df_proj=df_proj, gnpi=gnpi, tranches_input=tranches_input,
+                nb_annees_obs=df_proj['annee_surv'].nunique(),
+                retour_ans=20, pct_seuil=pct_seuil)
             df_seuils, _ = selectionner_seuil_pareto(X=df_proj['Sprime_ultime'].values, D=D_trav)
+
+            # Chargements par tranche → stockés pour Tab3 et agents
+            chargements_par_tranche = res_maj.get("chargements_par_tranche", {})
 
             progress.progress(100, text="Terminé !")
             st.session_state.update({
@@ -1976,9 +2098,10 @@ with tab2:
                 "seuil_stabilisation": seuil_stabilisation,
                 "df_gnpis_df": df_gnpis_df, "df_facteurs": df_facteurs_df,
                 "res_majeurs": res_maj, "df_seuils_pareto": df_seuils,
-                "chargement_majeurs": res_maj["chargement"],
+                "chargement_majeurs":          res_maj["chargement"],
+                "chargements_par_tranche":     chargements_par_tranche,
             })
-            st.success("✅ Transformation terminée !")
+            st.success("Transformation terminée !")
 
     if "df_liq" in st.session_state:
         # ── DIAGNOSTIC — ce que le parser a réellement lu ──
@@ -2029,27 +2152,118 @@ with tab2:
         c3b.metric("Années",       st.session_state['df_liq']['annee_surv'].nunique())
         branch_label = "Longue" if st.session_state.get("is_long") else "Courte"
         st.info(f"🌿 Branche : **{branch_label}** | I_cotation({st.session_state.get('annee_cotation')}) = {st.session_state.get('I_cotation',1):.4f}")
-        st.info(f"📐 Seuil : {st.session_state.get('seuil_est',0):,.0f} | Pm P99.5 : {st.session_state.get('Pm_proxy',0):,.0f} | Alpha : {st.session_state.get('alpha_est',0):.4f} | Lambda : {st.session_state.get('lambda_est',0):.4f}")
+        st.info(f"Seuil : {st.session_state.get('seuil_est',0):,.0f} | Pm P99.5 : {st.session_state.get('Pm_proxy',0):,.0f} | Alpha : {st.session_state.get('alpha_est',0):.4f} | Lambda : {st.session_state.get('lambda_est',0):.4f}")
         if "res_majeurs" in st.session_state:
             res = st.session_state["res_majeurs"]
+            diag = res.get("gpd_diag", {})
+
+            # ── Métriques clés ──
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Sinistres majeurs",  res["n_majeurs"])
             c2.metric("Sinistres courants", res["n_courants"])
-            c3.metric("Pm (niveau retour)", f"{res['Pm']:,.0f} MAD")
-            c4.metric("Chargement majeurs", f"{res['chargement']:.4%}")
-            with st.expander("📊 Détail sinistres majeurs"):
-                st.dataframe(res["df_chargements"], use_container_width=True)
+            c3.metric("Pm — niveau de retour", f"{res['Pm']:,.0f} MAD")
+            c4.metric("Chargement trav.", f"{res['chargement']:.4%}")
+
+            # ── Résumé GPD ──
+            with st.expander("Analyse TVE — GPD · Paramètres · Diagnostics", expanded=True):
+                st.markdown("#### Paramètres GPD ajustés (évir::gpd en Python)")
+                c1g, c2g, c3g, c4g, c5g = st.columns(5)
+                c1g.metric("Seuil u (MAD)",    f"{diag.get('u',0):,.0f}")
+                c2g.metric("xi (forme)",         f"{diag.get('xi',0):.4f}")
+                c3g.metric("sigma (échelle)",    f"{diag.get('sigma_gpd',0):.0f}")
+                c4g.metric("N excédances",       diag.get('n_excesses',0))
+                c5g.metric("Pm retour " + str(20) + " ans", f"{diag.get('Pm',0):,.0f}")
+
+                # Tableau résumé (équivalent cat(sprintf...) du code R)
+                tableau_resultats([{
+                    "Indicateur": k, "Valeur": str(v)
+                } for k,v in {
+                    "n_total":           diag.get("n_excesses","—"),
+                    "Seuil u (MAD)":     f"{diag.get('u',0):,.0f}",
+                    "xi (forme GPD)":    f"{diag.get('xi',0):.4f}",
+                    "sigma (échelle)":   f"{diag.get('sigma_gpd',0):.2f} MAD",
+                    "P(X > u)":          f"{diag.get('survie_P_X_gt_u',0):.6f}",
+                    "Obs. > u":          diag.get("n_excesses",0),
+                    "Fréq. annuelle":    f"{diag.get('freq_annuelle',0):.4f} sin/an",
+                    "m (obs. retour)":   f"{diag.get('m',0):.2f}",
+                    "Pm (retour 20 ans)":f"{diag.get('Pm',0):,.0f} MAD",
+                    "Nb majeurs":        res["n_majeurs"],
+                    "Nb courants":       res["n_courants"],
+                }.items()])
+
+                # ── PP-plot et QQ-plot GPD ──
+                excesses = np.array(diag.get("excesses", []))
+                if len(excesses) >= 5:
+                    import matplotlib.pyplot as plt
+                    from scipy import stats as _sp
+                    xi_v = float(diag.get("xi", 0))
+                    sig_v = float(diag.get("sigma_gpd", 1))
+                    pp = np.arange(1, len(excesses)+1) / (len(excesses)+1)
+                    exc_sorted = np.sort(excesses)
+
+                    fig_diag, axes = plt.subplots(1, 2, figsize=(10, 4))
+                    fig_diag.patch.set_facecolor('#f5f5f5')
+
+                    # PP-plot
+                    cdf_gpd = _sp.genpareto.cdf(exc_sorted, xi_v, loc=0, scale=sig_v)
+                    axes[0].scatter(pp, cdf_gpd, color="#2d8a4e", s=20, alpha=0.7)
+                    axes[0].plot([0,1],[0,1],"r--",lw=1.5)
+                    axes[0].set_xlabel("Probabilités empiriques")
+                    axes[0].set_ylabel("Probabilités GPD théoriques")
+                    axes[0].set_title("PP-plot GPD"); axes[0].grid(alpha=0.3)
+
+                    # QQ-plot
+                    q_gpd = _sp.genpareto.ppf(pp, xi_v, loc=0, scale=sig_v)
+                    axes[1].scatter(q_gpd, exc_sorted, color="#2d8a4e", s=20, alpha=0.7)
+                    min_v = min(q_gpd.min(), exc_sorted.min())
+                    max_v = max(q_gpd.max(), exc_sorted.max())
+                    axes[1].plot([min_v,max_v],[min_v,max_v],"r--",lw=1.5)
+                    axes[1].set_xlabel("Quantiles GPD théoriques (MAD)")
+                    axes[1].set_ylabel("Quantiles empiriques (MAD)")
+                    axes[1].set_title("QQ-plot GPD"); axes[1].grid(alpha=0.3)
+
+                    plt.tight_layout()
+                    st.pyplot(fig_diag); plt.close()
+                    st.caption("Alignement sur la diagonale = bon ajustement GPD. Déviation en queue haute = sous-estimation des extrêmes.")
+
+            # ── Chargements par tranche ──
+            charg_par_t = res.get("chargements_par_tranche", {})
+            if charg_par_t:
+                with st.expander("Chargements sinistres majeurs par tranche", expanded=True):
+                    st.caption("Chargement = sum((1/T) × min(max(X−D, 0), C)) / GNPI | T = période de retour 20 ans")
+                    rows_ct = []
+                    for nom_t, ct in charg_par_t.items():
+                        rows_ct.append({
+                            "Tranche": nom_t, "Type": ct["type"],
+                            "Priorité D (MAD)": f"{ct['D']:,.0f}",
+                            "Portée C (MAD)":   f"{ct['C']:,.0f}",
+                            "Pm (MAD)":         f"{res['Pm']:,.0f}",
+                            "Nb majeurs":        res["n_majeurs"],
+                            "Chargement":       f"{ct['chargement']:.6f}",
+                            "Chargement %":     f"{ct['chargement']:.4%}",
+                        })
+                    tableau_resultats(rows_ct)
+                    st.info("Ces chargements sont utilisés automatiquement dans le Burning Cost de chaque tranche.")
+
+            # ── Tableau détaillé sinistres majeurs ──
+            with st.expander("Détail sinistres majeurs (data_extremes)"):
+                if len(res["df_chargements"]) > 0:
+                    st.dataframe(res["df_chargements"], use_container_width=True)
+                else:
+                    st.info("Aucun sinistre au-dessus de Pm.")
+
             if "df_seuils_pareto" in st.session_state:
-                with st.expander("📊 Sélection seuil Pareto (TVE)"):
+                with st.expander("Sélection seuil Pareto (TVE)"):
                     st.dataframe(st.session_state["df_seuils_pareto"], use_container_width=True)
-        with st.expander("📊 Triangle — vérification stabilisation"):
+
+        with st.expander("Triangle — vérification stabilisation"):
             cols_show = ['sinistre_id','annee_surv','annee_reg','dev','total','I_surv','I_reg','ratio_check','Sk','S_prime_k','coeff_stab']
             st.dataframe(st.session_state["df_liq"][[c for c in cols_show if c in st.session_state["df_liq"].columns]].head(50), use_container_width=True)
         if "df_facteurs" in st.session_state:
-            with st.expander("📊 Facteurs Chain Ladder"):
+            with st.expander("Facteurs Chain Ladder"):
                 st.dataframe(st.session_state["df_facteurs"], use_container_width=True)
         if "df_proj" in st.session_state:
-            with st.expander("📊 Projections"):
+            with st.expander("Projections"):
                 st.dataframe(st.session_state["df_proj"].head(20), use_container_width=True)
 
 # ════════════════════════════════════════════
@@ -2098,7 +2312,11 @@ with tab3:
                     charge_moy  = df_ch["charge"].mean()
                     charges_nonzero = [c for c in df_ch["charge"].values if c > 0]
                     n_ann_nonzero   = len(charges_nonzero)
-                    charg_maj = st.session_state.get("chargement_majeurs", 0.0)
+                    charg_maj = st.session_state.get(
+                        "chargements_par_tranche", {}).get(
+                        t_info["nom"], {}).get(
+                        "chargement",
+                        st.session_state.get("chargement_majeurs", 0.0))
                     # R2 — Moins de 3 années non nulles → BC = 0 (données insuffisantes)
                     if n_ann_nonzero < 3:
                         taux_pur = taux_risque = taux_technique = 0.0
