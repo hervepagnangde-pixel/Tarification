@@ -2212,50 +2212,59 @@ with tab5:
                 st.toast(f"⚠️ Sauvegarde DB : {_e}", icon="⚠️")
 
     if "resultats_mkt" in st.session_state and "df_mkt_clean" in st.session_state:
-        rmt = st.session_state["resultats_mkt"]
-        dmc = st.session_state["df_mkt_clean"]
+        rmt = st.session_state.get("resultats_mkt", [])
+        # Vérification du format : resultats_mkt doit contenir des dicts avec clé "quantile"
+        # (pas taux_mkt_final qui a un format différent)
+        if rmt and not isinstance(rmt[0], dict):
+            rmt = []
+        if rmt and "quantile" not in rmt[0]:
+            rmt = []
+        dmc = st.session_state.get("df_mkt_clean")
         def predict_rol(x_norm, a, b): return a * (x_norm ** (-b))
-        rows_recap = []
-        for r in rmt:
-            row = {"Q": f"Q{int(r['quantile']*100)}", "N": r["n_points"],
-                   "a": f"{r['a']:.5f}", "b": f"{r['b']:.4f}",
-                   "R2": f"{r['r2']:.4f}", "R2ok": "OK" if r["r2_ok"] else "faible",
-                   "Score": f"{r['score']:.4f}"}
-            for tt in r.get("taux_tranches",[]):
-                row[tt["tranche"]] = f"{tt['taux']:.4%}" if tt["taux"] > 0 else "NUL"
-            rows_recap.append(row)
-        st.subheader("📊 Comparaison ajustements — ROL = a x x^(-b)  |  x = (D+C/2)/GNPI")
-        tableau_resultats(rows_recap)
-        best = rmt[0]
-        st.success(f"Meilleur : Q{int(best['quantile']*100)} — a={best['a']:.5f}, b={best['b']:.4f} | R2={best['r2']:.4f} | Score={best['score']:.4f}")
+        if not rmt or dmc is None:
+            st.info("Market curve non disponible pour cette session. Lancez le calcul dans l'onglet Market Curve.")
+        else:
+            rows_recap = []
+            for r in rmt:
+                row = {"Q": f"Q{int(r['quantile']*100)}", "N": r["n_points"],
+                       "a": f"{r['a']:.5f}", "b": f"{r['b']:.4f}",
+                       "R2": f"{r['r2']:.4f}", "R2ok": "OK" if r["r2_ok"] else "faible",
+                       "Score": f"{r['score']:.4f}"}
+                for tt in r.get("taux_tranches",[]):
+                    row[tt["tranche"]] = f"{tt['taux']:.4%}" if tt["taux"] > 0 else "NUL"
+                rows_recap.append(row)
+            st.subheader("Comparaison ajustements — ROL = a x x^(-b)  |  x = (D+C/2)/GNPI")
+            tableau_resultats(rows_recap)
+            best = rmt[0]
+            st.success(f"Meilleur : Q{int(best['quantile']*100)} — a={best['a']:.5f}, b={best['b']:.4f} | R2={best['r2']:.4f} | Score={best['score']:.4f}")
 
-        choix_q = st.selectbox("Choisir la combinaison",
-            options=[f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} R2={r['r2']:.4f} Score={r['score']:.4f}" for r in rmt], index=0)
-        idx_choix = [f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} R2={r['r2']:.4f} Score={r['score']:.4f}" for r in rmt].index(choix_q)
-        choix = rmt[idx_choix]
+            choix_q = st.selectbox("Choisir la combinaison",
+                options=[f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} R2={r['r2']:.4f} Score={r['score']:.4f}" for r in rmt], index=0)
+            idx_choix = [f"Q{int(r['quantile']*100)} — a={r['a']:.5f} b={r['b']:.4f} R2={r['r2']:.4f} Score={r['score']:.4f}" for r in rmt].index(choix_q)
+            choix = rmt[idx_choix]
 
-        x_all = dmc['midpoints'].values; y_all = dmc['ROLs'].values
-        x_range = np.linspace(min(x_all), max(x_all), 300)
-        y_fit = predict_rol(x_range, choix['a'], choix['b'])
-        fig, ax = plt.subplots(figsize=(10, 5))
-        fig.patch.set_facecolor('#f5f5f5'); ax.set_facecolor('#fafafa')
-        ax.scatter(x_all, y_all, color='#2d8a4e', s=60, zorder=5, alpha=0.7, label='Données marché')
-        ax.plot(x_range, y_fit, color='#1a1a1a', lw=2.5,
-                label=f"ROL = {choix['a']:.5f} x x^(-{choix['b']:.4f}) | R2={choix['r2']:.4f}")
-        ax.set_xlabel('Midpoint normalisé x = (D+C/2)/GNPI'); ax.set_ylabel('ROL')
-        ax.set_title('Market Curve — ROL = a x x^(-b)', fontweight='bold', color='#1a1a1a')
-        ax.legend(); ax.grid(alpha=0.3, linestyle='--')
-        st.pyplot(fig)
+            x_all = dmc['midpoints'].values; y_all = dmc['ROLs'].values
+            x_range = np.linspace(min(x_all), max(x_all), 300)
+            y_fit = predict_rol(x_range, choix['a'], choix['b'])
+            fig, ax = plt.subplots(figsize=(10, 5))
+            fig.patch.set_facecolor('#f5f5f5'); ax.set_facecolor('#fafafa')
+            ax.scatter(x_all, y_all, color='#2d8a4e', s=60, zorder=5, alpha=0.7, label='Données marché')
+            ax.plot(x_range, y_fit, color='#1a1a1a', lw=2.5,
+                    label=f"ROL = {choix['a']:.5f} x x^(-{choix['b']:.4f}) | R2={choix['r2']:.4f}")
+            ax.set_xlabel('Midpoint normalisé x = (D+C/2)/GNPI'); ax.set_ylabel('ROL')
+            ax.set_title('Market Curve — ROL = a x x^(-b)', fontweight='bold', color='#1a1a1a')
+            ax.legend(); ax.grid(alpha=0.3, linestyle='--')
+            st.pyplot(fig)
 
-        st.subheader("📊 Taux marché retenus")
-        tableau_resultats([{
-            "Tranche": tt["tranche"], "Type": tt["type"],
-            "x=(D+C/2)/GNPI": f"{tt['x_norm']:.5f}",
-            "ROL estimé": f"{tt['rol']:.4%}", "Taux pur": f"{tt['taux_pur']:.4%}",
-            "Taux tech.": f"{tt['taux_tech']:.4%}",
-            "Taux final": f"{tt['taux']:.4%}" if tt["taux"] > 0 else "NUL"
-        } for tt in choix.get("taux_tranches",[])])
-        st.session_state["taux_mkt_final"] = choix.get("taux_tranches",[])
+            st.subheader("Taux marché retenus")
+            tableau_resultats([{
+                "Tranche": tt["tranche"], "Type": tt["type"],
+                "x=(D+C/2)/GNPI": f"{tt['x_norm']:.5f}",
+                "ROL estimé": f"{tt['rol']:.4%}", "Taux pur": f"{tt['taux_pur']:.4%}",
+                "Taux tech.": f"{tt['taux_tech']:.4%}",
+                "Taux final": f"{tt['taux']:.4%}" if tt["taux"] > 0 else "NUL"
+            } for tt in choix.get("taux_tranches",[])])
+            st.session_state["taux_mkt_final"] = choix.get("taux_tranches",[])
 
         st.divider()
         guide_prompt("Market Curve",
