@@ -1544,21 +1544,63 @@ with tab2:
             st.success(f"✅ Extraction OK — {len(records):,} observations | {len(annees_surv_uniq)} années de survenance ({annees_surv_uniq[0]}→{annees_surv_uniq[-1]}) | {sum(sinistre_counter.values()):,} sinistres")
 
             df_liq = pd.DataFrame(records)
-            progress.progress(50, text="As-If...")
+            # ── Trier par sinistre et développement croissant (obligatoire pour le décumul) ──
+            df_liq = df_liq.sort_values(['sinistre_id', 'dev']).reset_index(drop=True)
+
+            progress.progress(48, text="Indices...")
+            df_liq['I_reg']  = df_liq['annee_reg'].apply(get_indice)
+            df_liq['I_surv'] = df_liq['annee_surv'].apply(get_indice)
+            # I_ultime gardé pour affichage / compatibilité
             df_liq['annee_ultime'] = df_liq['annee_surv'] + 9
             df_liq['I_ultime']     = df_liq['annee_ultime'].apply(get_indice)
-            df_liq['I_reg']        = df_liq['annee_reg'].apply(get_indice)
-            df_liq['I_surv']       = df_liq['annee_surv'].apply(get_indice)
-            df_liq['Sk']           = df_liq['total'] * (df_liq['I_ultime'] / df_liq['I_reg'])
 
-            progress.progress(55, text="Stabilisation...")
+            progress.progress(50, text="Décumul → As-If sur incréments...")
+            # ── ÉTAPE 1 : DÉCUMULER ──
+            # Le triangle est cumulatif : total[dev] = PAID+OS cumulés jusqu'à dev
+            # On calcule l'incrément entre deux périodes consécutives
+            df_liq['prev_total'] = df_liq.groupby('sinistre_id')['total'].shift(1).fillna(0)
+            df_liq['increment']  = (df_liq['total'] - df_liq['prev_total']).clip(lower=0)
+            # Note : clip(lower=0) — un incrément négatif (réduction de réserve) → 0
+            # pour éviter les montants négatifs dans la modélisation
+
+            # ── ÉTAPE 2 : AS-IF SUR L'INCRÉMENT ──
+            # Chaque paiement/variation de réserve est revalué à l'année de cotation
+            # inc_asif = inc × (I_cotation / I_reg_au_moment_du_paiement)
+            df_liq['inc_asif'] = df_liq['increment'] * (I_cotation_val / df_liq['I_reg'])
+
+            progress.progress(55, text="Stabilisation sur incréments...")
+            # ── ÉTAPE 3 : STABILISATION SUR L'INCRÉMENT ──
+            # Si I_reg/I_surv ≥ 1+seuil → le réassureur peut ajuster sa priorité
+            # On neutralise cette inflation en appliquant I_surv/I_reg
             df_liq['ratio_check'] = df_liq['I_reg'] / df_liq['I_surv']
             mask_stab = df_liq['ratio_check'] >= (1.0 + seuil_stabilisation)
-            df_liq['S_prime_k'] = np.where(mask_stab, df_liq['Sk'] * (df_liq['I_surv'] / df_liq['I_reg']), df_liq['Sk'])
-            df_liq['coeff_stab'] = np.where(df_liq['S_prime_k'] > 0, df_liq['Sk'] / df_liq['S_prime_k'], 1.0)
+            df_liq['inc_stab'] = np.where(
+                mask_stab,
+                df_liq['inc_asif'] * (df_liq['I_surv'] / df_liq['I_reg']),
+                df_liq['inc_asif']
+            )
             n_stab = mask_stab.sum()
             annees_reg_stab = sorted(df_liq[mask_stab]['annee_reg'].unique().tolist())
-            st.info(f"📊 Stabilisation | Seuil : {seuil_stabilisation*100:.0f}% | Obs. : {n_stab} | Années règlement : {annees_reg_stab}")
+            st.info(f"📊 Décumul + Stab | Seuil : {seuil_stabilisation*100:.0f}% | Incréments stab. : {n_stab} | Années règlement : {annees_reg_stab}")
+
+            # ── ÉTAPE 4 : RECUMULER ──
+            # Sk      = cumul des incréments As-If
+            # S_prime_k = cumul des incréments stabilisés
+            df_liq['Sk']        = df_liq.groupby('sinistre_id')['inc_asif'].cumsum()
+            df_liq['S_prime_k'] = df_liq.groupby('sinistre_id')['inc_stab'].cumsum()
+
+            # coeff_stab = Sk / S_prime_k : utilisé dans le BC pour convertir S'ultime → Sk
+            df_liq['coeff_stab'] = np.where(
+                df_liq['S_prime_k'] > 0,
+                df_liq['Sk'] / df_liq['S_prime_k'],
+                1.0
+            )
+
+            # Vérification : n sinistres avec incrément négatif (réductions de réserves)
+            n_neg = (df_liq['increment'] < 0).sum()
+            if n_neg > 0:
+                st.warning(f"⚠️ {n_neg} incréments négatifs détectés (réductions de réserves) → mis à 0 pour la modélisation")
+
 
             if is_long:
                 progress.progress(65, text="Chain Ladder...")
@@ -2769,8 +2811,140 @@ class AgentActuarielPython:
         return rows, pt
 
     # ────────────────────────────────────────────
-    # GÉNÉRATION DU RAPPORT TEXTE (sans LLM)
+    # ÉTAPE 6 — 5 VARIANTES DE PROGRAMME OPTIMAL
     # ────────────────────────────────────────────
+    def etape_6_optimisation(self):
+        """
+        Génère 5 variantes de programme basées sur :
+        - Analyse technique (taux, simulation, market curve)
+        - Sensibilité des conditions (AAL, AAD, reconstitutions)
+        - Logique de leader : Partner Re fixe les conditions de référence
+        """
+        self._log("Optimisation", "Génération de 5 variantes de programme — perspective leader")
+        sim_map = {r["tranche"]: r for r in self.resultats_sim}
+        bc_map  = {r["tranche"]: r for r in self.resultats_bc}
+        mkt_map = {r["tranche"]: r for r in self.resultats_mkt}
+
+        def taux_technique_modifie(t_info, taux_pur_ref, coeff_portee=1.0,
+                                    coeff_priorite=1.0, nb_recon_new=None, aal_ratio=None):
+            """Estime le taux technique pour un programme modifié."""
+            portee_new   = t_info["portee"]   * coeff_portee
+            priorite_new = t_info["priorite"] * coeff_priorite
+            # Sensibilité log-log : taux ~ portee^0.6 / priorite^0.35
+            adj = (coeff_portee**0.6) / (coeff_priorite**0.35)
+            # Impact reconstitutions
+            n_rec = nb_recon_new if nb_recon_new is not None else t_info["nb_reconstitutions"]
+            adj_rec = (n_rec / max(t_info["nb_reconstitutions"], 1)) ** 0.3
+            # Impact AAL
+            adj_aal = 1.0
+            if aal_ratio is not None and t_info.get("AAL"):
+                adj_aal = aal_ratio ** 0.2
+            return taux_pur_ref * adj * adj_rec * adj_aal
+
+        variantes = {}
+
+        # ── VARIANTE 1 — Programme de référence (tarif technique) ──
+        v1 = []
+        for t in self.tranches:
+            r = sim_map.get(t["nom"], {})
+            v1.append({**t, "_taux": r.get("taux_technique", 0),
+                       "_prime": self.gnpi * r.get("taux_technique", 0)})
+        variantes["ref"] = {
+            "label": "Programme de référence",
+            "description": "Conditions actuelles — taux techniques issus de la simulation",
+            "angle": "Base de comparaison",
+            "tranches": v1,
+            "prime": sum(t["_prime"] for t in v1)
+        }
+
+        # ── VARIANTE 2 — Optimisation priorité (+10%) ──
+        # Augmenter la priorité réduit l'exposition du réassureur sur les sinistres courants
+        v2 = []
+        for t in self.tranches:
+            t2 = dict(t)
+            t2["priorite"] = round(t["priorite"] * 1.10 / 500_000) * 500_000
+            r = sim_map.get(t["nom"], {})
+            tt = taux_technique_modifie(t, r.get("taux_technique",0), coeff_priorite=1.10)
+            v2.append({**t2, "_taux": tt, "_prime": self.gnpi * tt})
+        variantes["priorite_haute"] = {
+            "label": "Priorité relevée (+10%)",
+            "description": f"Priorité T1 : {self.tranches[0]['priorite']*1.10/1e6:.1f}M MAD — réduit l'exposition sur sinistres courants",
+            "angle": "Protège le réassureur sur la tranche travaillante",
+            "tranches": v2,
+            "prime": sum(t["_prime"] for t in v2)
+        }
+
+        # ── VARIANTE 3 — Portée réduite (−15%) ──
+        # Limite l'engagement maximum par sinistre
+        v3 = []
+        for t in self.tranches:
+            t3 = dict(t)
+            t3["portee"] = round(t["portee"] * 0.85 / 500_000) * 500_000
+            r = sim_map.get(t["nom"], {})
+            tt = taux_technique_modifie(t, r.get("taux_technique",0), coeff_portee=0.85)
+            v3.append({**t3, "_taux": tt, "_prime": self.gnpi * tt})
+        variantes["portee_reduite"] = {
+            "label": "Portée réduite (−15%)",
+            "description": "Réduit l'engagement maximal — adapté si sinistralité catastrophique élevée",
+            "angle": "Limite le MPL (Maximum Possible Loss)",
+            "tranches": v3,
+            "prime": sum(t["_prime"] for t in v3)
+        }
+
+        # ── VARIANTE 4 — Conditions restrictives (AAD relevé + reconstitutions limitées) ──
+        v4 = []
+        for t in self.tranches:
+            t4 = dict(t)
+            # AAD relevé pour filtrer les petits sinistres agrégés
+            if t["type"] == "travaillante":
+                aad_actuel = t.get("AAD") or 0
+                t4["AAD"] = round(max(aad_actuel * 1.25, t["portee"] * 0.15) / 100_000) * 100_000
+            # Reconstitutions limitées à 1 pour les cat
+            if t["type"] == "cat":
+                t4["nb_reconstitutions"] = max(t["nb_reconstitutions"] - 1, 1)
+            r = sim_map.get(t["nom"], {})
+            tt = taux_technique_modifie(t, r.get("taux_technique",0),
+                nb_recon_new=t4["nb_reconstitutions"])
+            v4.append({**t4, "_taux": tt, "_prime": self.gnpi * tt})
+        variantes["conditions_restrictives"] = {
+            "label": "Conditions restrictives",
+            "description": "AAD renforcé + reconstitutions cat limitées — réduit la fréquence de mise en jeu",
+            "angle": "Meilleure rentabilité technique pour le réassureur",
+            "tranches": v4,
+            "prime": sum(t["_prime"] for t in v4)
+        }
+
+        # ── VARIANTE 5 — Programme élargi cédante (portée +15%, priorité −10%) ──
+        # Maximise la protection de la cédante
+        v5 = []
+        for t in self.tranches:
+            t5 = dict(t)
+            t5["portee"]   = round(t["portee"]   * 1.15 / 500_000) * 500_000
+            t5["priorite"] = round(t["priorite"] * 0.90 / 500_000) * 500_000
+            r = sim_map.get(t["nom"], {})
+            tt = taux_technique_modifie(t, r.get("taux_technique",0),
+                coeff_portee=1.15, coeff_priorite=0.90)
+            v5.append({**t5, "_taux": tt, "_prime": self.gnpi * tt})
+        variantes["elargi_cedante"] = {
+            "label": "Programme élargi",
+            "description": "Portée +15%, priorité −10% — protection maximale pour la cédante",
+            "angle": "Proposition cédante si marché favorable / négociation de renouvellement",
+            "tranches": v5,
+            "prime": sum(t["_prime"] for t in v5)
+        }
+
+        # ── Scoring des variantes ──
+        taux_ref = variantes["ref"]["prime"] / self.gnpi if self.gnpi else 0
+        for key, v in variantes.items():
+            taux_v = v["prime"] / self.gnpi if self.gnpi else 0
+            v["taux_global"] = taux_v
+            v["ecart_ref_pts"] = (taux_v - taux_ref) * 100
+            # Score leader : équilibre rendement / protection
+            v["score_leader"] = taux_v - abs(taux_v - taux_ref) * 0.5
+
+        self._log("Optimisation", f"5 variantes générées | Prime ref : {variantes['ref']['prime']:,.0f} MAD")
+        return variantes
+
     def generer_rapport_texte(self):
         taux_global = self.prime_totale / self.gnpi if self.gnpi else 0
         lignes = [
@@ -2825,6 +2999,7 @@ class AgentActuarielPython:
         self.etape_3_controles()
         self.etape_4_market_curve()
         self.etape_5_rapport()
+        self.variantes = self.etape_6_optimisation()
         return self.generer_rapport_texte()
 
 
@@ -2833,52 +3008,50 @@ class AgentActuarielPython:
 # ════════════════════════════════════════════
 
 with tab_agent:
-    section_header("Agent Autonome Python", "Pipeline complet — logique codée, 0 API, fonctionne hors ligne", "🤖")
+    section_header("Agent de Tarification Autonome", "Calcul actuariel complet — BC · Simulation · Market Curve · Optimisation du programme", "")
 
     st.markdown("""<div style="background:linear-gradient(135deg,#0d2b1a,#1a1a1a);border-radius:12px;
         padding:18px 24px;margin-bottom:16px;border:1px solid rgba(45,138,78,0.4)">
         <div style="color:#2d8a4e;font-weight:700;font-size:15px;margin-bottom:8px">
-            ⚡ Agent Python pur — Aucune API, aucun coût, fonctionne hors ligne
+            Séquence de tarification
         </div>
         <div style="color:#ccc;font-size:13px;line-height:1.9">
-            1. Valide les paramètres (alpha, lambda) →
-            2. Calcule le BC (R1/R2) →
-            3. Lance la simulation →
-            4. Contrôle BC vs Sim →
-            5. Construit la market curve cat →
-            6. Génère le rapport avec sélection conservative
-        </div>
-        <div style="color:#888;font-size:12px;margin-top:8px">
-            La logique de décision est entièrement codée en Python — chaque règle est visible et auditable.
+            Validation des paramètres &rarr;
+            Burning Cost (formule &sigma;) &rarr;
+            Simulation Pareto/Poisson &rarr;
+            Contrôles de cohérence &rarr;
+            Market Curve (tranches cat) &rarr;
+            Rapport de tarification &rarr;
+            Optimisation du programme (5 variantes)
         </div></div>""", unsafe_allow_html=True)
 
     # Prérequis
     prereqs = {
-        "Programme validé"   : "tranches_input" in st.session_state or True,
-        "Triangle transformé": "df_proj"         in st.session_state,
-        "Alpha/Lambda calibrés":"alpha_est"      in st.session_state,
+        "Programme"  : True,
+        "Triangle"   : "df_proj" in st.session_state,
+        "Paramètres" : "alpha_est" in st.session_state,
     }
     c1, c2, c3 = st.columns(3)
     for col, (nom_p, ok) in zip([c1,c2,c3], prereqs.items()):
         col.markdown(f"""<div style="background:{'rgba(45,138,78,0.12)' if ok else 'rgba(239,68,68,0.08)'};
             border:1px solid {'#2d8a4e' if ok else '#ef4444'};border-radius:10px;
             padding:12px;text-align:center">
-            <div style="font-size:20px">{'✅' if ok else '❌'}</div>
-            <div style="font-size:11px;font-weight:600;color:{'#2d8a4e' if ok else '#ef4444'};margin-top:4px">{nom_p}</div>
+            <div style="font-size:14px;font-weight:700;color:{'#2d8a4e' if ok else '#ef4444'}">
+                {'Prêt' if ok else 'Requis'}</div>
+            <div style="font-size:11px;color:#aaa;margin-top:2px">{nom_p}</div>
             </div>""", unsafe_allow_html=True)
 
     st.markdown("")
     c_left, c_right = st.columns([2, 1])
     with c_left:
-        n_sim_py = st.number_input("Nb simulations", value=10000, step=5000, min_value=1000, key="nsim_py")
+        n_sim_py = st.number_input("Nombre de simulations", value=10000, step=5000, min_value=1000, key="nsim_py")
     with c_right:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        lancer_py = st.button("▶ Lancer l'agent", type="primary", use_container_width=True,
-                              disabled=not st.session_state.get("df_proj") is not None or
-                                       "df_proj" not in st.session_state)
+        lancer_py = st.button("Lancer la tarification", type="primary", use_container_width=True,
+                              disabled="df_proj" not in st.session_state)
 
     if "df_proj" not in st.session_state:
-        st.warning("⚠️ Transformez d'abord le triangle dans l'onglet Données & Triangle")
+        st.info("Transformez d'abord le triangle dans l'onglet Données & Triangle")
 
     elif lancer_py:
         with st.spinner("⚙️ Pipeline en cours..."):
@@ -2909,19 +3082,22 @@ with tab_agent:
             agent.etape_4_market_curve()
             prog_bar.progress(90, "Rapport...")
             agent.etape_5_rapport()
+            prog_bar.progress(95, "Optimisation du programme...")
+            agent.variantes = agent.etape_6_optimisation()
             rapport_txt = agent.generer_rapport_texte()
-            prog_bar.progress(100, "Terminé !")
+            prog_bar.progress(100, "Terminé.")
 
             # Stocker dans session_state
-            st.session_state["resultats_bc"]   = agent.resultats_bc
-            st.session_state["resultats_sim"]  = agent.resultats_sim
-            st.session_state["taux_mkt_final"] = agent.resultats_mkt
-            st.session_state["df_rapport"]     = pd.DataFrame(agent.rapport_rows)
-            st.session_state["prime_totale"]   = agent.prime_totale
-            st.session_state["agent_py_log"]   = agent.log
-            st.session_state["agent_py_anomalies"] = agent.anomalies
-            st.session_state["agent_py_rapport"]   = rapport_txt
-            st.session_state["agent_py_done"]      = True
+            st.session_state["resultats_bc"]        = agent.resultats_bc
+            st.session_state["resultats_sim"]        = agent.resultats_sim
+            st.session_state["taux_mkt_final"]       = agent.resultats_mkt
+            st.session_state["df_rapport"]           = pd.DataFrame(agent.rapport_rows)
+            st.session_state["prime_totale"]         = agent.prime_totale
+            st.session_state["agent_py_log"]         = agent.log
+            st.session_state["agent_py_anomalies"]   = agent.anomalies
+            st.session_state["agent_py_rapport"]     = rapport_txt
+            st.session_state["agent_py_variantes"]   = agent.variantes
+            st.session_state["agent_py_done"]        = True
 
             # Auto-save
             try:
@@ -2936,70 +3112,118 @@ with tab_agent:
     # ── Affichage des résultats ──
     if st.session_state.get("agent_py_done"):
 
-        # Alertes
+        # ── Alertes
         anomalies = st.session_state.get("agent_py_anomalies", [])
         if anomalies:
-            st.markdown("### 🚨 Alertes détectées")
+            st.markdown("#### Points d'attention")
             for a in anomalies:
                 color = {"CRITIQUE":"#ef4444","WARN":"#f59e0b","INFO":"#3b82f6"}.get(a["niveau"],"#888")
-                st.markdown(f"""<div style="background:rgba(0,0,0,0.04);border-left:4px solid {color};
-                    border-radius:0 8px 8px 0;padding:10px 14px;margin:4px 0;font-size:13px">
-                    {a['icone']} <b>[{a['niveau']}]</b> {a['message']}</div>""",
-                    unsafe_allow_html=True)
+                st.markdown(f"""<div style="border-left:3px solid {color};padding:8px 14px;
+                    margin:3px 0;font-size:13px;background:rgba(0,0,0,0.03)">
+                    [{a['niveau']}] {a['message']}</div>""", unsafe_allow_html=True)
 
-        # Résultats tabulaires
+        # ── Taux par méthode ──
         if st.session_state.get("resultats_bc"):
-            st.markdown("### 📊 Résultats par méthode")
             c_bc, c_sim = st.columns(2)
             with c_bc:
-                st.markdown("**🔥 Burning Cost**")
+                st.markdown("#### Burning Cost")
                 tableau_resultats([{
                     "Tranche": r["tranche"],
-                    "Ans non-nuls": f"{r.get('n_ann_nonzero',0)} {'⚠️' if r.get('n_ann_nonzero',0)<3 else '✅'}",
-                    "τ pur": f"{r['taux_pur']:.4%}",
-                    "σ": f"{r.get('sigma_hist',0):.4%}",
-                    "τ tech.": f"{r['taux_technique']:.4%}",
+                    "Années non nulles": r.get("n_ann_nonzero",0),
+                    "Taux pur": f"{r['taux_pur']:.4%}",
+                    "Ecart-type": f"{r.get('sigma_hist',0):.4%}",
+                    "Taux technique": f"{r['taux_technique']:.4%}",
                 } for r in st.session_state["resultats_bc"]])
             with c_sim:
-                st.markdown("**🎲 Simulation**")
+                st.markdown("#### Simulation")
                 tableau_resultats([{
                     "Tranche": r["tranche"],
-                    "τ pur": f"{r['taux_pur']:.4%}",
-                    "τ tech.": f"{r['taux_technique']:.4%}",
+                    "Taux pur": f"{r['taux_pur']:.4%}",
+                    "Taux technique": f"{r['taux_technique']:.4%}",
                     "Impact rec.": f"{r.get('impact_rec',0):.4%}",
                 } for r in st.session_state["resultats_sim"]])
 
+        # ── Rapport de tarification ──
         if st.session_state.get("df_rapport") is not None:
-            st.markdown("### 📋 Rapport final")
+            st.markdown("#### Tarification retenue")
+            def _g(row, *keys):
+                for k in keys:
+                    if k in row: return row[k]
+                return ""
             tableau_resultats([{
-                "Tranche": row["tranche"], "Type": row["type"],
-                "BC": f"{row['taux_bc']:.4%}",
-                "Sim.": f"{row['taux_sim']:.4%}",
-                "Mkt": f"{row['taux_mkt']:.4%}",
-                "✅ Retenu": f"{row['taux_retenu']:.4%}",
-                "Prime (MAD)": f"{row['prime_MAD']:,.0f}",
-                "Méthode": row["methode"],
-                "Écart BC/Sim": f"{row['ecart_bc_sim_pct']:.0f}%",
+                "Tranche": _g(row,"tranche","Tranche"),
+                "BC": f"{float(_g(row,'taux_bc',0) or 0):.4%}",
+                "Simulation": f"{float(_g(row,'taux_sim',0) or 0):.4%}",
+                "Marché": f"{float(_g(row,'taux_mkt',0) or 0):.4%}",
+                "Taux retenu": f"{float(_g(row,'taux_retenu',0) or 0):.4%}",
+                "Prime (MAD)": f"{float(_g(row,'prime_MAD',0) or 0):,.0f}",
+                "Sélection": _g(row,"methode","Méthode"),
             } for row in st.session_state["df_rapport"].to_dict("records")])
             pt = st.session_state.get("prime_totale",0)
-            c1,c2,c3 = st.columns(3)
+            c1,c2 = st.columns(2)
             with c1: card("Prime totale", f"{pt:,.0f} MAD", icone="💰")
-            with c2: card("Taux global",  f"{pt/gnpi:.4%}", couleur="#1a1a1a", icone="📊")
-            with c3: card("Mode",         "Python pur ✅", couleur="#2d8a4e", icone="⚡")
+            with c2: card("Taux global",  f"{pt/gnpi:.4%}", couleur="#1a1a1a", icone="")
 
-        # Journal des décisions
-        with st.expander("📋 Journal des décisions de l'agent", expanded=False):
-            st.caption("Chaque décision est tracée avec son étape et sa justification — aucune boîte noire")
-            log_data = [{"Étape": e["etape"], "Décision": e["decision"],
+        # ── 5 VARIANTES DE PROGRAMME OPTIMAL ──
+        variantes = st.session_state.get("agent_py_variantes", {})
+        if variantes:
+            st.markdown("---")
+            st.markdown("#### Optimisation du programme — 5 variantes (perspective leader)")
+            st.caption("En tant que leader, ces variantes structurent la proposition de tarification et la marge de négociation.")
+
+            cols = st.columns(len(variantes))
+            colors_v = ["#1a1a1a","#2d8a4e","#3b82f6","#f59e0b","#7c3aed"]
+            for col, (key, v), color in zip(cols, variantes.items(), colors_v):
+                delta = v["ecart_ref_pts"]
+                delta_str = f"{delta:+.2f} pts" if key != "ref" else "référence"
+                with col:
+                    st.markdown(f"""<div style="border-top:3px solid {color};background:white;
+                        border-radius:0 0 8px 8px;padding:14px 12px;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.06);margin-bottom:8px">
+                        <div style="font-size:13px;font-weight:700;color:{color}">{v['label']}</div>
+                        <div style="font-size:11px;color:#555;margin:4px 0">{v['angle']}</div>
+                        <div style="font-size:18px;font-weight:700;color:#1a1a1a;margin:8px 0">
+                            {v['taux_global']:.4%}</div>
+                        <div style="font-size:11px;color:#888">{v['prime']:,.0f} MAD</div>
+                        <div style="font-size:11px;color:{color};font-weight:600;margin-top:4px">
+                            {delta_str}</div>
+                        </div>""", unsafe_allow_html=True)
+
+            # Tableau comparatif détaillé
+            with st.expander("Détail des 5 variantes — paramètres et justifications", expanded=False):
+                rows_v = []
+                for key, v in variantes.items():
+                    for t in v["tranches"]:
+                        rows_v.append({
+                            "Variante": v["label"],
+                            "Tranche": t["nom"],
+                            "Priorité (MAD)": f"{t['priorite']:,.0f}",
+                            "Portée (MAD)": f"{t['portee']:,.0f}",
+                            "Reconst.": t.get("nb_reconstitutions","—"),
+                            "AAL": f"{t['AAL']:,.0f}" if t.get("AAL") else "—",
+                            "AAD": f"{t['AAD']:,.0f}" if t.get("AAD") else "—",
+                            "Taux": f"{t.get('_taux',0):.4%}",
+                        })
+                tableau_resultats(rows_v)
+
+                st.markdown("**Justifications actuarielles :**")
+                for key, v in variantes.items():
+                    st.markdown(f"**{v['label']}** — {v['description']}")
+
+        # ── Journal des décisions ──
+        with st.expander("Journal des décisions actuarielles", expanded=False):
+            log_data = [{"Etape": e["etape"], "Décision": e["decision"],
                          "Détail": e["detail"]} for e in st.session_state.get("agent_py_log",[])]
             if log_data: tableau_resultats(log_data)
 
-        # Rapport texte complet
-        with st.expander("📄 Rapport texte complet (exportable)", expanded=False):
+        # ── Rapport texte ──
+        with st.expander("Rapport complet (format texte)", expanded=False):
             st.code(st.session_state.get("agent_py_rapport",""), language="text")
 
-        if st.button("🔄 Relancer l'agent", key="relancer_py"):
-            for k in ["agent_py_done","agent_py_log","agent_py_anomalies","agent_py_rapport"]:
+        st.markdown("")
+        if st.button("Nouvelle tarification", key="relancer_py"):
+            for k in ["agent_py_done","agent_py_log","agent_py_anomalies",
+                      "agent_py_rapport","agent_py_variantes"]:
                 st.session_state.pop(k, None)
             st.rerun()
 
@@ -3287,13 +3511,23 @@ Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les 
 
             df_liq_p3 = pd.DataFrame(recs)
             df_liq_p3['annee_ultime'] = df_liq_p3['annee_surv'] + 9
+            df_liq_p3 = df_liq_p3.sort_values(['sinistre_id', 'dev']).reset_index(drop=True)
+            df_liq_p3['annee_ultime'] = df_liq_p3['annee_surv'] + 9
             df_liq_p3['I_ultime'] = df_liq_p3['annee_ultime'].apply(get_idx)
             df_liq_p3['I_reg']    = df_liq_p3['annee_reg'].apply(get_idx)
             df_liq_p3['I_surv']   = df_liq_p3['annee_surv'].apply(get_idx)
-            df_liq_p3['Sk']       = df_liq_p3['total'] * (df_liq_p3['I_ultime'] / df_liq_p3['I_reg'])
+
+            # ── Décumul → As-If sur incréments → Recumul ──
+            df_liq_p3['prev_total']  = df_liq_p3.groupby('sinistre_id')['total'].shift(1).fillna(0)
+            df_liq_p3['increment']   = (df_liq_p3['total'] - df_liq_p3['prev_total']).clip(lower=0)
+            df_liq_p3['inc_asif']    = df_liq_p3['increment'] * (I_cot / df_liq_p3['I_reg'])
             df_liq_p3['ratio_check'] = df_liq_p3['I_reg'] / df_liq_p3['I_surv']
             mask_s = df_liq_p3['ratio_check'] >= (1.0 + seuil_stab)
-            df_liq_p3['S_prime_k'] = np.where(mask_s, df_liq_p3['Sk']*(df_liq_p3['I_surv']/df_liq_p3['I_reg']), df_liq_p3['Sk'])
+            df_liq_p3['inc_stab']   = np.where(mask_s,
+                df_liq_p3['inc_asif'] * (df_liq_p3['I_surv'] / df_liq_p3['I_reg']),
+                df_liq_p3['inc_asif'])
+            df_liq_p3['Sk']        = df_liq_p3.groupby('sinistre_id')['inc_asif'].cumsum()
+            df_liq_p3['S_prime_k'] = df_liq_p3.groupby('sinistre_id')['inc_stab'].cumsum()
             df_liq_p3['coeff_stab'] = np.where(df_liq_p3['S_prime_k']>0, df_liq_p3['Sk']/df_liq_p3['S_prime_k'], 1.0)
 
             if is_long_p3:
@@ -3801,7 +4035,7 @@ Agis de façon professionnelle et autonome."""
                 border:1px solid rgba(59,130,246,0.4)">
                 <span style="color:#3b82f6;font-weight:700">🚀 Agent Complet démarré</span>
                 <span style="color:#888;font-size:12px;margin-left:8px">
-                Pipeline complet en cours — fichiers bruts → rapport final...</span>
+                Traitement en cours ...</span>
                 </div>""", unsafe_allow_html=True)
         try:
             run_agent_full(api_key, f3_tri, f3_gnp, f3_idx, f3_mkt,
