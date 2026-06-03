@@ -1248,299 +1248,6 @@ if api_key:
                 except Exception as e_acc:
                     st.error(f"Erreur : {e_acc}")
 
-
-
-
-
-
-# ══════════════════════════════════════════════════════════
-# MODULE ANALYSE DISTRIBUTIONS — Seuils · Fits · CDF · Tests
-# ══════════════════════════════════════════════════════════
-
-def _hill_estimates(sorted_desc, k_max=None):
-    n = len(sorted_desc)
-    if k_max is None: k_max = min(n-1, 200)
-    hills, ks = [], []
-    for k in range(1, k_max+1):
-        log_ratios = np.log(sorted_desc[:k] / sorted_desc[k])
-        h = k / np.sum(log_ratios) if np.sum(log_ratios) > 0 else np.nan
-        hills.append(h); ks.append(k)
-    return np.array(ks), np.array(hills)
-
-
-def _mean_excess(data, n_points=40):
-    data_s = np.sort(data)
-    u_min, u_max = np.percentile(data_s, 50), np.percentile(data_s, 95)
-    thresholds = np.linspace(u_min, u_max, n_points)
-    mef = []
-    for u in thresholds:
-        exc = data_s[data_s > u] - u
-        mef.append(np.mean(exc) if len(exc) >= 5 else np.nan)
-    return thresholds, np.array(mef)
-
-
-def _gertensgarbe_k(ks, hills):
-    valid = ~np.isnan(hills)
-    h = hills[valid]; k = ks[valid]
-    if len(h) < 10: return k[len(k)//2]
-    n = len(h)
-    s_prog = np.zeros(n); s_reg = np.zeros(n)
-    for i in range(1, n):
-        s_prog[i] = s_prog[i-1] + sum(1 for j in range(i) if h[j] < h[i])
-    h_rev = h[::-1]
-    for i in range(1, n):
-        s_reg[i] = s_reg[i-1] + sum(1 for j in range(i) if h_rev[j] < h_rev[i])
-    s_reg = s_reg[::-1]
-    crossings = np.where(np.diff(np.sign(s_prog - s_reg)))[0]
-    idx = crossings[0] if len(crossings) > 0 else np.argmin(np.abs(hills - np.nanmedian(hills)))
-    return int(k[min(idx, len(k)-1)])
-
-
-def _fit_severity(exceedances, threshold):
-    from scipy import stats
-    results = {}
-    x = exceedances
-    if len(x) < 10: return results
-    try:
-        alpha_h = len(x) / np.sum(np.log(x / threshold))
-        ks_p, pval_p = stats.kstest(x, lambda v: 1-(v/threshold)**(-alpha_h))
-        results["Pareto"] = {"alpha": alpha_h, "xm": threshold, "ks": ks_p, "pval": pval_p}
-    except: pass
-    try:
-        log_x = np.log(x); mu_ln, sigma_ln = np.mean(log_x), np.std(log_x)
-        ks_ln, pval_ln = stats.kstest(x, lambda v: stats.lognorm.cdf(v, s=sigma_ln, scale=np.exp(mu_ln)))
-        results["Log-Normale"] = {"mu": mu_ln, "sigma": sigma_ln, "ks": ks_ln, "pval": pval_ln}
-    except: pass
-    try:
-        y = x - threshold
-        xi, loc, beta = stats.genpareto.fit(y, floc=0)
-        ks_gp, pval_gp = stats.kstest(y, lambda v: stats.genpareto.cdf(v, xi, loc=0, scale=beta))
-        results["GPD"] = {"xi": xi, "beta": beta, "ks": ks_gp, "pval": pval_gp, "threshold": threshold}
-    except: pass
-    return results
-
-
-def _fit_frequency(counts):
-    from scipy import stats
-    results = {}
-    if len(counts) < 3: return results
-    mu = np.mean(counts); var = np.var(counts)
-    try:
-        ks_po, pval_po = stats.kstest(counts, lambda v: stats.poisson.cdf(v, mu))
-        results["Poisson"] = {"lambda": mu, "ks": ks_po, "pval": pval_po}
-    except: pass
-    try:
-        if var > mu:
-            r_nb = mu**2 / (var - mu); p_nb = r_nb / (r_nb + mu)
-            ks_nb, pval_nb = stats.kstest(counts, lambda v: stats.nbinom.cdf(v, r_nb, p_nb))
-            results["BN"] = {"r": r_nb, "p": p_nb, "ks": ks_nb, "pval": pval_nb}
-        else:
-            results["BN"] = {"note": "var <= mean — BN non applicable"}
-    except: pass
-    return results
-
-
-def _threshold_table(data, thresholds_pct):
-    from scipy import stats
-    rows = []
-    for pct in thresholds_pct:
-        u = np.percentile(data, pct)
-        exc = data[data > u]; n_exc = len(exc)
-        if n_exc < 5:
-            rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
-                         "Alpha Hill": "—", "KS stat": "—", "p-val KS": "—", "AD stat": "—", "Qualite": "Insuf."})
-            continue
-        alpha_h = n_exc / np.sum(np.log(exc / u))
-        ks_s, pval_ks = stats.kstest(exc, lambda v: 1-(v/u)**(-alpha_h))
-        try:
-            cdf_v = np.sort(1-(np.sort(exc)/u)**(-alpha_h))
-            nn = len(cdf_v); i_a = np.arange(1, nn+1)
-            ad_stat = -nn - np.mean((2*i_a-1)*(np.log(np.clip(cdf_v,1e-10,1-1e-10))+
-                                               np.log(np.clip(1-cdf_v[::-1],1e-10,1-1e-10))))
-        except: ad_stat = np.nan
-        qual = "Bon" if pval_ks>0.05 and not np.isnan(ad_stat) and ad_stat<2.5 else                "Acceptable" if pval_ks>0.01 else "Rejeté"
-        rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
-                     "Alpha Hill": f"{alpha_h:.4f}", "KS stat": f"{ks_s:.4f}",
-                     "p-val KS": f"{pval_ks:.4f}",
-                     "AD stat": f"{ad_stat:.4f}" if not np.isnan(ad_stat) else "—", "Qualite": qual})
-    return rows
-
-
-def section_analyse_distributions():
-    import matplotlib.pyplot as plt
-    from scipy import stats as sp_stats
-
-    if "df_proj" not in st.session_state or "alpha_est" not in st.session_state:
-        st.info("Transformez d\'abord le triangle.")
-        return
-
-    df_proj  = st.session_state["df_proj"]
-    seuil_0  = float(st.session_state["seuil_est"])
-    alpha_0  = float(st.session_state["alpha_est"])
-    lambda_0 = float(st.session_state["lambda_est"])
-
-    all_sev  = df_proj["Sprime_ultime"].values; all_sev = all_sev[all_sev > 0]
-    sev_data = all_sev[all_sev > seuil_0]
-    freq_data = df_proj.groupby("annee_surv").size().values
-
-    if len(sev_data) < 10:
-        st.warning(f"Seulement {len(sev_data)} sinistres au-dessus du seuil — augmentez le triangle ou réduisez le seuil.")
-        return
-
-    tabs_d = st.tabs(["Sélection du seuil", "Sévérité — Fits & CDF", "Fréquence", "Paramètres manuels"])
-
-    # ── Onglet A : seuil ──
-    with tabs_d[0]:
-        sorted_desc = np.sort(all_sev)[::-1]
-        ks_arr, hills_arr = _hill_estimates(sorted_desc, k_max=min(len(sorted_desc)-1, 150))
-        k_gert = _gertensgarbe_k(ks_arr, hills_arr)
-        alpha_gert = float(hills_arr[k_gert-1]) if k_gert <= len(hills_arr) else alpha_0
-
-        col_h, col_m = st.columns(2)
-        with col_h:
-            fig_h, ax_h = plt.subplots(figsize=(6,3))
-            ax_h.plot(ks_arr, hills_arr, color="#1a1a1a", lw=1.5)
-            ax_h.axvline(k_gert, color="#ef4444", ls="--", lw=1.5,
-                         label=f"Gertensgarbe k={k_gert} → α={alpha_gert:.3f}")
-            ax_h.axhline(alpha_0, color="#2d8a4e", ls=":", lw=1.2, label=f"α actuel={alpha_0:.3f}")
-            ax_h.set_xlabel("k"); ax_h.set_ylabel("α(k)"); ax_h.set_title("Hill Plot")
-            ax_h.legend(fontsize=8); ax_h.grid(alpha=0.3)
-            st.pyplot(fig_h); plt.close()
-        with col_m:
-            u_mef, e_mef = _mean_excess(all_sev)
-            fig_m, ax_m = plt.subplots(figsize=(6,3))
-            ax_m.plot(u_mef, e_mef, color="#2d8a4e", lw=2)
-            ax_m.axvline(seuil_0, color="#ef4444", ls="--", lw=1.5, label=f"Seuil={seuil_0:,.0f}")
-            ax_m.set_xlabel("u"); ax_m.set_ylabel("e(u)"); ax_m.set_title("Mean Excess Function")
-            ax_m.legend(fontsize=8); ax_m.grid(alpha=0.3)
-            st.pyplot(fig_m); plt.close()
-
-        pcts = [50, 60, 70, 75, 80, 85, 90, 95]
-        rows_s = _threshold_table(all_sev, pcts)
-        df_s = pd.DataFrame(rows_s)
-        st.dataframe(df_s, use_container_width=True)
-        st.caption("Bon = KS p-val > 5% et AD < 2.5 | Acceptable = KS p-val > 1%")
-
-        best_row = next((r for r in rows_s if r["Qualite"] == "Bon"), None)
-        if best_row:
-            st.success(f"Recommandé : {best_row['Seuil %']} = {best_row['Seuil MAD']} MAD — α={best_row['Alpha Hill']}")
-            if st.button("Appliquer", key="btn_apply_seuil"):
-                st.session_state["seuil_est"] = float(best_row["Seuil MAD"].replace(",","").replace(" ",""))
-                st.session_state["alpha_est"] = float(best_row["Alpha Hill"])
-                st.rerun()
-
-    # ── Onglet B : sévérité ──
-    with tabs_d[1]:
-        fits_sev = _fit_severity(sev_data, seuil_0)
-        if fits_sev:
-            st.dataframe(pd.DataFrame([{
-                "Distribution": n,
-                "Paramètres": (f"α={f['alpha']:.4f}" if n=="Pareto" else
-                               f"μ={f['mu']:.3f} σ={f['sigma']:.3f}" if n=="Log-Normale" else
-                               f"ξ={f['xi']:.4f} β={f['beta']:.0f}"),
-                "KS": f"{f['ks']:.4f}", "p-val": f"{f['pval']:.4f}",
-                "Adéquation": "Bon" if f["pval"]>0.05 else "Acceptable" if f["pval"]>0.01 else "Rejeté"
-            } for n, f in fits_sev.items()]), use_container_width=True)
-
-        fig_c, axes_c = plt.subplots(1, 2, figsize=(12,4))
-        x_s = np.sort(sev_data)
-        axes_c[0].plot(x_s, np.arange(1,len(x_s)+1)/len(x_s), "k-", lw=2.5, label="Empirique")
-        colors_d = {"Pareto":"#ef4444","Log-Normale":"#3b82f6","GPD":"#2d8a4e"}
-        for nom, f in fits_sev.items():
-            try:
-                col = colors_d.get(nom,"#888")
-                if nom=="Pareto": y = np.clip(1-(x_s/f["xm"])**(-f["alpha"]),0,1)
-                elif nom=="Log-Normale": y = sp_stats.lognorm.cdf(x_s, s=f["sigma"], scale=np.exp(f["mu"]))
-                elif nom=="GPD": y = sp_stats.genpareto.cdf(x_s-seuil_0, f["xi"], loc=0, scale=f["beta"])
-                else: continue
-                axes_c[0].plot(x_s, y, "--", color=col, lw=1.8, label=f"{nom} p={f['pval']:.3f}")
-            except: pass
-        axes_c[0].set_xlabel("MAD"); axes_c[0].set_ylabel("F(x)")
-        axes_c[0].set_title("CDF Sévérité"); axes_c[0].legend(fontsize=8); axes_c[0].grid(alpha=0.3)
-        # QQ-Plot
-        log_x = np.log(np.sort(sev_data)/seuil_0); n_q = len(log_x)
-        th_q = -np.log(1-(np.arange(1,n_q+1)/(n_q+1)))
-        axes_c[1].scatter(th_q, log_x, color="#2d8a4e", s=15, alpha=0.7)
-        mn_q = min(th_q.min(), log_x.min()); mx_q = max(th_q.max(), log_x.max())
-        axes_c[1].plot([mn_q,mx_q],[mn_q,mx_q],"r--",lw=1.5)
-        axes_c[1].set_xlabel("Quantiles Exp(1)"); axes_c[1].set_ylabel("log(X/seuil)")
-        axes_c[1].set_title("QQ-Plot Pareto"); axes_c[1].grid(alpha=0.3)
-        st.pyplot(fig_c); plt.close()
-
-    # ── Onglet C : fréquence ──
-    with tabs_d[2]:
-        fits_freq = _fit_frequency(freq_data)
-        if fits_freq:
-            rows_fr = []
-            for nom, f in fits_freq.items():
-                if "note" in f: rows_fr.append({"Distribution":nom,"Paramètres":f["note"],"KS":"—","p-val":"—","Adéquation":"—"})
-                else: rows_fr.append({"Distribution":nom,
-                    "Paramètres": f"λ={f['lambda']:.3f}" if nom=="Poisson" else f"r={f['r']:.3f} p={f['p']:.4f}",
-                    "KS": f"{f['ks']:.4f}", "p-val": f"{f['pval']:.4f}",
-                    "Adéquation": "Bon" if f["pval"]>0.05 else "Acceptable" if f["pval"]>0.01 else "Rejeté"})
-            st.dataframe(pd.DataFrame(rows_fr), use_container_width=True)
-
-        fig_fr, ax_fr = plt.subplots(figsize=(8,4))
-        v, c = np.unique(freq_data, return_counts=True)
-        ax_fr.bar(v, c/len(freq_data), color="#2d8a4e", alpha=0.7, label="Observée", zorder=3)
-        x_r = np.arange(0, max(freq_data)+2)
-        if "Poisson" in fits_freq and "pval" in fits_freq["Poisson"]:
-            ax_fr.plot(x_r, sp_stats.poisson.pmf(x_r, fits_freq["Poisson"]["lambda"]),
-                       "r--o", ms=5, lw=1.5, label=f"Poisson(λ={fits_freq['Poisson']['lambda']:.2f})")
-        if "BN" in fits_freq and "r" in fits_freq["BN"]:
-            f_nb = fits_freq["BN"]
-            ax_fr.plot(x_r, sp_stats.nbinom.pmf(x_r, f_nb["r"], f_nb["p"]),
-                       "b--s", ms=5, lw=1.5, label=f"BN(r={f_nb['r']:.2f})")
-        ax_fr.set_xlabel("Sinistres/an"); ax_fr.set_title("Fréquence annuelle")
-        ax_fr.legend(); ax_fr.grid(alpha=0.3)
-        st.pyplot(fig_fr); plt.close()
-        disp_ratio = float(np.var(freq_data)/max(np.mean(freq_data),0.01))
-        st.info(f"Indice de dispersion = {disp_ratio:.2f} ({'surdispersion → BN pertinente' if disp_ratio>1.2 else 'équidispersion → Poisson adapté'})")
-
-    # ── Onglet D : manuel ──
-    with tabs_d[3]:
-        c1,c2,c3 = st.columns(3)
-        with c1: alpha_m  = st.slider("Alpha",  0.5, 5.0,  float(alpha_0),  0.05, key="alpha_manual")
-        with c2: lambda_m = st.slider("Lambda", 0.5, 30.0, float(lambda_0), 0.5,  key="lambda_manual")
-        with c3:
-            p40 = int(np.percentile(all_sev, 40)); p92 = int(np.percentile(all_sev, 92))
-            seuil_m = st.slider("Seuil MAD", p40, p92, int(seuil_0), 50000, key="seuil_manual")
-
-        exc_m = all_sev[all_sev > seuil_m]
-        if len(exc_m) >= 5:
-            fig_mn, ax_mn = plt.subplots(figsize=(8,3))
-            xs_m = np.sort(exc_m)
-            ax_mn.plot(xs_m, np.arange(1,len(xs_m)+1)/len(xs_m), "k-", lw=2, label="Empirique")
-            ax_mn.plot(xs_m, np.clip(1-(xs_m/seuil_m)**(-alpha_m),0,1), "r--", lw=1.8,
-                       label=f"Pareto(α={alpha_m:.2f})")
-            ax_mn.set_xlabel("MAD"); ax_mn.set_title("CDF Sévérité — paramètres manuels")
-            ax_mn.legend(); ax_mn.grid(alpha=0.3)
-            st.pyplot(fig_mn); plt.close()
-        if st.button("Appliquer ces paramètres", type="primary", key="apply_manual"):
-            st.session_state["alpha_est"]  = alpha_m
-            st.session_state["lambda_est"] = lambda_m
-            st.session_state["seuil_est"]  = float(seuil_m)
-            st.success(f"Paramètres mis à jour : α={alpha_m:.4f}, λ={lambda_m:.4f}, seuil={seuil_m:,.0f}")
-            st.rerun()
-
-    # Stocker pour l\'agent LLM
-    try:
-        fits_sev_stored = _fit_severity(sev_data, seuil_0)
-        fits_freq_stored = _fit_frequency(freq_data)
-        st.session_state["dist_fit_results"] = {
-            "severity": {k: {kk: float(vv) if isinstance(vv,(int,float,np.floating)) else vv
-                             for kk,vv in v.items() if kk != "threshold"}
-                         for k,v in fits_sev_stored.items()},
-            "frequency": {k: {kk: float(vv) if isinstance(vv,(int,float,np.floating)) else vv
-                               for kk,vv in v.items()}
-                          for k,v in fits_freq_stored.items()},
-            "n_exceedances": int(len(sev_data)),
-            "overdispersion_ratio": float(np.var(freq_data)/max(np.mean(freq_data),0.01)),
-            "alpha_gert": alpha_gert,
-        }
-    except: pass
-
-
 # ════════════════════════════════════════════
 # TABS
 # ════════════════════════════════════════════
@@ -2775,103 +2482,57 @@ with tab6:
             st.session_state.get("prime_totale", 0),
             gnpi)
 
-# ════════════════════════════════════════════
 
 # ════════════════════════════════════════════
-# MODULE AGENTIQUE V2 — RAISONNEMENT · CRITIQUE · MACHINE LEARNING
+# MODULE AGENTIQUE V2 — RAISONNEMENT · CRITIQUE · ML · MÉMOIRE · CHALLENGER
 # ════════════════════════════════════════════
 
 class AgentRaisonnement:
-    """
-    Moteur de raisonnement déterministe.
-    Il ne remplace pas l'actuaire : il construit un plan d'analyse explicable
-    à partir de l'état du dossier.
-    """
-
     def planifier(self, contexte):
         plan = []
-
         def add(code, titre, justification, priorite="normale"):
-            plan.append({
-                "code": code,
-                "titre": titre,
-                "justification": justification,
-                "priorite": priorite
-            })
-
-        add("validation", "Valider les paramètres", 
-            "Contrôler alpha, lambda, GNPI, tranches et cohérence du programme.", "haute")
-
+            plan.append({"code":code,"titre":titre,"justification":justification,"priorite":priorite})
+        add("validation","Valider les paramètres","Contrôler alpha, lambda, GNPI, tranches.","haute")
         if contexte.get("has_triangle"):
-            add("burning_cost", "Calculer le Burning Cost",
-                "Le triangle/projeté est disponible ; le BC permet une lecture historique.", "haute")
+            add("burning_cost","Calculer le Burning Cost","Triangle disponible — lecture historique.","haute")
         else:
-            add("missing_triangle", "Bloquer le BC",
-                "Aucune donnée projetée disponible ; le BC ne doit pas être simulé artificiellement.", "critique")
-
-        add("simulation", "Lancer la simulation Pareto/Poisson",
-            "Comparer l'expérience historique à une vision stochastique de la queue.", "haute")
-
+            add("missing_triangle","Bloquer le BC","Aucune donnée projetée — BC non simulable.","critique")
+        add("simulation","Lancer la simulation","Comparer expérience historique et vision stochastique.","haute")
         if contexte.get("has_market"):
-            add("market_curve", "Ajuster la Market Curve",
-                "Les données marché sont disponibles ; elles servent de benchmark pour les tranches cat.", "normale")
+            add("market_curve","Ajuster la Market Curve","Données marché disponibles — benchmark cat.","normale")
         else:
-            add("market_curve_skip", "Ignorer la Market Curve",
-                "Aucune donnée marché fiable fournie ; ne pas inventer de benchmark.", "normale")
-
-        add("critique", "Auditer les résultats",
-            "Détecter les incohérences, écarts BC/Simulation, taux extrêmes et insuffisances de données.", "haute")
-
-        if contexte.get("n_rows", 0) >= 30:
-            add("machine_learning", "Tester des modèles ML",
-                "Volume minimal disponible pour un benchmark ML exploratoire.", "normale")
+            add("market_curve_skip","Ignorer la Market Curve","Aucune donnée marché fiable.","normale")
+        add("critique","Auditer les résultats","Détecter incohérences et taux extrêmes.","haute")
+        if contexte.get("n_rows",0) >= 30:
+            add("machine_learning","Tester des modèles ML","Volume minimal disponible.","normale")
         else:
-            add("machine_learning_skip", "Ne pas surinterpréter le ML",
-                "Volume trop faible pour faire du ML robuste ; conserver le ML comme diagnostic secondaire.", "normale")
-
-        add("selection", "Sélectionner le taux retenu",
-            "Appliquer une règle prudente et documentée par tranche.", "haute")
-
-        add("negociation", "Proposer des variantes de négociation",
-            "Produire plusieurs programmes possibles selon l'intérêt cédante/réassureur.", "normale")
-
+            add("machine_learning_skip","Ne pas surinterpréter le ML","Volume trop faible pour ML robuste.","normale")
+        add("selection","Sélectionner le taux retenu","Appliquer règle prudente par tranche.","haute")
+        add("negociation","Proposer des variantes","Programmes selon intérêt cédante/réassureur.","normale")
         return plan
 
 
 class AgentCritique:
-    """
-    Moteur critique indépendant.
-    Il relit les sorties BC, Simulation, Market Curve et Rapport final.
-    """
-
-    def __init__(self,
-                 seuil_ecart_warn=0.30,
-                 seuil_ecart_critique=0.50,
-                 seuil_taux_extreme=0.50):
+    def __init__(self, seuil_ecart_warn=0.30, seuil_ecart_critique=0.50, seuil_taux_extreme=0.50):
         self.seuil_ecart_warn = seuil_ecart_warn
         self.seuil_ecart_critique = seuil_ecart_critique
         self.seuil_taux_extreme = seuil_taux_extreme
 
     @staticmethod
     def _map_by_name(rows):
-        return {r.get("tranche", r.get("Tranche", "")): r for r in (rows or [])}
+        return {r.get("tranche",r.get("Tranche","")): r for r in (rows or [])}
 
     @staticmethod
     def _num(x, default=0.0):
         try:
-            if x is None or x == "":
-                return default
+            if x is None or x == "": return default
             if isinstance(x, str):
-                return float(x.replace("%", "").replace(",", ".").strip())
+                return float(x.replace("%","").replace(",",".").strip())
             return float(x)
-        except Exception:
-            return default
+        except: return default
 
     def auditer(self, tranches, gnpi, resultats_bc, resultats_sim, resultats_mkt, rapport_rows):
-        alertes = []
-        decisions = []
-        score = 100
-
+        alertes = []; decisions = []; score = 100
         bc_map = self._map_by_name(resultats_bc)
         sim_map = self._map_by_name(resultats_sim)
         mkt_map = self._map_by_name(resultats_mkt)
@@ -2879,695 +2540,321 @@ class AgentCritique:
 
         def alerte(niveau, tranche, message, impact=-5):
             nonlocal score
-            alertes.append({
-                "niveau": niveau,
-                "tranche": tranche,
-                "message": message
-            })
+            alertes.append({"niveau":niveau,"tranche":tranche,"message":message})
             score += impact
 
         for i, t in enumerate(tranches or []):
-            nom = t.get("nom", f"Tranche {i+1}")
-            typ = t.get("type", "")
-            bc = bc_map.get(nom, {})
-            sim = sim_map.get(nom, {})
-            mkt = mkt_map.get(nom, {})
-            rpt = rpt_map.get(nom, {})
+            nom = t.get("nom",f"Tranche {i+1}"); typ = t.get("type","")
+            bc=bc_map.get(nom,{}); sim=sim_map.get(nom,{}); rpt=rpt_map.get(nom,{})
+            bc_pur=self._num(bc.get("taux_pur")); bc_risque=self._num(bc.get("taux_risque"))
+            bc_tech=self._num(bc.get("taux_technique")); sim_tech=self._num(sim.get("taux_technique"))
+            retenu=self._num(rpt.get("taux_retenu"))
+            n_nz = int(self._num(bc.get("n_ann_nonzero"),0))
 
-            bc_pur = self._num(bc.get("taux_pur"))
-            bc_risque = self._num(bc.get("taux_risque"))
-            bc_tech = self._num(bc.get("taux_technique"))
-            sim_pur = self._num(sim.get("taux_pur"))
-            sim_risque = self._num(sim.get("taux_risque"))
-            sim_tech = self._num(sim.get("taux_technique"))
-            mkt_tech = self._num(mkt.get("taux", mkt.get("taux_tech")))
-            retenu = self._num(rpt.get("taux_retenu"))
+            if bc_tech>0 and not (bc_pur<=bc_risque<=bc_tech+1e-12):
+                alerte("CRITIQUE",nom,"Hiérarchie BC incohérente : τ_pur ≤ τ_risque ≤ τ_tech non respectée.",-15)
 
-            # Hiérarchie interne BC
-            if bc_tech > 0 and not (bc_pur <= bc_risque <= bc_tech + 1e-12):
-                alerte("CRITIQUE", nom,
-                       "Hiérarchie BC incohérente : taux_pur <= taux_risque <= taux_technique non respectée.",
-                       -15)
+            if n_nz<3 and typ=="travaillante":
+                alerte("WARN",nom,f"BC fragile : {n_nz} année(s) non nulle(s). Simulation prioritaire.",-6)
+            elif n_nz<3 and typ=="cat":
+                decisions.append({"tranche":nom,"decision":"BC nul acceptable pour tranche cat."})
 
-            # Hiérarchie interne Simulation
-            if sim_tech > 0 and not (sim_pur <= sim_risque <= sim_tech + 1e-12):
-                alerte("CRITIQUE", nom,
-                       "Hiérarchie Simulation incohérente : taux_pur <= taux_risque <= taux_technique non respectée.",
-                       -15)
+            if bc_tech>0 and sim_tech>0:
+                ecart=abs(bc_tech-sim_tech)/max(bc_tech,1e-12)
+                if ecart>=self.seuil_ecart_critique:
+                    alerte("CRITIQUE",nom,f"Écart BC/Sim très élevé : {ecart:.0%}. Vérifier seuil et stabilisation.",-15)
+                elif ecart>=self.seuil_ecart_warn:
+                    alerte("WARN",nom,f"Écart BC/Sim significatif : {ecart:.0%}. Justification obligatoire.",-8)
 
-            # Données insuffisantes BC
-            n_nz = int(self._num(bc.get("n_ann_nonzero"), 0))
-            if n_nz < 3:
-                if typ == "travaillante":
-                    alerte("WARN", nom,
-                           f"BC fragile : seulement {n_nz} année(s) non nulle(s). La simulation doit être prioritaire.",
-                           -6)
-                else:
-                    decisions.append({
-                        "tranche": nom,
-                        "decision": "BC nul ou faible acceptable pour une tranche cat avec peu d'observations."
-                    })
+            for label,val in [("BC",bc_tech),("Sim",sim_tech),("Retenu",retenu)]:
+                if val<0: alerte("CRITIQUE",nom,f"Taux {label} négatif.",-20)
+                if 0<val>self.seuil_taux_extreme: alerte("CRITIQUE",nom,f"Taux {label} > {self.seuil_taux_extreme:.0%}.",-20)
 
-            # Écart BC / Simulation
-            if bc_tech > 0 and sim_tech > 0:
-                ecart = abs(bc_tech - sim_tech) / max(bc_tech, 1e-12)
-                if ecart >= self.seuil_ecart_critique:
-                    alerte("CRITIQUE", nom,
-                           f"Écart BC/Simulation très élevé : {ecart:.0%}. Vérifier seuil, sinistres majeurs et stabilisation.",
-                           -15)
-                elif ecart >= self.seuil_ecart_warn:
-                    alerte("WARN", nom,
-                           f"Écart BC/Simulation significatif : {ecart:.0%}. Justification obligatoire dans le rapport.",
-                           -8)
+            if t.get("portee",0)<=0 or t.get("priorite",0)<0:
+                alerte("CRITIQUE",nom,"Priorité ou portée invalide.",-20)
 
-            # Taux extrêmes
-            for label, val in [("BC", bc_tech), ("Simulation", sim_tech), ("Market", mkt_tech), ("Retenu", retenu)]:
-                if val < 0:
-                    alerte("CRITIQUE", nom, f"Taux {label} négatif détecté.", -20)
-                if val > self.seuil_taux_extreme:
-                    alerte("CRITIQUE", nom, f"Taux {label} supérieur à {self.seuil_taux_extreme:.0%}. Valeur extrême à contrôler.", -20)
-
-            # Règle de sélection
-            if typ == "travaillante":
-                attendu = max(bc_tech, sim_tech)
-                if retenu > 0 and abs(retenu - attendu) > 1e-6:
-                    alerte("WARN", nom,
-                           "Le taux retenu ne correspond pas à la règle max(BC, Simulation) pour une tranche travaillante.",
-                           -8)
-            else:
-                attendu = max(sim_tech, mkt_tech)
-                if retenu > 0 and abs(retenu - attendu) > 1e-6:
-                    alerte("WARN", nom,
-                           "Le taux retenu ne correspond pas à la règle max(Simulation, Market) pour une tranche cat.",
-                           -8)
-
-            # Logique de programme
-            if t.get("portee", 0) <= 0 or t.get("priorite", 0) < 0:
-                alerte("CRITIQUE", nom, "Priorité ou portée invalide.", -20)
-
-        score = max(0, min(100, score))
-        if score >= 85:
-            verdict = "ROBUSTE"
-        elif score >= 65:
-            verdict = "ACCEPTABLE AVEC RÉSERVES"
-        else:
-            verdict = "À REVOIR"
-
-        synthese = {
-            "score": score,
-            "verdict": verdict,
-            "nb_alertes": len(alertes),
-            "nb_critiques": sum(1 for a in alertes if a["niveau"] == "CRITIQUE"),
-            "nb_warn": sum(1 for a in alertes if a["niveau"] == "WARN"),
-        }
-
-        return {
-            "synthese": synthese,
-            "alertes": alertes,
-            "decisions": decisions
-        }
+        score=max(0,min(100,score))
+        verdict="ROBUSTE" if score>=85 else "ACCEPTABLE AVEC RÉSERVES" if score>=65 else "À REVOIR"
+        return {"synthese":{"score":score,"verdict":verdict,"nb_alertes":len(alertes),
+                "nb_critiques":sum(1 for a in alertes if a["niveau"]=="CRITIQUE"),
+                "nb_warn":sum(1 for a in alertes if a["niveau"]=="WARN")},
+                "alertes":alertes,"decisions":decisions}
 
 
 class AgentML:
-    """
-    Moteur ML exploratoire.
-    Il compare Arbre simple, Random Forest, XGBoost et CatBoost si les bibliothèques sont installées.
-    Le ML reste secondaire : il sert de benchmark, pas de vérité actuarielle.
-    """
+    def __init__(self, random_state=42): self.random_state=random_state
 
-    def __init__(self, random_state=42):
-        self.random_state = random_state
-
-    @staticmethod
-    def _prepare_dataset(df, target="Sprime_ultime"):
-        if df is None or df.empty or target not in df.columns:
-            return None, None, "Target indisponible."
-
-        data = df.copy()
-        data = data.replace([np.inf, -np.inf], np.nan)
-
-        # Garde les colonnes utiles : numériques + catégorielles simples.
-        y = pd.to_numeric(data[target], errors="coerce")
-        X = data.drop(columns=[target], errors="ignore")
-
-        # Supprime colonnes presque entièrement vides.
-        keep_cols = [c for c in X.columns if X[c].notna().mean() >= 0.60]
-        X = X[keep_cols]
-
-        # Encodage simple robuste.
-        for c in X.columns:
-            if X[c].dtype == "object":
-                X[c] = X[c].astype(str).fillna("NA")
-                # Limite cardinalité.
-                if X[c].nunique() > 25:
-                    X[c] = "AUTRE"
-            else:
-                X[c] = pd.to_numeric(X[c], errors="coerce")
-
-        mask = y.notna()
-        X = X.loc[mask].copy()
-        y = y.loc[mask].copy()
-
-        if len(X) < 30:
-            return None, None, "Moins de 30 observations exploitables : ML non robuste."
-
-        # One-hot pour modèles sklearn.
-        X_encoded = pd.get_dummies(X, dummy_na=True)
-        X_encoded = X_encoded.fillna(X_encoded.median(numeric_only=True)).fillna(0)
-
-        return X_encoded, y, ""
-
-    def entrainer_depuis_df_proj(self, df_proj, target="Sprime_ultime"):
-        X, y, msg = self._prepare_dataset(df_proj, target=target)
-        if X is None:
-            return {
-                "disponible": False,
-                "message": msg,
-                "modeles": [],
-                "meilleur_modele": None,
-                "importance": []
-            }
-
+    def entrainer_depuis_df_proj(self, df, target="Sprime_ultime"):
         try:
             from sklearn.model_selection import train_test_split
             from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
             from sklearn.tree import DecisionTreeRegressor
             from sklearn.ensemble import RandomForestRegressor
         except Exception as e:
-            return {
-                "disponible": False,
-                "message": f"scikit-learn indisponible : {e}",
-                "modeles": [],
-                "meilleur_modele": None,
-                "importance": []
-            }
+            return {"disponible":False,"message":f"scikit-learn indisponible : {e}","modeles":[],"meilleur_modele":None,"importance":[]}
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.25, random_state=self.random_state
-        )
+        if df is None or df.empty or target not in df.columns:
+            return {"disponible":False,"message":"Target indisponible.","modeles":[],"meilleur_modele":None,"importance":[]}
 
-        models = {
-            "Arbre simple": DecisionTreeRegressor(max_depth=4, min_samples_leaf=5, random_state=self.random_state),
-            "Random Forest": RandomForestRegressor(n_estimators=250, max_depth=8, min_samples_leaf=3,
-                                                   random_state=self.random_state, n_jobs=-1),
-        }
+        data=df.copy().replace([np.inf,-np.inf],np.nan)
+        y=pd.to_numeric(data[target],errors="coerce"); X=data.drop(columns=[target],errors="ignore")
+        keep=[c for c in X.columns if X[c].notna().mean()>=0.60]; X=X[keep]
+        for c in X.columns:
+            if X[c].dtype=="object": X[c]=X[c].astype(str).fillna("NA")
+            else: X[c]=pd.to_numeric(X[c],errors="coerce")
+        mask=y.notna(); X=X.loc[mask].copy(); y=y.loc[mask].copy()
+        if len(X)<30: return {"disponible":False,"message":"Moins de 30 observations exploitables.","modeles":[],"meilleur_modele":None,"importance":[]}
+        X_enc=pd.get_dummies(X,dummy_na=True).fillna(0)
 
-        # XGBoost optionnel.
+        X_tr,X_te,y_tr,y_te=train_test_split(X_enc,y,test_size=0.25,random_state=self.random_state)
+        models={"Arbre":DecisionTreeRegressor(max_depth=4,min_samples_leaf=5,random_state=self.random_state),
+                "Random Forest":RandomForestRegressor(n_estimators=250,max_depth=8,min_samples_leaf=3,random_state=self.random_state,n_jobs=-1)}
         try:
             from xgboost import XGBRegressor
-            models["XGBoost"] = XGBRegressor(
-                n_estimators=300, max_depth=4, learning_rate=0.05,
-                subsample=0.85, colsample_bytree=0.85,
-                objective="reg:squarederror", random_state=self.random_state
-            )
-        except Exception:
-            pass
+            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
+        except: pass
 
-        # CatBoost optionnel.
-        try:
-            from catboost import CatBoostRegressor
-            models["CatBoost"] = CatBoostRegressor(
-                iterations=300, depth=5, learning_rate=0.05,
-                loss_function="RMSE", random_seed=self.random_state,
-                verbose=False
-            )
-        except Exception:
-            pass
-
-        resultats = []
-        best_name = None
-        best_mae = None
-        best_model = None
-
-        for name, model in models.items():
+        resultats=[]; best_name=None; best_mae=None; best_model=None
+        for name,model in models.items():
             try:
-                model.fit(X_train, y_train)
-                pred = model.predict(X_test)
-                mae = float(mean_absolute_error(y_test, pred))
-                rmse = float(np.sqrt(mean_squared_error(y_test, pred)))
-                r2 = float(r2_score(y_test, pred))
-                resultats.append({
-                    "modele": name,
-                    "MAE": mae,
-                    "RMSE": rmse,
-                    "R2": r2,
-                    "n_train": int(len(X_train)),
-                    "n_test": int(len(X_test))
-                })
-                if best_mae is None or mae < best_mae:
-                    best_mae = mae
-                    best_name = name
-                    best_model = model
+                model.fit(X_tr,y_tr); pred=model.predict(X_te)
+                mae=float(mean_absolute_error(y_te,pred)); rmse=float(np.sqrt(mean_squared_error(y_te,pred))); r2=float(r2_score(y_te,pred))
+                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te))})
+                if best_mae is None or mae<best_mae: best_mae=mae; best_name=name; best_model=model
             except Exception as e:
-                resultats.append({
-                    "modele": name,
-                    "MAE": None,
-                    "RMSE": None,
-                    "R2": None,
-                    "erreur": str(e)
-                })
+                resultats.append({"modele":name,"MAE":None,"RMSE":None,"R2":None,"erreur":str(e)})
 
-        importance = []
-        if best_model is not None and hasattr(best_model, "feature_importances_"):
-            imp = pd.Series(best_model.feature_importances_, index=X.columns)
-            imp = imp.sort_values(ascending=False).head(10)
-            importance = [{"variable": k, "importance": float(v)} for k, v in imp.items()]
+        importance=[]
+        if best_model is not None and hasattr(best_model,"feature_importances_"):
+            imp=pd.Series(best_model.feature_importances_,index=X_enc.columns).sort_values(ascending=False).head(10)
+            importance=[{"variable":k,"importance":float(v)} for k,v in imp.items()]
 
-        return {
-            "disponible": True,
-            "message": "Benchmark ML exécuté. Interprétation prudente recommandée.",
-            "modeles": resultats,
-            "meilleur_modele": best_name,
-            "importance": importance
-        }
+        return {"disponible":True,"message":"Benchmark ML exécuté. Interprétation prudente recommandée.",
+                "modeles":resultats,"meilleur_modele":best_name,"importance":importance}
 
 
 class AgentMemoireMetier:
-    """
-    Mémoire inter-dossiers.
-    Elle compare le dossier courant aux sessions déjà sauvegardées dans la base.
-    Objectif : ne plus raisonner seulement sur le dossier courant, mais sur l'expérience accumulée.
-    """
-
     @staticmethod
     def _to_float(x, default=0.0):
         try:
-            if x is None or x == "":
-                return default
-            if isinstance(x, str):
-                s = x.replace("%", "").replace(" ", "").replace(",", ".")
-                val = float(s)
-                return val / 100 if "%" in x or val > 1.5 else val
+            if x is None or x=="": return default
+            if isinstance(x,str):
+                s=x.replace("%","").replace(" ","").replace(",",".")
+                val=float(s); return val/100 if "%"in x or val>1.5 else val
             return float(x)
-        except Exception:
-            return default
+        except: return default
 
     @staticmethod
-    def _row_get(row, *keys, default=None):
+    def _row_get(row,*keys,default=None):
         for k in keys:
-            if isinstance(row, dict) and k in row:
-                return row.get(k)
+            if isinstance(row,dict) and k in row: return row.get(k)
         return default
 
     def charger_rapports_historiques(self, user_email, current_session_id=None, limite=100):
-        """Charge les anciens rapports sauvegardés, sans modifier st.session_state."""
         try:
-            con, db = _get_conn()
-            cur = con.cursor()
-            p = _ph()
+            con,db=_get_conn(); cur=con.cursor(); p=_ph()
             if current_session_id:
-                cur.execute(
-                    f"""SELECT s.id, s.nom_session, s.gnpi, r.data_json
-                        FROM sessions s
-                        JOIN resultats r ON r.session_id=s.id
-                        WHERE s.user_email={p} AND r.etape='rapport' AND s.id!={p}
-                        ORDER BY s.updated_at DESC LIMIT {int(limite)}""",
-                    (user_email, current_session_id)
-                )
+                cur.execute(f"""SELECT s.id,s.nom_session,s.gnpi,r.data_json FROM sessions s
+                    JOIN resultats r ON r.session_id=s.id
+                    WHERE s.user_email={p} AND r.etape='rapport' AND s.id!={p}
+                    ORDER BY s.updated_at DESC LIMIT {int(limite)}""",(user_email,current_session_id))
             else:
-                cur.execute(
-                    f"""SELECT s.id, s.nom_session, s.gnpi, r.data_json
-                        FROM sessions s
-                        JOIN resultats r ON r.session_id=s.id
-                        WHERE s.user_email={p} AND r.etape='rapport'
-                        ORDER BY s.updated_at DESC LIMIT {int(limite)}""",
-                    (user_email,)
-                )
-            rows = cur.fetchall()
-            con.close()
-        except Exception:
-            return []
-
-        historiques = []
-        for sid, nom, gnpi_h, data_json in rows:
+                cur.execute(f"""SELECT s.id,s.nom_session,s.gnpi,r.data_json FROM sessions s
+                    JOIN resultats r ON r.session_id=s.id
+                    WHERE s.user_email={p} AND r.etape='rapport'
+                    ORDER BY s.updated_at DESC LIMIT {int(limite)}""",(user_email,))
+            rows=cur.fetchall(); con.close()
+        except: return []
+        historiques=[]
+        for sid,nom,gnpi_h,data_json in rows:
             try:
-                d = json.loads(data_json)
-                rr = d.get("rows", [])
-                pt = d.get("prime_totale", 0)
-                if rr:
-                    historiques.append({
-                        "session_id": sid,
-                        "nom_session": nom,
-                        "gnpi": gnpi_h,
-                        "prime_totale": pt,
-                        "rows": rr,
-                    })
-            except Exception:
-                continue
+                d=json.loads(data_json); rr=d.get("rows",[]); pt=d.get("prime_totale",0)
+                if rr: historiques.append({"session_id":sid,"nom_session":nom,"gnpi":gnpi_h,"prime_totale":pt,"rows":rr})
+            except: continue
         return historiques
 
     def benchmark(self, user_email, tranches, rapport_rows, gnpi, current_session_id=None):
-        historiques = self.charger_rapports_historiques(user_email, current_session_id=current_session_id)
+        historiques=self.charger_rapports_historiques(user_email,current_session_id=current_session_id)
         if not historiques:
-            return {
-                "disponible": False,
-                "message": "Aucun ancien rapport exploitable trouvé dans la mémoire métier.",
-                "comparaisons": [],
-                "synthese": {}
-            }
-
-        current_by_type = {}
+            return {"disponible":False,"message":"Aucun ancien rapport exploitable dans la mémoire métier.","comparaisons":[],"synthese":{}}
+        current_by_type={}
         for r in rapport_rows or []:
-            typ = str(self._row_get(r, "type", "Type", default="")).lower()
-            taux = self._to_float(self._row_get(r, "taux_retenu", "Taux retenu", default=0))
-            if typ and taux > 0:
-                current_by_type.setdefault(typ, []).append(taux)
-
-        hist_by_type = {}
-        hist_global = []
+            typ=str(self._row_get(r,"type","Type",default="")).lower()
+            taux=self._to_float(self._row_get(r,"taux_retenu","Taux retenu",default=0))
+            if typ and taux>0: current_by_type.setdefault(typ,[]).append(taux)
+        hist_by_type={}; hist_global=[]
         for h in historiques:
-            rows = h.get("rows", [])
-            pt = self._to_float(h.get("prime_totale", 0))
-            gh = self._to_float(h.get("gnpi", 0))
-            if gh > 0 and pt > 0:
-                hist_global.append(pt / gh)
+            rows=h.get("rows",[]); pt=self._to_float(h.get("prime_totale",0)); gh=self._to_float(h.get("gnpi",0))
+            if gh>0 and pt>0: hist_global.append(pt/gh)
             for r in rows:
-                typ = str(self._row_get(r, "type", "Type", default="")).lower()
-                taux = self._to_float(self._row_get(r, "taux_retenu", "Taux retenu", default=0))
-                if typ and taux > 0:
-                    hist_by_type.setdefault(typ, []).append(taux)
-
-        comparaisons = []
-        for typ, vals in current_by_type.items():
-            if typ not in hist_by_type or len(hist_by_type[typ]) < 2:
-                continue
-            cur_med = float(np.median(vals))
-            hist_med = float(np.median(hist_by_type[typ]))
-            hist_q25 = float(np.quantile(hist_by_type[typ], 0.25))
-            hist_q75 = float(np.quantile(hist_by_type[typ], 0.75))
-            ecart = (cur_med - hist_med) / max(hist_med, 1e-12)
-            comparaisons.append({
-                "type": typ,
-                "taux_dossier": cur_med,
-                "mediane_historique": hist_med,
-                "q25_historique": hist_q25,
-                "q75_historique": hist_q75,
-                "ecart_vs_mediane": ecart,
-                "diagnostic": "au-dessus du marché interne" if ecart > 0.20 else "sous la référence interne" if ecart < -0.20 else "proche de l'historique",
-                "n_reference": len(hist_by_type[typ]),
-            })
-
-        pt_current = sum(self._to_float(self._row_get(r, "prime_MAD", "Prime (MAD)", default=0)) for r in rapport_rows or [])
-        tg_current = pt_current / gnpi if gnpi else 0
-        synthese = {
-            "nb_dossiers_reference": len(historiques),
-            "taux_global_dossier": tg_current,
-            "mediane_taux_global_historique": float(np.median(hist_global)) if hist_global else 0,
-            "memoire_active": True,
-        }
-        return {
-            "disponible": True,
-            "message": "Mémoire métier activée : comparaison avec les anciens dossiers sauvegardés.",
-            "comparaisons": comparaisons,
-            "synthese": synthese,
-        }
+                typ=str(self._row_get(r,"type","Type",default="")).lower()
+                taux=self._to_float(self._row_get(r,"taux_retenu","Taux retenu",default=0))
+                if typ and taux>0: hist_by_type.setdefault(typ,[]).append(taux)
+        comparaisons=[]
+        for typ,vals in current_by_type.items():
+            if typ not in hist_by_type or len(hist_by_type[typ])<2: continue
+            cur_med=float(np.median(vals)); hist_med=float(np.median(hist_by_type[typ]))
+            hist_q25=float(np.quantile(hist_by_type[typ],0.25)); hist_q75=float(np.quantile(hist_by_type[typ],0.75))
+            ecart=(cur_med-hist_med)/max(hist_med,1e-12)
+            comparaisons.append({"type":typ,"taux_dossier":cur_med,"mediane_historique":hist_med,
+                "q25_historique":hist_q25,"q75_historique":hist_q75,"ecart_vs_mediane":ecart,
+                "diagnostic":"au-dessus" if ecart>0.20 else "sous la référence" if ecart<-0.20 else "proche de l'historique",
+                "n_reference":len(hist_by_type[typ])})
+        pt_curr=sum(self._to_float(self._row_get(r,"prime_MAD","Prime (MAD)",default=0)) for r in rapport_rows or [])
+        tg=pt_curr/gnpi if gnpi else 0
+        return {"disponible":True,"message":"Mémoire métier activée.","comparaisons":comparaisons,
+                "synthese":{"nb_dossiers_reference":len(historiques),"taux_global_dossier":tg,
+                "mediane_taux_global_historique":float(np.median(hist_global)) if hist_global else 0,"memoire_active":True}}
 
 
 class AgentChallenger:
-    """
-    Moteur contradictoire déterministe.
-    Trois agents virtuels challengent la décision : prudentiel, marché et équilibre.
-    L'objectif est de créer un vrai débat avant le taux retenu.
-    """
-
     @staticmethod
-    def _num(x, default=0.0):
+    def _num(x,default=0.0):
         try:
-            if x is None or x == "": return default
-            if isinstance(x, str):
-                s = x.replace("%", "").replace(" ", "").replace(",", ".")
-                val = float(s)
-                return val / 100 if "%" in x or val > 1.5 else val
+            if x is None or x=="": return default
+            if isinstance(x,str):
+                s=x.replace("%","").replace(" ","").replace(",",".")
+                val=float(s); return val/100 if "%"in x or val>1.5 else val
             return float(x)
-        except Exception:
-            return default
+        except: return default
 
     @staticmethod
-    def _map(rows):
-        return {r.get("tranche", r.get("Tranche", "")): r for r in (rows or [])}
+    def _map(rows): return {r.get("tranche",r.get("Tranche","")): r for r in (rows or [])}
 
     def challenger(self, tranches, resultats_bc, resultats_sim, resultats_mkt, rapport_rows):
-        bc = self._map(resultats_bc)
-        sim = self._map(resultats_sim)
-        mkt = self._map(resultats_mkt)
-        rpt = self._map(rapport_rows)
-        avis = []
-
-        for i, t in enumerate(tranches or []):
-            nom = t.get("nom", f"Tranche {i+1}")
-            typ = t.get("type", "")
-            bt = self._num(bc.get(nom, {}).get("taux_technique"))
-            stt = self._num(sim.get(nom, {}).get("taux_technique"))
-            mt = self._num(mkt.get(nom, {}).get("taux", mkt.get(nom, {}).get("taux_tech")))
-            rt = self._num(rpt.get(nom, {}).get("taux_retenu"))
-            n_nz = int(self._num(bc.get(nom, {}).get("n_ann_nonzero"), 0))
-
-            prudent = max(bt, stt, mt)
-            marche = mt if (typ != "travaillante" and mt > 0) else stt if stt > 0 else bt
-            equilibre = np.mean([x for x in [bt, stt, mt] if x > 0]) if any(x > 0 for x in [bt, stt, mt]) else 0
-
-            positions = [
-                {"agent": "Prudentiel", "taux": prudent, "raison": "Retient la méthode la plus conservatrice disponible."},
-                {"agent": "Marché", "taux": marche, "raison": "Privilégie la cohérence avec le signal marché ou simulation."},
-                {"agent": "Équilibre", "taux": equilibre, "raison": "Cherche un compromis entre expérience, modèle et marché."},
-            ]
-            dispersion = (max(p["taux"] for p in positions) - min(p["taux"] for p in positions)) / max(equilibre, 1e-12) if equilibre else 0
-            conflit = "fort" if dispersion > 0.35 else "modéré" if dispersion > 0.15 else "faible"
-            arbitrage = "Conserver le taux retenu" if rt >= min(prudent, equilibre) or rt == 0 else "Relever le taux ou documenter l'écart"
-            if typ == "travaillante" and n_nz < 3:
-                arbitrage = "Ne pas se reposer sur le BC ; privilégier simulation ou jugement expert documenté"
-
-            avis.append({
-                "tranche": nom,
-                "type": typ,
-                "taux_retenu": rt,
-                "avis_prudentiel": prudent,
-                "avis_marche": marche,
-                "avis_equilibre": equilibre,
-                "conflit": conflit,
-                "arbitrage": arbitrage,
-            })
-        return {"avis": avis, "nb_conflits_forts": sum(1 for a in avis if a["conflit"] == "fort")}
+        bc=self._map(resultats_bc); sim=self._map(resultats_sim)
+        mkt=self._map(resultats_mkt); rpt=self._map(rapport_rows)
+        avis=[]
+        for i,t in enumerate(tranches or []):
+            nom=t.get("nom",f"Tranche {i+1}"); typ=t.get("type","")
+            bt=self._num(bc.get(nom,{}).get("taux_technique"))
+            stt=self._num(sim.get(nom,{}).get("taux_technique"))
+            mt=self._num(mkt.get(nom,{}).get("taux",mkt.get(nom,{}).get("taux_tech")))
+            rt=self._num(rpt.get(nom,{}).get("taux_retenu"))
+            n_nz=int(self._num(bc.get(nom,{}).get("n_ann_nonzero"),0))
+            prudent=max(bt,stt,mt)
+            marche=mt if (typ!="travaillante" and mt>0) else stt if stt>0 else bt
+            equilibre=np.mean([x for x in [bt,stt,mt] if x>0]) if any(x>0 for x in [bt,stt,mt]) else 0
+            dispersion=(max(p for p in [prudent,marche,equilibre])-min(p for p in [prudent,marche,equilibre]))/max(equilibre,1e-12) if equilibre else 0
+            conflit="fort" if dispersion>0.35 else "modéré" if dispersion>0.15 else "faible"
+            arbitrage="Conserver le taux retenu" if (rt>=min(prudent,equilibre) or rt==0) else "Relever le taux ou documenter l'écart"
+            if typ=="travaillante" and n_nz<3: arbitrage="Ne pas se reposer sur le BC — jugement expert documenté"
+            avis.append({"tranche":nom,"type":typ,"taux_retenu":rt,"avis_prudentiel":prudent,
+                "avis_marche":marche,"avis_equilibre":equilibre,"conflit":conflit,"arbitrage":arbitrage})
+        return {"avis":avis,"nb_conflits_forts":sum(1 for a in avis if a["conflit"]=="fort")}
 
 
 class AgentOptimisationProgramme:
-    """
-    Optimisation structurée du programme.
-    Contrairement aux variantes fixes, ce moteur explore une grille autour du programme courant
-    et classe les alternatives selon un objectif cédante / réassureur / équilibre.
-    """
-
-    def __init__(self, gnpi):
-        self.gnpi = gnpi
+    def __init__(self, gnpi): self.gnpi=gnpi
 
     @staticmethod
-    def _base_rate_for_tranche(t, idx, resultats_bc, resultats_sim, resultats_mkt):
-        nom = t.get("nom", "")
-        def lookup(rows, key):
+    def _base_rate(t, idx, rbc, rsim, rmkt):
+        nom=t.get("nom","")
+        def lk(rows,key):
             for r in rows or []:
-                if r.get("tranche") == nom:
-                    return float(r.get(key, 0) or 0)
-            if idx < len(rows or []):
-                return float((rows or [])[idx].get(key, 0) or 0)
+                if r.get("tranche")==nom: return float(r.get(key,0) or 0)
+            if idx<len(rows or []): return float((rows or [])[idx].get(key,0) or 0)
             return 0.0
-        bc = lookup(resultats_bc, "taux_technique")
-        sim = lookup(resultats_sim, "taux_technique")
-        mkt = lookup(resultats_mkt, "taux")
-        return max(bc, sim) if t.get("type") == "travaillante" else max(sim, mkt)
+        bc=lk(rbc,"taux_technique"); sim=lk(rsim,"taux_technique"); mkt=lk(rmkt,"taux")
+        return max(bc,sim) if t.get("type")=="travaillante" else max(sim,mkt)
 
     def _estimate_rate(self, t_ref, t_new, base_rate):
-        p0 = max(float(t_ref.get("priorite", 1)), 1)
-        l0 = max(float(t_ref.get("portee", 1)), 1)
-        p1 = max(float(t_new.get("priorite", p0)), 1)
-        l1 = max(float(t_new.get("portee", l0)), 1)
-        rec0 = max(float(t_ref.get("nb_reconstitutions", 1)), 1)
-        rec1 = max(float(t_new.get("nb_reconstitutions", rec0)), 1)
-        # Relation log-log prudente : taux augmente avec la portée et baisse avec la priorité.
-        adj = (l1 / l0) ** 0.55 * (p0 / p1) ** 0.35 * (rec1 / rec0) ** 0.08
-        return max(base_rate * adj, 0)
+        p0=max(float(t_ref.get("priorite",1)),1); l0=max(float(t_ref.get("portee",1)),1)
+        p1=max(float(t_new.get("priorite",p0)),1); l1=max(float(t_new.get("portee",l0)),1)
+        rec0=max(float(t_ref.get("nb_reconstitutions",1)),1); rec1=max(float(t_new.get("nb_reconstitutions",rec0)),1)
+        adj=(l1/l0)**0.55*(p0/p1)**0.35*(rec1/rec0)**0.08
+        return max(base_rate*adj,0)
 
-    def explorer(self, tranches, resultats_bc, resultats_sim, resultats_mkt,
-                 objectif="equilibre", prime_cible=None, top_n=8):
-        if not tranches:
-            return {"alternatives": [], "message": "Programme vide."}
-
-        portee_mult = [0.85, 1.00, 1.15]
-        priorite_mult = [0.90, 1.00, 1.10]
-        rec_delta = [-1, 0, 1]
-
-        alternatives = []
-        # On construit des scénarios cohérents appliqués globalement pour éviter l'explosion combinatoire.
-        for mp in portee_mult:
-            for md in priorite_mult:
-                for dr in rec_delta:
-                    new_tranches = []
-                    prime = 0.0
-                    protection = 0.0
-                    for i, t in enumerate(tranches):
-                        tn = dict(t)
-                        tn["portee"] = round(float(t.get("portee", 0)) * mp / 500_000) * 500_000
-                        tn["priorite"] = round(float(t.get("priorite", 0)) * md / 500_000) * 500_000
-                        tn["portee"] = max(tn["portee"], 500_000)
-                        tn["priorite"] = max(tn["priorite"], 0)
-                        tn["nb_reconstitutions"] = int(max(1, min(4, int(t.get("nb_reconstitutions", 1)) + dr)))
-                        base = self._base_rate_for_tranche(t, i, resultats_bc, resultats_sim, resultats_mkt)
-                        taux = self._estimate_rate(t, tn, base)
-                        prime += self.gnpi * taux
-                        protection += tn["portee"] * (1 + tn["nb_reconstitutions"] * tn.get("taux_reconstitution", 100) / 100)
-                        new_tranches.append(tn)
-
-                    taux_global = prime / self.gnpi if self.gnpi else 0
-                    penalite_cible = abs(prime - prime_cible) / max(prime_cible, 1) if prime_cible else 0
-                    if objectif == "cedante":
-                        score = protection / 1e6 - 60 * taux_global - 10 * penalite_cible
-                    elif objectif == "reassureur":
-                        score = 100 * taux_global - 0.03 * protection / 1e6 - 5 * penalite_cible
-                    else:
-                        score = protection / 1e6 - 35 * taux_global - 8 * penalite_cible
-
-                    alternatives.append({
-                        "label": f"Portée {mp:.0%} | Priorité {md:.0%} | Rec {dr:+d}",
-                        "prime": prime,
-                        "taux_global": taux_global,
-                        "protection_theorique": protection,
-                        "score": score,
-                        "tranches": new_tranches,
-                    })
-
-        alternatives = sorted(alternatives, key=lambda x: x["score"], reverse=True)[:top_n]
-        return {"alternatives": alternatives, "message": f"{len(alternatives)} alternatives classées selon l'objectif {objectif}."}
-
-
-def afficher_memoire_metier(memoire):
-    if not memoire:
-        return
-    st.markdown("#### Mémoire métier inter-dossiers")
-    if not memoire.get("disponible"):
-        st.info(memoire.get("message", "Mémoire indisponible."))
-        return
-    syn = memoire.get("synthese", {})
-    c1, c2, c3 = st.columns(3)
-    with c1: card("Dossiers référence", syn.get("nb_dossiers_reference", 0), icone="🧠")
-    with c2: card("Taux dossier", f"{syn.get('taux_global_dossier',0):.4%}", couleur="#1a1a1a", icone="📌")
-    with c3: card("Médiane historique", f"{syn.get('mediane_taux_global_historique',0):.4%}", couleur="#3b82f6", icone="📚")
-    rows = []
-    for c in memoire.get("comparaisons", []):
-        rows.append({
-            "Type": c["type"],
-            "Dossier": f"{c['taux_dossier']:.4%}",
-            "Médiane hist.": f"{c['mediane_historique']:.4%}",
-            "Q25-Q75": f"{c['q25_historique']:.4%} / {c['q75_historique']:.4%}",
-            "Écart": f"{c['ecart_vs_mediane']:+.1%}",
-            "Diagnostic": c["diagnostic"],
-            "N": c["n_reference"],
-        })
-    if rows:
-        tableau_resultats(rows)
-
-
-def afficher_challenger(challenge):
-    if not challenge:
-        return
-    st.markdown("#### Agent challenger contradictoire")
-    rows = []
-    for a in challenge.get("avis", []):
-        rows.append({
-            "Tranche": a["tranche"],
-            "Type": a["type"],
-            "Retenu": f"{a['taux_retenu']:.4%}",
-            "Prudentiel": f"{a['avis_prudentiel']:.4%}",
-            "Marché": f"{a['avis_marche']:.4%}",
-            "Équilibre": f"{a['avis_equilibre']:.4%}",
-            "Conflit": a["conflit"],
-            "Arbitrage": a["arbitrage"],
-        })
-    if rows:
-        tableau_resultats(rows)
-
-
-def afficher_optimisation_avancee(opt):
-    if not opt:
-        return
-    st.markdown("#### Optimisation avancée du programme")
-    st.caption(opt.get("message", ""))
-    rows = []
-    for i, a in enumerate(opt.get("alternatives", []), 1):
-        rows.append({
-            "Rang": i,
-            "Scénario": a["label"],
-            "Prime": f"{a['prime']:,.0f} MAD",
-            "Taux global": f"{a['taux_global']:.4%}",
-            "Protection théorique": f"{a['protection_theorique']:,.0f} MAD",
-            "Score": f"{a['score']:.2f}",
-        })
-    if rows:
-        tableau_resultats(rows)
+    def explorer(self, tranches, rbc, rsim, rmkt, objectif="equilibre", prime_cible=None, top_n=8):
+        if not tranches: return {"alternatives":[],"message":"Programme vide."}
+        alternatives=[]
+        for mp in [0.85,1.00,1.15]:
+            for md in [0.90,1.00,1.10]:
+                for dr in [-1,0,1]:
+                    new_t=[]; prime=0.0; protection=0.0
+                    for i,t in enumerate(tranches):
+                        tn=dict(t)
+                        tn["portee"]=round(float(t.get("portee",0))*mp/500_000)*500_000
+                        tn["priorite"]=round(float(t.get("priorite",0))*md/500_000)*500_000
+                        tn["portee"]=max(tn["portee"],500_000); tn["priorite"]=max(tn["priorite"],0)
+                        tn["nb_reconstitutions"]=int(max(1,min(4,int(t.get("nb_reconstitutions",1))+dr)))
+                        base=self._base_rate(t,i,rbc,rsim,rmkt)
+                        taux=self._estimate_rate(t,tn,base)
+                        prime+=self.gnpi*taux; protection+=tn["portee"]*(1+tn["nb_reconstitutions"]*tn.get("taux_reconstitution",100)/100)
+                        new_t.append(tn)
+                    taux_g=prime/self.gnpi if self.gnpi else 0
+                    pen=abs(prime-prime_cible)/max(prime_cible,1) if prime_cible else 0
+                    if objectif=="cedante": score=protection/1e6-60*taux_g-10*pen
+                    elif objectif=="reassureur": score=100*taux_g-0.03*protection/1e6-5*pen
+                    else: score=protection/1e6-35*taux_g-8*pen
+                    alternatives.append({"label":f"Portée {mp:.0%}|Priorité {md:.0%}|Rec {dr:+d}",
+                        "prime":prime,"taux_global":taux_g,"protection_theorique":protection,"score":score,"tranches":new_t})
+        alternatives=sorted(alternatives,key=lambda x:x["score"],reverse=True)[:top_n]
+        return {"alternatives":alternatives,"message":f"{len(alternatives)} alternatives selon objectif {objectif}."}
 
 
 def afficher_plan_agentique(plan):
-    if not plan:
-        return
-    rows = []
-    for i, p in enumerate(plan, 1):
-        rows.append({
-            "Ordre": i,
-            "Étape": p["titre"],
-            "Priorité": p["priorite"],
-            "Justification": p["justification"]
-        })
-    tableau_resultats(rows, "Plan de raisonnement agentique")
-
+    if not plan: return
+    tableau_resultats([{"Ordre":i,"Étape":p["titre"],"Priorité":p["priorite"],"Justification":p["justification"]}
+        for i,p in enumerate(plan,1)],"Plan de raisonnement agentique")
 
 def afficher_critique_agentique(critique):
-    if not critique:
-        return
-    syn = critique.get("synthese", {})
-    st.markdown("#### Moteur critique")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        card("Score audit", f"{syn.get('score', 0)}/100", icone="🧠")
-    with c2:
-        card("Verdict", syn.get("verdict", "—"), couleur="#1a1a1a", icone="⚖️")
-    with c3:
-        card("Alertes", f"{syn.get('nb_alertes', 0)}", couleur="#f59e0b", icone="⚠️")
+    if not critique: return
+    syn=critique.get("synthese",{})
+    c1,c2,c3=st.columns(3)
+    with c1: card("Score audit",f"{syn.get('score',0)}/100",icone="🧠")
+    with c2: card("Verdict",syn.get("verdict","—"),couleur="#1a1a1a",icone="⚖️")
+    with c3: card("Alertes",f"{syn.get('nb_alertes',0)}",couleur="#f59e0b",icone="⚠️")
+    alertes=critique.get("alertes",[])
+    if alertes: tableau_resultats([{"Niveau":a["niveau"],"Tranche":a["tranche"],"Message":a["message"]} for a in alertes],"Alertes critiques")
 
-    alertes = critique.get("alertes", [])
-    if alertes:
-        rows = [{
-            "Niveau": a["niveau"],
-            "Tranche": a["tranche"],
-            "Message": a["message"]
-        } for a in alertes]
-        tableau_resultats(rows, "Alertes critiques")
+def afficher_memoire_metier(memoire):
+    if not memoire: return
+    st.markdown("#### Mémoire métier inter-dossiers")
+    if not memoire.get("disponible"): st.info(memoire.get("message","Mémoire indisponible.")); return
+    syn=memoire.get("synthese",{})
+    c1,c2,c3=st.columns(3)
+    with c1: card("Dossiers référence",syn.get("nb_dossiers_reference",0),icone="🧠")
+    with c2: card("Taux dossier",f"{syn.get('taux_global_dossier',0):.4%}",couleur="#1a1a1a",icone="📌")
+    with c3: card("Médiane historique",f"{syn.get('mediane_taux_global_historique',0):.4%}",couleur="#3b82f6",icone="📚")
+    rows=[{"Type":c["type"],"Dossier":f"{c['taux_dossier']:.4%}","Médiane hist.":f"{c['mediane_historique']:.4%}",
+        "Q25-Q75":f"{c['q25_historique']:.4%}/{c['q75_historique']:.4%}","Écart":f"{c['ecart_vs_mediane']:+.1%}",
+        "Diagnostic":c["diagnostic"],"N":c["n_reference"]} for c in memoire.get("comparaisons",[])]
+    if rows: tableau_resultats(rows)
 
+def afficher_challenger(challenge):
+    if not challenge: return
+    st.markdown("#### Agent challenger contradictoire")
+    rows=[{"Tranche":a["tranche"],"Type":a["type"],"Retenu":f"{a['taux_retenu']:.4%}",
+        "Prudentiel":f"{a['avis_prudentiel']:.4%}","Marché":f"{a['avis_marche']:.4%}",
+        "Équilibre":f"{a['avis_equilibre']:.4%}","Conflit":a["conflit"],"Arbitrage":a["arbitrage"]}
+        for a in challenge.get("avis",[])]
+    if rows: tableau_resultats(rows)
+
+def afficher_optimisation_avancee(opt):
+    if not opt: return
+    st.markdown("#### Optimisation avancée du programme")
+    st.caption(opt.get("message",""))
+    rows=[{"Rang":i,"Scénario":a["label"],"Prime":f"{a['prime']:,.0f} MAD",
+        "Taux global":f"{a['taux_global']:.4%}","Score":f"{a['score']:.2f}"}
+        for i,a in enumerate(opt.get("alternatives",[]),1)]
+    if rows: tableau_resultats(rows)
 
 def afficher_ml_agentique(ml):
-    if not ml:
-        return
+    if not ml: return
     st.markdown("#### Benchmark Machine Learning")
-    if not ml.get("disponible"):
-        st.info(ml.get("message", "ML non disponible."))
-        return
-
-    rows = []
-    for r in ml.get("modeles", []):
-        rows.append({
-            "Modèle": r.get("modele"),
-            "MAE": f"{r.get('MAE', 0):,.0f}" if r.get("MAE") is not None else "Erreur",
-            "RMSE": f"{r.get('RMSE', 0):,.0f}" if r.get("RMSE") is not None else "Erreur",
-            "R²": f"{r.get('R2', 0):.4f}" if r.get("R2") is not None else "Erreur",
-            "Statut": "✅" if r.get("MAE") is not None else r.get("erreur", "Erreur")
-        })
-    tableau_resultats(rows, "Comparaison des modèles ML")
-
+    if not ml.get("disponible"): st.info(ml.get("message","ML non disponible.")); return
+    rows=[{"Modèle":r.get("modele"),"MAE":f"{r.get('MAE',0):,.0f}" if r.get("MAE") else "Erreur",
+        "RMSE":f"{r.get('RMSE',0):,.0f}" if r.get("RMSE") else "Erreur",
+        "R²":f"{r.get('R2',0):.4f}" if r.get("R2") else "Erreur",
+        "Statut":"✅" if r.get("MAE") else r.get("erreur","Erreur")} for r in ml.get("modeles",[])]
+    tableau_resultats(rows,"Comparaison des modèles ML")
     if ml.get("importance"):
-        rows_imp = [{
-            "Variable": x["variable"],
-            "Importance": f"{x['importance']:.4f}"
-        } for x in ml["importance"]]
-        tableau_resultats(rows_imp, f"Variables importantes — {ml.get('meilleur_modele')}")
+        tableau_resultats([{"Variable":x["variable"],"Importance":f"{x['importance']:.4f}"} for x in ml["importance"]],
+            f"Variables importantes — {ml.get('meilleur_modele')}")
 
 
+# ════════════════════════════════════════════
 # AGENT PYTHON PUR — LOGIQUE ACTUARIELLE CODÉE
 # ════════════════════════════════════════════
 
@@ -4257,6 +3544,293 @@ def _executer_market_curve(rol_min, rol_max, r2_min, tolerance):
 
 
 
+# ══════════════════════════════════════════════════════════
+# MODULE ANALYSE DISTRIBUTIONS — Seuils · Fits · CDF · Tests
+# ══════════════════════════════════════════════════════════
+
+def _hill_estimates(sorted_desc, k_max=None):
+    n = len(sorted_desc)
+    if k_max is None: k_max = min(n-1, 200)
+    hills, ks = [], []
+    for k in range(1, k_max+1):
+        log_ratios = np.log(sorted_desc[:k] / sorted_desc[k])
+        h = k / np.sum(log_ratios) if np.sum(log_ratios) > 0 else np.nan
+        hills.append(h); ks.append(k)
+    return np.array(ks), np.array(hills)
+
+
+def _mean_excess(data, n_points=40):
+    data_s = np.sort(data)
+    u_min, u_max = np.percentile(data_s, 50), np.percentile(data_s, 95)
+    thresholds = np.linspace(u_min, u_max, n_points)
+    mef = []
+    for u in thresholds:
+        exc = data_s[data_s > u] - u
+        mef.append(np.mean(exc) if len(exc) >= 5 else np.nan)
+    return thresholds, np.array(mef)
+
+
+def _gertensgarbe_k(ks, hills):
+    valid = ~np.isnan(hills)
+    h = hills[valid]; k = ks[valid]
+    if len(h) < 10: return k[len(k)//2]
+    n = len(h)
+    s_prog = np.zeros(n); s_reg = np.zeros(n)
+    for i in range(1, n):
+        s_prog[i] = s_prog[i-1] + sum(1 for j in range(i) if h[j] < h[i])
+    h_rev = h[::-1]
+    for i in range(1, n):
+        s_reg[i] = s_reg[i-1] + sum(1 for j in range(i) if h_rev[j] < h_rev[i])
+    s_reg = s_reg[::-1]
+    crossings = np.where(np.diff(np.sign(s_prog - s_reg)))[0]
+    idx = crossings[0] if len(crossings) > 0 else np.argmin(np.abs(hills - np.nanmedian(hills)))
+    return int(k[min(idx, len(k)-1)])
+
+
+def _fit_severity(exceedances, threshold):
+    from scipy import stats
+    results = {}
+    x = exceedances
+    if len(x) < 10: return results
+    try:
+        alpha_h = len(x) / np.sum(np.log(x / threshold))
+        ks_p, pval_p = stats.kstest(x, lambda v: 1-(v/threshold)**(-alpha_h))
+        results["Pareto"] = {"alpha": alpha_h, "xm": threshold, "ks": ks_p, "pval": pval_p}
+    except: pass
+    try:
+        log_x = np.log(x); mu_ln, sigma_ln = np.mean(log_x), np.std(log_x)
+        ks_ln, pval_ln = stats.kstest(x, lambda v: stats.lognorm.cdf(v, s=sigma_ln, scale=np.exp(mu_ln)))
+        results["Log-Normale"] = {"mu": mu_ln, "sigma": sigma_ln, "ks": ks_ln, "pval": pval_ln}
+    except: pass
+    try:
+        y = x - threshold
+        xi, loc, beta = stats.genpareto.fit(y, floc=0)
+        ks_gp, pval_gp = stats.kstest(y, lambda v: stats.genpareto.cdf(v, xi, loc=0, scale=beta))
+        results["GPD"] = {"xi": xi, "beta": beta, "ks": ks_gp, "pval": pval_gp, "threshold": threshold}
+    except: pass
+    return results
+
+
+def _fit_frequency(counts):
+    from scipy import stats
+    results = {}
+    if len(counts) < 3: return results
+    mu = np.mean(counts); var = np.var(counts)
+    try:
+        ks_po, pval_po = stats.kstest(counts, lambda v: stats.poisson.cdf(v, mu))
+        results["Poisson"] = {"lambda": mu, "ks": ks_po, "pval": pval_po}
+    except: pass
+    try:
+        if var > mu:
+            r_nb = mu**2 / (var - mu); p_nb = r_nb / (r_nb + mu)
+            ks_nb, pval_nb = stats.kstest(counts, lambda v: stats.nbinom.cdf(v, r_nb, p_nb))
+            results["BN"] = {"r": r_nb, "p": p_nb, "ks": ks_nb, "pval": pval_nb}
+        else:
+            results["BN"] = {"note": "var <= mean — BN non applicable"}
+    except: pass
+    return results
+
+
+def _threshold_table(data, thresholds_pct):
+    from scipy import stats
+    rows = []
+    for pct in thresholds_pct:
+        u = np.percentile(data, pct)
+        exc = data[data > u]; n_exc = len(exc)
+        if n_exc < 5:
+            rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
+                         "Alpha Hill": "—", "KS stat": "—", "p-val KS": "—", "AD stat": "—", "Qualite": "Insuf."})
+            continue
+        alpha_h = n_exc / np.sum(np.log(exc / u))
+        ks_s, pval_ks = stats.kstest(exc, lambda v: 1-(v/u)**(-alpha_h))
+        try:
+            cdf_v = np.sort(1-(np.sort(exc)/u)**(-alpha_h))
+            nn = len(cdf_v); i_a = np.arange(1, nn+1)
+            ad_stat = -nn - np.mean((2*i_a-1)*(np.log(np.clip(cdf_v,1e-10,1-1e-10))+
+                                               np.log(np.clip(1-cdf_v[::-1],1e-10,1-1e-10))))
+        except: ad_stat = np.nan
+        qual = "Bon" if pval_ks>0.05 and not np.isnan(ad_stat) and ad_stat<2.5 else                "Acceptable" if pval_ks>0.01 else "Rejeté"
+        rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
+                     "Alpha Hill": f"{alpha_h:.4f}", "KS stat": f"{ks_s:.4f}",
+                     "p-val KS": f"{pval_ks:.4f}",
+                     "AD stat": f"{ad_stat:.4f}" if not np.isnan(ad_stat) else "—", "Qualite": qual})
+    return rows
+
+
+def section_analyse_distributions():
+    import matplotlib.pyplot as plt
+    from scipy import stats as sp_stats
+
+    if "df_proj" not in st.session_state or "alpha_est" not in st.session_state:
+        st.info("Transformez d\'abord le triangle.")
+        return
+
+    df_proj  = st.session_state["df_proj"]
+    seuil_0  = float(st.session_state["seuil_est"])
+    alpha_0  = float(st.session_state["alpha_est"])
+    lambda_0 = float(st.session_state["lambda_est"])
+
+    all_sev  = df_proj["Sprime_ultime"].values; all_sev = all_sev[all_sev > 0]
+    sev_data = all_sev[all_sev > seuil_0]
+    freq_data = df_proj.groupby("annee_surv").size().values
+
+    if len(sev_data) < 10:
+        st.warning(f"Seulement {len(sev_data)} sinistres au-dessus du seuil — augmentez le triangle ou réduisez le seuil.")
+        return
+
+    tabs_d = st.tabs(["Sélection du seuil", "Sévérité — Fits & CDF", "Fréquence", "Paramètres manuels"])
+
+    # ── Onglet A : seuil ──
+    with tabs_d[0]:
+        sorted_desc = np.sort(all_sev)[::-1]
+        ks_arr, hills_arr = _hill_estimates(sorted_desc, k_max=min(len(sorted_desc)-1, 150))
+        k_gert = _gertensgarbe_k(ks_arr, hills_arr)
+        alpha_gert = float(hills_arr[k_gert-1]) if k_gert <= len(hills_arr) else alpha_0
+
+        col_h, col_m = st.columns(2)
+        with col_h:
+            fig_h, ax_h = plt.subplots(figsize=(6,3))
+            ax_h.plot(ks_arr, hills_arr, color="#1a1a1a", lw=1.5)
+            ax_h.axvline(k_gert, color="#ef4444", ls="--", lw=1.5,
+                         label=f"Gertensgarbe k={k_gert} → α={alpha_gert:.3f}")
+            ax_h.axhline(alpha_0, color="#2d8a4e", ls=":", lw=1.2, label=f"α actuel={alpha_0:.3f}")
+            ax_h.set_xlabel("k"); ax_h.set_ylabel("α(k)"); ax_h.set_title("Hill Plot")
+            ax_h.legend(fontsize=8); ax_h.grid(alpha=0.3)
+            st.pyplot(fig_h); plt.close()
+        with col_m:
+            u_mef, e_mef = _mean_excess(all_sev)
+            fig_m, ax_m = plt.subplots(figsize=(6,3))
+            ax_m.plot(u_mef, e_mef, color="#2d8a4e", lw=2)
+            ax_m.axvline(seuil_0, color="#ef4444", ls="--", lw=1.5, label=f"Seuil={seuil_0:,.0f}")
+            ax_m.set_xlabel("u"); ax_m.set_ylabel("e(u)"); ax_m.set_title("Mean Excess Function")
+            ax_m.legend(fontsize=8); ax_m.grid(alpha=0.3)
+            st.pyplot(fig_m); plt.close()
+
+        pcts = [50, 60, 70, 75, 80, 85, 90, 95]
+        rows_s = _threshold_table(all_sev, pcts)
+        df_s = pd.DataFrame(rows_s)
+        st.dataframe(df_s, use_container_width=True)
+        st.caption("Bon = KS p-val > 5% et AD < 2.5 | Acceptable = KS p-val > 1%")
+
+        best_row = next((r for r in rows_s if r["Qualite"] == "Bon"), None)
+        if best_row:
+            st.success(f"Recommandé : {best_row['Seuil %']} = {best_row['Seuil MAD']} MAD — α={best_row['Alpha Hill']}")
+            if st.button("Appliquer", key="btn_apply_seuil"):
+                st.session_state["seuil_est"] = float(best_row["Seuil MAD"].replace(",","").replace(" ",""))
+                st.session_state["alpha_est"] = float(best_row["Alpha Hill"])
+                st.rerun()
+
+    # ── Onglet B : sévérité ──
+    with tabs_d[1]:
+        fits_sev = _fit_severity(sev_data, seuil_0)
+        if fits_sev:
+            st.dataframe(pd.DataFrame([{
+                "Distribution": n,
+                "Paramètres": (f"α={f['alpha']:.4f}" if n=="Pareto" else
+                               f"μ={f['mu']:.3f} σ={f['sigma']:.3f}" if n=="Log-Normale" else
+                               f"ξ={f['xi']:.4f} β={f['beta']:.0f}"),
+                "KS": f"{f['ks']:.4f}", "p-val": f"{f['pval']:.4f}",
+                "Adéquation": "Bon" if f["pval"]>0.05 else "Acceptable" if f["pval"]>0.01 else "Rejeté"
+            } for n, f in fits_sev.items()]), use_container_width=True)
+
+        fig_c, axes_c = plt.subplots(1, 2, figsize=(12,4))
+        x_s = np.sort(sev_data)
+        axes_c[0].plot(x_s, np.arange(1,len(x_s)+1)/len(x_s), "k-", lw=2.5, label="Empirique")
+        colors_d = {"Pareto":"#ef4444","Log-Normale":"#3b82f6","GPD":"#2d8a4e"}
+        for nom, f in fits_sev.items():
+            try:
+                col = colors_d.get(nom,"#888")
+                if nom=="Pareto": y = np.clip(1-(x_s/f["xm"])**(-f["alpha"]),0,1)
+                elif nom=="Log-Normale": y = sp_stats.lognorm.cdf(x_s, s=f["sigma"], scale=np.exp(f["mu"]))
+                elif nom=="GPD": y = sp_stats.genpareto.cdf(x_s-seuil_0, f["xi"], loc=0, scale=f["beta"])
+                else: continue
+                axes_c[0].plot(x_s, y, "--", color=col, lw=1.8, label=f"{nom} p={f['pval']:.3f}")
+            except: pass
+        axes_c[0].set_xlabel("MAD"); axes_c[0].set_ylabel("F(x)")
+        axes_c[0].set_title("CDF Sévérité"); axes_c[0].legend(fontsize=8); axes_c[0].grid(alpha=0.3)
+        # QQ-Plot
+        log_x = np.log(np.sort(sev_data)/seuil_0); n_q = len(log_x)
+        th_q = -np.log(1-(np.arange(1,n_q+1)/(n_q+1)))
+        axes_c[1].scatter(th_q, log_x, color="#2d8a4e", s=15, alpha=0.7)
+        mn_q = min(th_q.min(), log_x.min()); mx_q = max(th_q.max(), log_x.max())
+        axes_c[1].plot([mn_q,mx_q],[mn_q,mx_q],"r--",lw=1.5)
+        axes_c[1].set_xlabel("Quantiles Exp(1)"); axes_c[1].set_ylabel("log(X/seuil)")
+        axes_c[1].set_title("QQ-Plot Pareto"); axes_c[1].grid(alpha=0.3)
+        st.pyplot(fig_c); plt.close()
+
+    # ── Onglet C : fréquence ──
+    with tabs_d[2]:
+        fits_freq = _fit_frequency(freq_data)
+        if fits_freq:
+            rows_fr = []
+            for nom, f in fits_freq.items():
+                if "note" in f: rows_fr.append({"Distribution":nom,"Paramètres":f["note"],"KS":"—","p-val":"—","Adéquation":"—"})
+                else: rows_fr.append({"Distribution":nom,
+                    "Paramètres": f"λ={f['lambda']:.3f}" if nom=="Poisson" else f"r={f['r']:.3f} p={f['p']:.4f}",
+                    "KS": f"{f['ks']:.4f}", "p-val": f"{f['pval']:.4f}",
+                    "Adéquation": "Bon" if f["pval"]>0.05 else "Acceptable" if f["pval"]>0.01 else "Rejeté"})
+            st.dataframe(pd.DataFrame(rows_fr), use_container_width=True)
+
+        fig_fr, ax_fr = plt.subplots(figsize=(8,4))
+        v, c = np.unique(freq_data, return_counts=True)
+        ax_fr.bar(v, c/len(freq_data), color="#2d8a4e", alpha=0.7, label="Observée", zorder=3)
+        x_r = np.arange(0, max(freq_data)+2)
+        if "Poisson" in fits_freq and "pval" in fits_freq["Poisson"]:
+            ax_fr.plot(x_r, sp_stats.poisson.pmf(x_r, fits_freq["Poisson"]["lambda"]),
+                       "r--o", ms=5, lw=1.5, label=f"Poisson(λ={fits_freq['Poisson']['lambda']:.2f})")
+        if "BN" in fits_freq and "r" in fits_freq["BN"]:
+            f_nb = fits_freq["BN"]
+            ax_fr.plot(x_r, sp_stats.nbinom.pmf(x_r, f_nb["r"], f_nb["p"]),
+                       "b--s", ms=5, lw=1.5, label=f"BN(r={f_nb['r']:.2f})")
+        ax_fr.set_xlabel("Sinistres/an"); ax_fr.set_title("Fréquence annuelle")
+        ax_fr.legend(); ax_fr.grid(alpha=0.3)
+        st.pyplot(fig_fr); plt.close()
+        disp_ratio = float(np.var(freq_data)/max(np.mean(freq_data),0.01))
+        st.info(f"Indice de dispersion = {disp_ratio:.2f} ({'surdispersion → BN pertinente' if disp_ratio>1.2 else 'équidispersion → Poisson adapté'})")
+
+    # ── Onglet D : manuel ──
+    with tabs_d[3]:
+        c1,c2,c3 = st.columns(3)
+        with c1: alpha_m  = st.slider("Alpha",  0.5, 5.0,  float(alpha_0),  0.05, key="alpha_manual")
+        with c2: lambda_m = st.slider("Lambda", 0.5, 30.0, float(lambda_0), 0.5,  key="lambda_manual")
+        with c3:
+            p40 = int(np.percentile(all_sev, 40)); p92 = int(np.percentile(all_sev, 92))
+            seuil_m = st.slider("Seuil MAD", p40, p92, int(seuil_0), 50000, key="seuil_manual")
+
+        exc_m = all_sev[all_sev > seuil_m]
+        if len(exc_m) >= 5:
+            fig_mn, ax_mn = plt.subplots(figsize=(8,3))
+            xs_m = np.sort(exc_m)
+            ax_mn.plot(xs_m, np.arange(1,len(xs_m)+1)/len(xs_m), "k-", lw=2, label="Empirique")
+            ax_mn.plot(xs_m, np.clip(1-(xs_m/seuil_m)**(-alpha_m),0,1), "r--", lw=1.8,
+                       label=f"Pareto(α={alpha_m:.2f})")
+            ax_mn.set_xlabel("MAD"); ax_mn.set_title("CDF Sévérité — paramètres manuels")
+            ax_mn.legend(); ax_mn.grid(alpha=0.3)
+            st.pyplot(fig_mn); plt.close()
+        if st.button("Appliquer ces paramètres", type="primary", key="apply_manual"):
+            st.session_state["alpha_est"]  = alpha_m
+            st.session_state["lambda_est"] = lambda_m
+            st.session_state["seuil_est"]  = float(seuil_m)
+            st.success(f"Paramètres mis à jour : α={alpha_m:.4f}, λ={lambda_m:.4f}, seuil={seuil_m:,.0f}")
+            st.rerun()
+
+    # Stocker pour l\'agent LLM
+    try:
+        fits_sev_stored = _fit_severity(sev_data, seuil_0)
+        fits_freq_stored = _fit_frequency(freq_data)
+        st.session_state["dist_fit_results"] = {
+            "severity": {k: {kk: float(vv) if isinstance(vv,(int,float,np.floating)) else vv
+                             for kk,vv in v.items() if kk != "threshold"}
+                         for k,v in fits_sev_stored.items()},
+            "frequency": {k: {kk: float(vv) if isinstance(vv,(int,float,np.floating)) else vv
+                               for kk,vv in v.items()}
+                          for k,v in fits_freq_stored.items()},
+            "n_exceedances": int(len(sev_data)),
+            "overdispersion_ratio": float(np.var(freq_data)/max(np.mean(freq_data),0.01)),
+            "alpha_gert": alpha_gert,
+        }
+    except: pass
+
 
 # ════════════════════════════════════════════
 # TAB AGENT — AGENT PYTHON PUR (HORS LIGNE)
@@ -4337,74 +3911,36 @@ with tab_agent:
             agent.etape_4_market_curve()
             prog_bar.progress(90, "Rapport...")
             agent.etape_5_rapport()
-
-            # ── Moteur de raisonnement / critique / ML
-            contexte_agentique = {
-                "has_triangle": "df_proj" in st.session_state,
-                "has_market": st.session_state.get("df_mkt_clean") is not None,
-                "n_rows": len(st.session_state.get("df_proj", [])) if "df_proj" in st.session_state else 0,
-                "n_tranches": len(tranches_input),
-            }
-
-            moteur_raisonnement = AgentRaisonnement()
-            plan_agentique = moteur_raisonnement.planifier(contexte_agentique)
-
-            moteur_critique = AgentCritique()
-            critique_agentique = moteur_critique.auditer(
-                tranches=agent.tranches,
-                gnpi=agent.gnpi,
-                resultats_bc=agent.resultats_bc,
-                resultats_sim=agent.resultats_sim,
-                resultats_mkt=agent.resultats_mkt,
-                rapport_rows=agent.rapport_rows
-            )
-
-            for a in critique_agentique.get("alertes", []):
-                agent._alerte(a.get("niveau", "INFO"),
-                              f"{a.get('tranche', '')}: {a.get('message', '')}")
-
-            for d in critique_agentique.get("decisions", []):
-                agent._log("Moteur critique",
-                           d.get("decision", ""),
-                           d.get("tranche", ""))
-
-            moteur_ml = AgentML()
-            ml_agentique = moteur_ml.entrainer_depuis_df_proj(agent.df_proj, target="Sprime_ultime")
-
-            # ── Nouvelle couche V3 : mémoire métier, challenger contradictoire, optimisation exploratoire
-            moteur_memoire = AgentMemoireMetier()
-            memoire_metier = moteur_memoire.benchmark(
-                user_email=st.session_state.get("user_email", ""),
-                tranches=agent.tranches,
-                rapport_rows=agent.rapport_rows,
-                gnpi=agent.gnpi,
-                current_session_id=st.session_state.get("db_session_id")
-            )
-
-            moteur_challenger = AgentChallenger()
-            challenge_agentique = moteur_challenger.challenger(
-                tranches=agent.tranches,
-                resultats_bc=agent.resultats_bc,
-                resultats_sim=agent.resultats_sim,
-                resultats_mkt=agent.resultats_mkt,
-                rapport_rows=agent.rapport_rows
-            )
-
-            moteur_optimisation = AgentOptimisationProgramme(agent.gnpi)
-            optimisation_avancee = moteur_optimisation.explorer(
-                tranches=agent.tranches,
-                resultats_bc=agent.resultats_bc,
-                resultats_sim=agent.resultats_sim,
-                resultats_mkt=agent.resultats_mkt,
-                objectif="equilibre",
-                prime_cible=None,
-                top_n=8
-            )
-
             prog_bar.progress(95, "Optimisation du programme...")
             agent.variantes = agent.etape_6_optimisation()
             rapport_txt = agent.generer_rapport_texte()
             prog_bar.progress(100, "Terminé.")
+
+            # ── Moteurs agentiques V2 ──
+            contexte_ag = {
+                "has_triangle": "df_proj" in st.session_state,
+                "has_market":   st.session_state.get("df_mkt_clean") is not None,
+                "n_rows":       len(agent.df_proj) if agent.df_proj is not None else 0,
+            }
+            plan_ag     = AgentRaisonnement().planifier(contexte_ag)
+            critique_ag = AgentCritique().auditer(agent.tranches, agent.gnpi,
+                              agent.resultats_bc, agent.resultats_sim,
+                              agent.resultats_mkt, agent.rapport_rows)
+            # Remonter les alertes critique dans l'agent
+            for a in critique_ag.get("alertes",[]):
+                agent._alerte(a.get("niveau","INFO"), f"{a.get('tranche','')}: {a.get('message','')}")
+            ml_ag       = AgentML().entrainer_depuis_df_proj(agent.df_proj)
+            memoire_ag  = AgentMemoireMetier().benchmark(
+                              user_email=st.session_state.get("user_email",""),
+                              tranches=agent.tranches, rapport_rows=agent.rapport_rows,
+                              gnpi=agent.gnpi,
+                              current_session_id=st.session_state.get("db_session_id"))
+            challenge_ag = AgentChallenger().challenger(
+                              agent.tranches, agent.resultats_bc, agent.resultats_sim,
+                              agent.resultats_mkt, agent.rapport_rows)
+            opt_ag       = AgentOptimisationProgramme(agent.gnpi).explorer(
+                              agent.tranches, agent.resultats_bc, agent.resultats_sim,
+                              agent.resultats_mkt, objectif="equilibre", top_n=8)
 
             # Stocker dans session_state
             st.session_state["resultats_bc"]        = agent.resultats_bc
@@ -4415,14 +3951,14 @@ with tab_agent:
             st.session_state["agent_py_log"]         = agent.log
             st.session_state["agent_py_anomalies"]   = agent.anomalies
             st.session_state["agent_py_rapport"]     = rapport_txt
-            st.session_state["agent_py_variantes"]   = agent.variantes
-            st.session_state["agent_plan_agentique"] = plan_agentique
-            st.session_state["agent_critique"]       = critique_agentique
-            st.session_state["agent_ml"]             = ml_agentique
-            st.session_state["agent_memoire_metier"] = memoire_metier
-            st.session_state["agent_challenger"]     = challenge_agentique
-            st.session_state["agent_optimisation_avancee"] = optimisation_avancee
-            st.session_state["agent_py_done"]        = True
+            st.session_state["agent_py_variantes"]          = agent.variantes
+            st.session_state["agent_plan_agentique"]         = plan_ag
+            st.session_state["agent_critique"]               = critique_ag
+            st.session_state["agent_ml"]                     = ml_ag
+            st.session_state["agent_memoire_metier"]         = memoire_ag
+            st.session_state["agent_challenger"]             = challenge_ag
+            st.session_state["agent_optimisation_avancee"]   = opt_ag
+            st.session_state["agent_py_done"]                = True
 
             # Auto-save
             try:
@@ -4437,14 +3973,15 @@ with tab_agent:
     # ── Affichage des résultats ──
     if st.session_state.get("agent_py_done"):
 
-        # ── Couche agentique V3 : raisonnement, critique, mémoire, challenger, ML, optimisation
-        with st.expander("🧠 Agent actuariel augmenté : raisonnement, critique, mémoire, challenger, ML", expanded=True):
-            afficher_plan_agentique(st.session_state.get("agent_plan_agentique"))
-            afficher_critique_agentique(st.session_state.get("agent_critique"))
-            afficher_memoire_metier(st.session_state.get("agent_memoire_metier"))
-            afficher_challenger(st.session_state.get("agent_challenger"))
-            afficher_ml_agentique(st.session_state.get("agent_ml"))
-            afficher_optimisation_avancee(st.session_state.get("agent_optimisation_avancee"))
+        # ── Moteurs agentiques V2 ──
+        if any(st.session_state.get(k) for k in ["agent_plan_agentique","agent_critique","agent_ml","agent_memoire_metier","agent_challenger","agent_optimisation_avancee"]):
+            with st.expander("Raisonnement · Critique · Mémoire · Challenger · ML · Optimisation avancée", expanded=True):
+                afficher_plan_agentique(st.session_state.get("agent_plan_agentique"))
+                afficher_critique_agentique(st.session_state.get("agent_critique"))
+                afficher_memoire_metier(st.session_state.get("agent_memoire_metier"))
+                afficher_challenger(st.session_state.get("agent_challenger"))
+                afficher_ml_agentique(st.session_state.get("agent_ml"))
+                afficher_optimisation_avancee(st.session_state.get("agent_optimisation_avancee"))
 
         # ── Alertes
         anomalies = st.session_state.get("agent_py_anomalies", [])
@@ -4557,8 +4094,7 @@ with tab_agent:
         st.markdown("")
         if st.button("Nouvelle tarification", key="relancer_py"):
             for k in ["agent_py_done","agent_py_log","agent_py_anomalies",
-                      "agent_py_rapport","agent_py_variantes",
-                      "agent_plan_agentique","agent_critique","agent_ml"]:
+                      "agent_py_rapport","agent_py_variantes"]:
                 st.session_state.pop(k, None)
             st.rerun()
 
@@ -5440,33 +4976,6 @@ Agis de façon professionnelle et autonome."""
                 with c1: card("Prime totale", f"{pt:,.0f} MAD", icone="💰")
                 with c2: card("Taux global",  f"{pt/gnpi_v:.4%}", couleur="#1a1a1a", icone="📊")
                 with c3: card("Agent",        "Complet ✅", couleur="#3b82f6", icone="🚀")
-
-                # ── Surcouche V3 sur l'agent LLM : mémoire métier + challenger + optimisation avancée
-                try:
-                    prog_llm = st.session_state.get("tranches_p3", tranches_input)
-                    rpt_rows_llm = st.session_state["df_rapport"].to_dict("records")
-                    mem_llm = AgentMemoireMetier().benchmark(
-                        user_email=st.session_state.get("user_email", ""),
-                        tranches=prog_llm, rapport_rows=rpt_rows_llm, gnpi=gnpi_v,
-                        current_session_id=st.session_state.get("db_session_id")
-                    )
-                    ch_llm = AgentChallenger().challenger(
-                        prog_llm, st.session_state.get("resultats_bc", []),
-                        st.session_state.get("resultats_sim", []),
-                        st.session_state.get("taux_mkt_final", []), rpt_rows_llm
-                    )
-                    opt_llm = AgentOptimisationProgramme(gnpi_v).explorer(
-                        prog_llm, st.session_state.get("resultats_bc", []),
-                        st.session_state.get("resultats_sim", []),
-                        st.session_state.get("taux_mkt_final", []),
-                        objectif="equilibre", top_n=8
-                    )
-                    with st.expander("🧠 Surcouche V3 — mémoire, challenger, optimisation", expanded=True):
-                        afficher_memoire_metier(mem_llm)
-                        afficher_challenger(ch_llm)
-                        afficher_optimisation_avancee(opt_llm)
-                except Exception as e:
-                    st.info(f"Surcouche V3 non affichée : {e}")
 
 
     # ── Lancement Phase 3 ──
