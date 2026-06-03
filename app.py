@@ -204,11 +204,21 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
     TableStyle, PageBreak, HRFlowable)
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 import io as _io_db
+from xml.sax.saxutils import escape
 
 _VERT  = colors.HexColor("#2d8a4e")
 _NOIR  = colors.HexColor("#1a1a1a")
 _GRIS  = colors.HexColor("#f4f6f4")
 _GRIS2 = colors.HexColor("#888888")
+
+
+def _rl_safe(x):
+    """Sécurise le texte envoyé à ReportLab Paragraph().
+    Évite les erreurs paraparser quand le texte contient <, > ou &.
+    """
+    if x is None:
+        return ""
+    return escape(str(x))
 
 def _pdf_styles():
     s = getSampleStyleSheet()
@@ -234,7 +244,7 @@ def _pdf_table_rl(data_rows, col_widths=None):
         r = []
         for cell in row:
             sty = S["AR_CellB"] if i == 0 else S["AR_Cell"]
-            r.append(Paragraph(str(cell), sty))
+            r.append(Paragraph(_rl_safe(cell), sty))
         rows.append(r)
     t = Table(rows, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
@@ -371,8 +381,9 @@ def generer_pdf_rapport(user_email, gnpi_val, tranches,
             line = line.strip()
             if not line: story.append(Spacer(1, 0.15*cm)); continue
             line_c = line.replace("**","").replace("*","").replace("`","").replace("#","")
-            if line.startswith("## "): story.append(Paragraph(line[3:], S["AR_H2"]))
-            elif line.startswith("# "): story.append(Paragraph(line[2:], S["AR_H1"]))
+            line_c = _rl_safe(line_c)
+            if line.startswith("## "): story.append(Paragraph(_rl_safe(line[3:]), S["AR_H2"]))
+            elif line.startswith("# "): story.append(Paragraph(_rl_safe(line[2:]), S["AR_H1"]))
             else: story.append(Paragraph(line_c, S["AR_Body"]))
 
     # ── FOOTER ──
