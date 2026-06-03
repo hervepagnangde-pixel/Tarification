@@ -920,6 +920,7 @@ RÔLE
 RÈGLES ABSOLUES
 ════════════════════════════════════════════
 1. ANTI-HALLUCINATION : Ne jamais inventer. Si incertain → "Information insuffisante."
+2. TRIANGLE INTERDIT : Ne JAMAIS générer, afficher ou simuler un triangle de développement dans tes réponses texte. Les données réelles sont visibles dans l'onglet 🔥 Burning Cost → expander "Triangle individuel". Dis simplement : "Consultez le triangle réel dans l'onglet BC."
 2. RAISONNEMENT : [Observation] → [Analyse] → [Conclusion] avec chiffres.
 3. CONTRAINTES MÉTIER :
 {contraintes if contraintes else "   - Taux techniques positifs et < 50%\n   - Ecart BC/Sim > 25% signalé\n   - BC=0 tranche cat NORMAL"}
@@ -2428,1448 +2429,591 @@ with tab6:
             gnpi)
 
 # ════════════════════════════════════════════
-# TAB AGENT — MODE AGENT AUTONOME
+# AGENT PYTHON PUR — LOGIQUE ACTUARIELLE CODÉE
 # ════════════════════════════════════════════
 
-with tab_agent:
-    section_header("Mode Agent Autonome", "Claude exécute la tarification complète de A à Z", "🤖")
+class AgentActuarielPython:
+    """
+    Agent de tarification 100% Python — aucun LLM, aucune API.
+    Logique actuarielle codée explicitement. Fonctionne hors ligne.
+    """
 
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d2b1a,#1a1a1a);border-radius:12px;
-        padding:20px 24px;margin-bottom:20px;border:1px solid rgba(45,138,78,0.4)">
-        <div style="color:#2d8a4e;font-weight:700;font-size:15px;margin-bottom:8px">
-            ⚡ Comment fonctionne le Mode Agent
-        </div>
-        <div style="color:#ccc;font-size:13px;line-height:1.8">
-            1. Vous uploadez les fichiers et définissez le programme<br>
-            2. Claude <b style="color:#2d8a4e">décide seul</b> de l'ordre et des paramètres<br>
-            3. Claude <b style="color:#2d8a4e">appelle les outils</b> (BC, Simulation, Market Curve)<br>
-            4. Claude <b style="color:#2d8a4e">reboucle</b> si anomalie détectée<br>
-            5. Claude produit le <b style="color:#2d8a4e">rapport final autonome</b>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    def __init__(self, tranches, gnpi, df_proj, coeffs,
+                 alpha_est, lambda_est, seuil_est, Pm_proxy,
+                 chargement_majeurs, df_mkt_clean=None):
+        self.tranches           = tranches
+        self.gnpi               = gnpi
+        self.df_proj            = df_proj
+        self.coeffs             = coeffs
+        self.alpha              = alpha_est
+        self.lambda_            = lambda_est
+        self.seuil              = seuil_est
+        self.Pm_proxy           = Pm_proxy
+        self.chargement_majeurs = chargement_majeurs
+        self.df_mkt             = df_mkt_clean
+        self.log                = []   # journal des décisions
+        self.anomalies          = []   # alertes détectées
+        self.resultats_bc       = []
+        self.resultats_sim      = []
+        self.resultats_mkt      = []
+        self.rapport_rows       = []
+        self.prime_totale       = 0.0
 
-    # ── Prérequis ──
-    prereqs = {
-        "Programme validé"  : "df_prog"    in st.session_state,
-        "Triangle transformé": "df_proj"   in st.session_state,
-        "Données marché"    : "df_mkt_clean" in st.session_state,
-    }
-    c1, c2, c3 = st.columns(3)
-    for col, (nom, ok) in zip([c1, c2, c3], prereqs.items()):
-        col.markdown(f"""<div style="background:{'rgba(45,138,78,0.12)' if ok else 'rgba(239,68,68,0.08)'};
-            border:1px solid {'#2d8a4e' if ok else '#ef4444'};border-radius:10px;
-            padding:14px;text-align:center">
-            <div style="font-size:22px">{'✅' if ok else '❌'}</div>
-            <div style="font-size:12px;font-weight:600;color:{'#2d8a4e' if ok else '#ef4444'};margin-top:4px">{nom}</div>
-            </div>""", unsafe_allow_html=True)
+    # ────────────────────────────────────────────
+    def _log(self, etape, decision, detail=""):
+        self.log.append({"etape": etape, "decision": decision, "detail": detail})
 
-    st.markdown("")
+    def _alerte(self, niveau, message):
+        """niveau: INFO / WARN / CRITIQUE"""
+        icone = {"INFO": "ℹ️", "WARN": "⚠️", "CRITIQUE": "🚨"}.get(niveau, "ℹ️")
+        self.anomalies.append({"niveau": niveau, "icone": icone, "message": message})
 
-    # ── Instructions agent ──
-    with st.expander("🎯 Instructions pour l'agent (optionnel)", expanded=False):
-        agent_instructions = st.text_area(
-            "Directives spécifiques",
-            placeholder="Emirates/Partner Re : 13M xs 2M (trav.) | 10M xs 15M (cat) | 15M xs 25M (cat). AAL=26M AAD=4M, 2 reconst 100%, brokage 7%, frais 5%, marge 10%, retro 0.21%. Market curve cat uniquement R2>=0.45. Proposer variantes A/B/C.",
-            height=120, key="agent_instructions")
-        agent_contraintes = st.text_area(
-            "Contraintes métier",
-            placeholder="Ex: Ne pas retenir alpha < 1.0. R2 < 0.30 market curve = alerte. BC=0 cat = NORMAL. Ecart BC/Sim > 30% = alerte.",
-            height=80, key="agent_contraintes")
+    # ────────────────────────────────────────────
+    # ÉTAPE 1 — VALIDATION DES PARAMÈTRES
+    # ────────────────────────────────────────────
+    def etape_0_validation(self):
+        self._log("Validation", "Vérification des paramètres actuariels")
 
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        n_sim_agent = st.number_input("Nb simulations (agent)", value=10000, step=5000, key="n_sim_agent")
-    with col2:
-        st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
-        lancer = st.button("🚀 Lancer l'Agent", type="primary", use_container_width=True,
-                           disabled=not all(prereqs.values()) or not api_key)
+        # Alpha
+        if self.alpha < 0.8:
+            self._alerte("CRITIQUE", f"Alpha = {self.alpha:.4f} < 0.8 — queue trop lourde, résultats suspects")
+        elif self.alpha > 4.0:
+            self._alerte("WARN", f"Alpha = {self.alpha:.4f} > 4.0 — distribution proche normale, vérifier la modélisation")
+        else:
+            self._log("Alpha", f"OK — {self.alpha:.4f} dans la plage [0.8, 4.0]")
 
-    if not api_key:
-        st.warning("⚠️ Clé API requise dans la sidebar")
-    elif not all(prereqs.values()):
-        manquants_agent = [n for n, ok in prereqs.items() if not ok]
-        st.warning(f"⚠️ Complétez d'abord : {', '.join(manquants_agent)}")
+        # Lambda
+        if self.lambda_ < 0.5:
+            self._alerte("WARN", f"Lambda = {self.lambda_:.4f} très faible — fréquence quasi nulle au-dessus du seuil")
+        elif self.lambda_ > 50:
+            self._alerte("WARN", f"Lambda = {self.lambda_:.4f} très élevé — vérifier le seuil de modélisation")
+        else:
+            self._log("Lambda", f"OK — {self.lambda_:.4f} sinistres/an au-dessus du seuil")
 
-    # ════════════════════════
-    # DÉFINITION DES OUTILS
-    # ════════════════════════
+        # Programme
+        trav = [t for t in self.tranches if t["type"] == "travaillante"]
+        cat  = [t for t in self.tranches if t["type"] == "cat"]
+        if not trav:
+            self._alerte("WARN", "Aucune tranche travaillante dans le programme")
+        if not cat:
+            self._alerte("INFO", "Aucune tranche cat — market curve non applicable")
+        self._log("Programme", f"{len(trav)} travaillante(s), {len(cat)} cat")
 
-    AGENT_TOOLS = [
-        {
-            "name": "calculer_burning_cost",
-            "description": """Calcule le Burning Cost pour toutes les tranches du programme.
-Formule : Ck = min(max(S'k_ultime - D, 0), L) × coeff_stab
-Reconstitution : Pr_Rec = (1/L) × Σ_n Σ_r [t_r × min(L, max(C_n-(r-1)L, 0))]
-Rec = Pr_Rec / (Pr_Rec + N)
-τ_tech = τ_risque × (1-Rec) / (1 - BK - FG - AF)
-Retourne les taux pur, risque, technique et final par tranche.""",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "justification": {"type": "string", "description": "Pourquoi tu lances le BC maintenant"}
-                },
-                "required": ["justification"]
-            }
-        },
-        {
-            "name": "lancer_simulation",
-            "description": """Lance la simulation stochastique Pareto/Poisson.
-Simule N sinistres selon Pareto(alpha, seuil), fréquence selon Poisson(lambda).
-Retourne les taux pur, risque, technique et final par tranche, plus l'impact des conditions.""",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "alpha"        : {"type": "number",  "description": "Paramètre de forme Pareto (MLE Hill)"},
-                    "lambda_"      : {"type": "number",  "description": "Fréquence annuelle Poisson"},
-                    "seuil"        : {"type": "number",  "description": "Seuil de modélisation (MAD)"},
-                    "n_sim"        : {"type": "integer", "description": "Nombre de simulations"},
-                    "justification": {"type": "string",  "description": "Pourquoi ces paramètres"}
-                },
-                "required": ["alpha", "lambda_", "seuil", "n_sim", "justification"]
-            }
-        },
-        {
-            "name": "construire_market_curve",
-            "description": """Ajuste le modèle ROL = a × x^(-b) sur les données marché.
-x = (D + C/2) / GNPI (midpoint normalisé).
-τ_pur = ROL × C / GNPI. Retourne les taux par tranche pour le meilleur ajustement.""",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "rol_min"      : {"type": "number", "description": "ROL minimum à retenir (ex: 0.05)"},
-                    "rol_max"      : {"type": "number", "description": "ROL maximum à retenir (ex: 1.0)"},
-                    "r2_min"       : {"type": "number", "description": "R² minimum acceptable (ex: 0.30)"},
-                    "tolerance"    : {"type": "number", "description": "Tolérance proximité ROL≈midpoint (ex: 0.50)"},
-                    "justification": {"type": "string", "description": "Pourquoi ces filtres"}
-                },
-                "required": ["rol_min", "rol_max", "r2_min", "tolerance", "justification"]
-            }
-        },
-        {
-            "name": "generer_rapport_final",
-            "description": """Génère le rapport de synthèse final avec les taux retenus.
-Compare BC, simulation et market curve. Sélectionne la méthode par tranche.
-Retourne le tableau de synthèse et la prime totale.""",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "methode_travaillante": {
-                        "type": "string",
-                        "enum": ["bc", "simulation", "moyenne_bc_sim"],
-                        "description": "Méthode retenue pour tranches travaillantes"
-                    },
-                    "methode_cat": {
-                        "type": "string",
-                        "enum": ["simulation", "market_curve", "max_sim_mkt"],
-                        "description": "Méthode retenue pour tranches cat"
-                    },
-                    "justification": {"type": "string", "description": "Justification du choix des méthodes"}
-                },
-                "required": ["methode_travaillante", "methode_cat", "justification"]
-            }
-        },
-        {
-            "name": "signaler_anomalie",
-            "description": "Signale une anomalie détectée et indique l'action corrective à mener.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "type_anomalie": {
-                        "type": "string",
-                        "enum": ["ecart_bc_sim_eleve", "alpha_suspect", "r2_insuffisant",
-                                 "taux_nul", "incoherence_inter_tranches", "autre"]
-                    },
-                    "description": {"type": "string", "description": "Description de l'anomalie"},
-                    "action"     : {"type": "string", "description": "Action corrective proposée"}
-                },
-                "required": ["type_anomalie", "description", "action"]
-            }
-        }
-    ]
-
-    # ════════════════════════
-    # EXÉCUTEURS D'OUTILS
-    # ════════════════════════
-
-    def _executer_burning_cost():
-        """Exécute le calcul BC et retourne les résultats"""
-        if "df_proj" not in st.session_state: return {"erreur": "df_proj manquant"}
-        df_proj = st.session_state["df_proj"].copy()
+    # ────────────────────────────────────────────
+    # ÉTAPE 2 — BURNING COST
+    # ────────────────────────────────────────────
+    def etape_1_burning_cost(self):
+        self._log("Burning Cost", "Calcul BC individuel par sinistre, agrégation annuelle")
         resultats = []
-        for t_info in tranches_input:
-            D = t_info["priorite"]; L = t_info["portee"]
-            aal = t_info["AAL"]; aad = t_info["AAD"]
-            n_rec = t_info["nb_reconstitutions"]; t_r = t_info["taux_reconstitution"] / 100
+        for t_info in self.tranches:
+            D   = t_info["priorite"];  L  = t_info["portee"]
+            aal = t_info["AAL"];       aad = t_info["AAD"]
+            n_rec = t_info["nb_reconstitutions"]
+            taux_rec_list = t_info.get("taux_reconstitutions",
+                            [t_info.get("taux_reconstitution", 100)] * n_rec)
             cap = (n_rec + 1) * L
-            df_proj["Ck"] = df_proj.apply(
+
+            # Charge annuelle
+            df_p = self.df_proj.copy()
+            df_p["Ck"] = df_p.apply(
                 lambda row: min(max(row["Sprime_ultime"] - D, 0), L) * row["coeff_stab"], axis=1)
-            charges_ann = df_proj.groupby("annee_surv")["Ck"].sum()
+            charges_ann = df_p.groupby("annee_surv")["Ck"].sum()
             charges_finales = []
             for ann, ch in charges_ann.items():
                 if aad: ch = max(ch - aad, 0)
                 if aal: ch = min(ch, aal)
-                charges_finales.append({"annee": int(ann), "charge": round(float(min(ch, cap)), 2)})
+                charges_finales.append({"annee": int(ann), "charge": float(min(ch, cap))})
+
             df_ch = pd.DataFrame(charges_finales); N = len(df_ch)
+            charges_nonzero = [c["charge"] for c in charges_finales if c["charge"] > 0]
+            n_nz = len(charges_nonzero)
+
+            # Reconstitutions individuelles
             Pr_Rec = 0.0
             for C_n in df_ch["charge"].values:
-                for r in range(1, n_rec + 1):
-                    Pr_Rec += t_r * min(L, max(C_n - (r-1)*L, 0))
+                for r_idx, t_r_i in enumerate(taux_rec_list):
+                    Pr_Rec += (t_r_i / 100) * min(L, max(C_n - r_idx * L, 0))
             Pr_Rec /= L if L > 0 else 1
             Rec = Pr_Rec / (Pr_Rec + N) if (Pr_Rec + N) > 0 else 0.0
-            charge_moy      = df_ch["charge"].mean()
-            charges_nonzero = [c for c in df_ch["charge"].values if c > 0]
-            n_ann_nonzero   = len(charges_nonzero)
-            charg_maj = st.session_state.get("chargement_majeurs", 0.0)
-            if n_ann_nonzero < 3:
-                taux_pur = taux_risque = taux_technique = 0.0; sigma_hist = 0.0
+
+            # R2 — données insuffisantes
+            if n_nz < 3:
+                tp = tr = tt = sigma = 0.0
+                self._alerte("WARN",
+                    f"{t_info['nom']} : BC = 0 — seulement {n_nz} année(s) non nulle(s) (règle R2 : min 3 requis)")
             else:
-                taux_pur   = charge_moy / gnpi
-                sigma_hist = float(np.std(charges_nonzero)) / gnpi
-                taux_risque    = taux_pur + sigma_hist * 0.20
-                taux_technique = (taux_risque * (1 - Rec)) / (
-                    1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
+                charge_moy = df_ch["charge"].mean()
+                tp    = charge_moy / self.gnpi
+                sigma = float(np.std(charges_nonzero)) / self.gnpi
+                tr    = tp + sigma * 0.20   # R1
+                tt    = (tr * (1 - Rec)) / max(
+                    1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"],
+                    0.01)
+
             resultats.append({
                 "tranche": t_info["nom"], "type": t_info["type"],
-                "charge_moy": round(charge_moy, 2),
-                "n_ann_nonzero": n_ann_nonzero, "sigma_hist": round(sigma_hist if n_ann_nonzero>=3 else 0.0, 6),
+                "charge_moy": df_ch["charge"].mean() if n_nz >= 3 else 0.0,
+                "n_ann_nonzero": n_nz, "sigma_hist": round(sigma if n_nz >= 3 else 0.0, 6),
                 "Pr_Rec": round(Pr_Rec, 6), "Rec": round(Rec, 6),
-                "taux_pur": round(taux_pur, 6), "taux_risque": round(taux_risque, 6),
-                "taux_technique": round(taux_technique, 6),
-                "chargement_majeurs": round(charg_maj, 6),
+                "taux_pur": round(tp, 6), "taux_risque": round(tr, 6),
+                "taux_technique": round(tt, 6),
+                "chargement_majeurs": round(self.chargement_majeurs, 6),
                 "detail_annuel": charges_finales
             })
-        st.session_state["resultats_bc"] = resultats
-        return {"status": "ok", "resultats": [{k:v for k,v in r.items() if k!="detail_annuel"} for r in resultats]}
+            self._log("BC", f"{t_info['nom']}: τ_pur={tp:.4%} τ_tech={tt:.4%} Rec={Rec:.4%} ({n_nz} ans non nuls)")
 
+        self.resultats_bc = resultats
+        return resultats
 
-    def _executer_simulation(alpha, lambda_, seuil, n_sim):
-        """Exécute la simulation et retourne les résultats"""
-        if "coeffs" not in st.session_state: return {"erreur": "coeffs manquants"}
-        coeffs = st.session_state["coeffs"]
+    # ────────────────────────────────────────────
+    # ÉTAPE 3 — SIMULATION
+    # ────────────────────────────────────────────
+    def etape_2_simulation(self, n_sim=10000):
+        self._log("Simulation", f"Pareto(α={self.alpha:.4f}) × Poisson(λ={self.lambda_:.4f}) — {n_sim:,} simulations")
         np.random.seed(42)
         resultats = []
-        for t_info in tranches_input:
+        for t_info in self.tranches:
             D = t_info["priorite"]; P = t_info["portee"]
-            r = t_info["nb_reconstitutions"]; aal = t_info["AAL"]; aad = t_info["AAD"]
+            r = t_info["nb_reconstitutions"]
+            aal = t_info["AAL"]; aad = t_info["AAD"]
             cap = (r + 1) * P
+
             def simuler(avec_aal, avec_aad, avec_rec):
                 charges = []
                 for _ in range(n_sim):
-                    N = np.random.poisson(lambda_); S_total = 0
-                    if N > 0:
-                        U = np.random.uniform(size=N)
-                        Sp = seuil * (U ** (-1/alpha))
-                        idx_c = np.random.choice(len(coeffs), size=N, replace=True)
-                        for i in range(N):
-                            s = Sp[i]; c = coeffs[idx_c[i]]
-                            if s <= D: S_i = 0
+                    N_sin = np.random.poisson(self.lambda_)
+                    S_tot = 0.0
+                    if N_sin > 0:
+                        U  = np.random.uniform(size=N_sin)
+                        Sp = self.seuil * (U ** (-1 / self.alpha))
+                        ic = np.random.choice(len(self.coeffs), size=N_sin, replace=True)
+                        for k in range(N_sin):
+                            s = Sp[k]; c = self.coeffs[ic[k]]
+                            if   s <= D:     S_i = 0
                             elif s <= D + P: S_i = c * (s - D)
-                            else: S_i = c * P
-                            S_total += S_i
-                    ch = S_total
+                            else:            S_i = c * P
+                            S_tot += S_i
+                    ch = S_tot
                     if avec_aad and aad: ch = max(ch - aad, 0)
                     if avec_aal and aal: ch = min(ch, aal)
                     charges.append(min(ch, cap) if avec_rec else ch)
                 return np.array(charges)
-            def calc_taux(ch):
+
+            def calc(ch):
                 P0 = np.mean(ch); sig = np.std(ch)
-                tp = P0 / gnpi; tr = (P0 + 0.2 * sig) / gnpi
-                tt = tr / (1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"])
+                tp = P0 / self.gnpi
+                tr = (P0 + 0.2 * sig) / self.gnpi
+                tt = tr / max(1 - t_info["brokage"] - t_info["frais"] -
+                              t_info["marge"] - t_info["retrocession"], 0.01)
                 return round(tp,6), round(tr,6), round(tt,6)
-            c_base = simuler(True, True, True)
-            c_sans_aal = simuler(False, True, True)
-            c_sans_aad = simuler(True, False, True)
-            c_sans_rec = simuler(True, True, False)
-            tp, tr, tt = calc_taux(c_base)
-            tp2, tr2, tt2 = calc_taux(c_sans_aal)
-            tp3, tr3, tt3 = calc_taux(c_sans_aad)
-            tp4, tr4, tt4 = calc_taux(c_sans_rec)
+
+            c_base = simuler(True,  True,  True)
+            c_saal = simuler(False, True,  True)
+            c_saad = simuler(True,  False, True)
+            c_srec = simuler(True,  True,  False)
+            tp,tr,tt   = calc(c_base)
+            _,_,tt_aal = calc(c_saal)
+            _,_,tt_aad = calc(c_saad)
+            _,_,tt_rec = calc(c_srec)
+
             resultats.append({
                 "tranche": t_info["nom"], "type": t_info["type"],
                 "taux_pur": tp, "taux_risque": tr, "taux_technique": tt,
-                "chargement_majeurs": round(st.session_state.get("chargement_majeurs", 0.0), 6),
-                "sans_aal": tt2, "sans_aad": tt3, "sans_rec": tt4,
-                "impact_aal": round(tt2 - tt, 6), "impact_aad": round(tt3 - tt, 6),
-                "impact_rec": round(tt4 - tt, 6)
+                "chargement_majeurs": round(self.chargement_majeurs, 6),
+                "sans_aal": tt_aal, "sans_aad": tt_aad, "sans_rec": tt_rec,
+                "impact_aal": round(tt_aal - tt, 6),
+                "impact_aad": round(tt_aad - tt, 6),
+                "impact_rec": round(tt_rec - tt, 6),
             })
-        st.session_state["resultats_sim"] = resultats
-        return _json_safe({"status": "ok", "parametres": {"alpha": alpha, "lambda": lambda_, "seuil": seuil, "n_sim": n_sim},
-                "resultats": resultats})
+            self._log("Sim", f"{t_info['nom']}: τ_pur={tp:.4%} τ_tech={tt:.4%}")
 
+        self.resultats_sim = resultats
+        return resultats
 
-    def _executer_market_curve(rol_min, rol_max, r2_min, tolerance):
-        """Exécute la construction de la market curve"""
-        if "df_mkt_clean" not in st.session_state: return {"erreur": "Données marché manquantes — uploadez d'abord le fichier marché dans Tab5"}
-        df_mkt = st.session_state["df_mkt_clean"].copy()
+    # ────────────────────────────────────────────
+    # ÉTAPE 4 — DÉTECTION ANOMALIES BC vs SIM
+    # ────────────────────────────────────────────
+    def etape_3_controles(self):
+        self._log("Contrôles", "Vérification cohérence BC / Simulation")
+        bc_map  = {r["tranche"]: r for r in self.resultats_bc}
+        sim_map = {r["tranche"]: r for r in self.resultats_sim}
+        for t in self.tranches:
+            nom   = t["nom"]
+            bc_tt = bc_map.get(nom, {}).get("taux_technique", 0)
+            si_tt = sim_map.get(nom, {}).get("taux_technique", 0)
+            if t["type"] == "travaillante" and bc_tt > 0 and si_tt > 0:
+                ecart = abs(bc_tt - si_tt) / bc_tt
+                if ecart > 0.50:
+                    self._alerte("CRITIQUE",
+                        f"{nom}: écart BC/Sim = {ecart:.0%} > 50% — anomalie majeure, vérifier les données")
+                elif ecart > 0.30:
+                    self._alerte("WARN",
+                        f"{nom}: écart BC/Sim = {ecart:.0%} > 30% — simulation retenue (méthode conservative)")
+                else:
+                    self._log("Contrôle BC/Sim", f"{nom}: écart = {ecart:.0%} ✅")
+            if t["type"] == "cat" and bc_tt == 0:
+                self._log("Cat BC=0", f"{nom}: normal — tranche cat sans sinistres historiques au-dessus de la priorité")
 
-        # Appliquer filtres
-        mask = (df_mkt['ROLs'] >= rol_min) & (df_mkt['ROLs'] <= rol_max)
-        df_mkt = df_mkt[mask].copy()
-        df_mkt['diff_rel'] = np.where(df_mkt['midpoints'] != 0,
-            np.abs(df_mkt['ROLs'] - df_mkt['midpoints']) / np.abs(df_mkt['midpoints']), 1.0)
-        df_mkt = df_mkt[df_mkt['diff_rel'] >= tolerance].copy()
-        df_mkt = df_mkt[df_mkt['midpoints'] > 0].copy()
+    # ────────────────────────────────────────────
+    # ÉTAPE 5 — MARKET CURVE (cat uniquement)
+    # ────────────────────────────────────────────
+    def etape_4_market_curve(self, r2_min=0.40):
+        cat_tranches = [t for t in self.tranches if t["type"] != "travaillante"]
+        if not cat_tranches:
+            self._log("Market Curve", "Aucune tranche cat — market curve non applicable")
+            self.resultats_mkt = []
+            return []
+        if self.df_mkt is None:
+            self._alerte("INFO", "Données marché non fournies — market curve ignorée")
+            self.resultats_mkt = []
+            return []
 
-        if len(df_mkt) < 5: return {"erreur": f"Moins de 5 points après filtrage ({len(df_mkt)})"}
+        self._log("Market Curve", f"Ajustement ROL = a × x^(-b) sur {len(self.df_mkt)} points — cat uniquement")
 
         def fit_power(x, y):
             lx = np.log(x); ly = np.log(y)
-            c = np.polyfit(lx, ly, 1)
-            a = np.exp(c[1]); b = -c[0]
+            c  = np.polyfit(lx, ly, 1)
+            a  = np.exp(c[1]); b = -c[0]
             ly_pred = np.polyval(c, lx)
-            r2 = 1 - np.sum((ly-ly_pred)**2) / np.sum((ly-ly_pred.mean())**2 + 1e-10)
+            r2 = 1 - np.sum((ly-ly_pred)**2) / (np.sum((ly-ly.mean())**2) + 1e-10)
             return a, b, r2
 
-        def calc_tt(t, a, b):
-            x = (t['priorite'] + t['portee'] / 2) / gnpi
+        def calc_taux_cat(t, a, b):
+            x   = (t["priorite"] + t["portee"] / 2) / self.gnpi
             rol = a * (x ** (-b))
-            tp = rol * t['portee'] / gnpi
-            tr = tp * 1.002
-            tt = tr / (1 - t['brokage'] - t['frais'] - 0.0021)
-            L = t['portee']; t_r = t['taux_reconstitution'] / 100; n_rec = t['nb_reconstitutions']
-            C_rep = tp * gnpi
-            Pr = sum(t_r * min(L, max(C_rep-(r-1)*L, 0)) for r in range(1, n_rec+1)) / (L or 1)
-            Rec = Pr / (Pr + 10)
+            tp  = rol * t["portee"] / self.gnpi
+            tr  = tp * 1.002
+            tt  = tr / max(1 - t["brokage"] - t["frais"] - t["marge"] - t["retrocession"], 0.01)
             return {"tranche": t["nom"], "type": t["type"], "x_norm": round(x,6),
-                    "rol": round(rol,6), "taux_pur": round(tp,6), "taux_tech": round(tt,6),
-                    "chargement_majeurs": round(st.session_state.get("chargement_majeurs",0.0),6),
-                    "taux": round(tt,6)}
+                    "rol": round(rol,6), "taux_pur": round(tp,6),
+                    "taux_tech": round(tt,6), "taux": round(tt,6),
+                    "chargement_majeurs": round(self.chargement_majeurs,6)}
 
-        resultats_mkt = []
-        for q in [0.20, 0.40, 0.60, 0.80, 1.0]:
-            mid_max = np.quantile(df_mkt['midpoints'], q)
-            df_q = df_mkt[df_mkt['midpoints'] <= mid_max]
-            if len(df_q) < 5: continue
+        best = None
+        for q in [0.40, 0.60, 0.80, 1.0, 0.20]:
+            mq   = np.quantile(self.df_mkt["midpoints"], q)
+            df_q = self.df_mkt[self.df_mkt["midpoints"] <= mq]
+            if len(df_q) < 8: continue
             try:
-                a, b, r2 = fit_power(df_q['midpoints'].values, df_q['ROLs'].values)
+                a, b, r2 = fit_power(df_q["midpoints"].values, df_q["ROLs"].values)
                 if b <= 0: continue
-                taux_tranches = [calc_tt(t, a, b) for t in tranches_input]
-                if any(tt['taux'] <= 0 for tt in taux_tranches): continue
-                resultats_mkt.append({"quantile": q, "n_points": len(df_q), "a": round(a,6),
-                    "b": round(b,4), "r2": round(r2,4), "r2_ok": r2 >= r2_min,
-                    "taux_tranches": taux_tranches, "score": r2 - (0 if r2 >= r2_min else 0.5)})
+                tts = [calc_taux_cat(t, a, b) for t in cat_tranches]
+                if any(tt["taux"] <= 0 for tt in tts): continue
+                # Vérification cohérence ROL : tranche plus basse = ROL plus élevé
+                if len(tts) >= 2:
+                    rols = [tt["rol"] for tt in tts]
+                    if rols != sorted(rols, reverse=True):
+                        self._alerte("INFO", f"Q{int(q*100)}: hiérarchie ROL non respectée — ajustement écarté")
+                        continue
+                score = r2 + (0.3 if r2 >= r2_min else 0) + 0.01 * len(df_q)
+                if best is None or score > best["score"]:
+                    best = {"a": a, "b": b, "r2": r2, "n": len(df_q),
+                            "quantile": q, "taux_tranches": tts, "score": score}
             except: continue
 
-        if not resultats_mkt: return {"erreur": "Aucun ajustement valide"}
-        best = max(resultats_mkt, key=lambda x: x["score"])
-        st.session_state["resultats_mkt"]  = resultats_mkt
-        st.session_state["taux_mkt_final"] = best["taux_tranches"]
-        return _json_safe({"status": "ok", "meilleur_ajustement": {k:v for k,v in best.items() if k!="taux_tranches"},
-                "taux_par_tranche": best["taux_tranches"], "n_ajustements_testes": len(resultats_mkt)})
+        if best is None:
+            self._alerte("CRITIQUE", "Aucun ajustement market curve valide — taux marché = 0 pour les tranches cat")
+            self.resultats_mkt = []
+            return []
 
+        if best["r2"] < r2_min:
+            self._alerte("WARN", f"R² = {best['r2']:.3f} < {r2_min} — market curve de faible qualité, simultion prioritaire")
+        else:
+            self._log("Market Curve", f"R²={best['r2']:.3f} N={best['n']} a={best['a']:.5f} b={best['b']:.4f} ✅")
 
-    def _executer_rapport(methode_travaillante, methode_cat):
-        """Génère le rapport de synthèse"""
-        if not all(k in st.session_state for k in ["resultats_bc","resultats_sim","taux_mkt_final"]):
-            return {"erreur": "BC, simulation ou market curve manquant"}
-        _bc_list  = st.session_state["resultats_bc"]
-        _sim_list = st.session_state["resultats_sim"]
-        _mkt_list = st.session_state["taux_mkt_final"]
-        rows = []; prime_totale = 0
-        for idx_t, t in enumerate(tranches_input):
-            nom   = t["nom"]
-            bc_tt = _lookup_taux(_bc_list,  nom, idx_t, "taux_technique")
-            si_tt = _lookup_taux(_sim_list, nom, idx_t, "taux_technique")
-            # Market curve uniquement pour tranches cat
-            mkt   = _lookup_taux(_mkt_list, nom, idx_t, "taux") if t["type"] != "travaillante" else 0.0
-            if t["type"] == "travaillante":
-                if methode_travaillante == "bc":               taux = bc_tt;              meth = "BC"
-                elif methode_travaillante == "moyenne_bc_sim": taux = (bc_tt+si_tt)/2;   meth = "Moy BC+Sim"
-                else:                                          taux = max(bc_tt, si_tt); meth = f"max(BC,Sim)→{'BC' if bc_tt>=si_tt else 'Sim'}"
+        # Compléter avec taux=0 pour les tranches travaillantes
+        all_tts = []
+        cat_map = {tt["tranche"]: tt for tt in best["taux_tranches"]}
+        for t in self.tranches:
+            if t["nom"] in cat_map:
+                all_tts.append(cat_map[t["nom"]])
             else:
-                if methode_cat == "market_curve":   taux = mkt;              meth = "Marché"
-                elif methode_cat == "max_sim_mkt":  taux = max(si_tt, mkt);  meth = f"max(Sim,Mkt)→{'Mkt' if mkt>=si_tt else 'Sim'}"
-                else:                               taux = si_tt;            meth = "Simulation"
-            prime = gnpi * taux; prime_totale += prime
-            ecart_bc_sim = abs(bc_tt - si_tt) / bc_tt * 100 if bc_tt > 0 else 0
+                all_tts.append({"tranche": t["nom"], "type": t["type"],
+                                 "x_norm":0, "rol":0, "taux_pur":0,
+                                 "taux_tech":0, "taux":0, "chargement_majeurs":0})
+        self.resultats_mkt = all_tts
+        return all_tts
+
+    # ────────────────────────────────────────────
+    # ÉTAPE 6 — RAPPORT FINAL + SÉLECTION MÉTHODE
+    # ────────────────────────────────────────────
+    def etape_5_rapport(self):
+        self._log("Rapport", "Sélection méthode : max(BC,Sim) trav. | max(Sim,Mkt) cat")
+        bc_map  = {r["tranche"]: r for r in self.resultats_bc}
+        sim_map = {r["tranche"]: r for r in self.resultats_sim}
+        mkt_map = {r["tranche"]: r["taux"] for r in self.resultats_mkt}
+        rows = []; pt = 0.0
+        for idx_t, t in enumerate(self.tranches):
+            nom   = t["nom"]
+            bc_tt = _lookup_taux(self.resultats_bc,  nom, idx_t, "taux_technique")
+            si_tt = _lookup_taux(self.resultats_sim, nom, idx_t, "taux_technique")
+            mkt   = mkt_map.get(nom, 0.0) if t["type"] != "travaillante" else 0.0
+            if t["type"] == "travaillante":
+                taux = max(bc_tt, si_tt)
+                meth = f"max(BC={bc_tt:.4%}, Sim={si_tt:.4%}) → {'BC' if bc_tt >= si_tt else 'Sim'}"
+            else:
+                taux = max(si_tt, mkt)
+                meth = f"max(Sim={si_tt:.4%}, Mkt={mkt:.4%}) → {'Mkt' if mkt >= si_tt else 'Sim'}"
+            prime = self.gnpi * taux; pt += prime
+            ecart = abs(bc_tt - si_tt) / bc_tt * 100 if bc_tt > 0 else 0
             rows.append({
                 "tranche": nom, "type": t["type"],
-                "taux_bc": round(bc_tt,6), "taux_sim": round(si_tt,6), "taux_mkt": round(mkt,6),
-                "taux_retenu": round(taux,6), "methode": meth,
-                "prime_MAD": round(prime,2), "ecart_bc_sim_pct": round(ecart_bc_sim,1)
+                "taux_bc": round(bc_tt,6), "taux_sim": round(si_tt,6),
+                "taux_mkt": round(mkt,6), "taux_retenu": round(taux,6),
+                "methode": meth, "prime_MAD": round(prime,2),
+                "ecart_bc_sim_pct": round(ecart,1)
             })
-        st.session_state["df_rapport"]   = pd.DataFrame(rows)
-        st.session_state["prime_totale"] = prime_totale
-        return {"status": "ok", "synthese": rows,
-                "prime_totale_MAD": round(prime_totale, 2),
-                "taux_global": round(prime_totale / gnpi, 6)}
+            self._log("Sélection", f"{nom}: {meth} | prime={prime:,.0f} MAD")
+        self.rapport_rows = rows
+        self.prime_totale = pt
+        return rows, pt
+
+    # ────────────────────────────────────────────
+    # GÉNÉRATION DU RAPPORT TEXTE (sans LLM)
+    # ────────────────────────────────────────────
+    def generer_rapport_texte(self):
+        taux_global = self.prime_totale / self.gnpi if self.gnpi else 0
+        lignes = [
+            "=" * 60,
+            "  RAPPORT DE TARIFICATION — AGENT PYTHON AUTONOME",
+            "=" * 60,
+            f"  GNPI        : {self.gnpi:,.0f} MAD",
+            f"  Prime totale: {self.prime_totale:,.0f} MAD",
+            f"  Taux global : {taux_global:.4%}",
+            f"  Tranches    : {len(self.tranches)}",
+            "=" * 60,
+            "",
+            "── PARAMÈTRES CALIBRÉS ─────────────────────────────",
+            f"  Alpha Pareto (MLE-Hill) : {self.alpha:.4f}",
+            f"  Lambda Poisson          : {self.lambda_:.4f}",
+            f"  Seuil modélisation      : {self.seuil:,.0f} MAD",
+            f"  Pm proxy (P99.5)        : {self.Pm_proxy:,.0f} MAD",
+            f"  Chargement majeurs      : {self.chargement_majeurs:.4%}",
+            "",
+            "── RÉSULTATS PAR TRANCHE ───────────────────────────",
+        ]
+        for r in self.rapport_rows:
+            statut = "⚠️" if r["ecart_bc_sim_pct"] > 30 else "✅"
+            lignes += [
+                f"",
+                f"  [{r['type'].upper()}] {r['tranche']}",
+                f"  BC={r['taux_bc']:.4%} | Sim={r['taux_sim']:.4%} | Mkt={r['taux_mkt']:.4%}",
+                f"  → Retenu : {r['taux_retenu']:.4%} ({r['methode']})",
+                f"  → Prime  : {r['prime_MAD']:,.0f} MAD {statut} (écart BC/Sim : {r['ecart_bc_sim_pct']:.0f}%)",
+            ]
+        if self.anomalies:
+            lignes += ["", "── ALERTES ─────────────────────────────────────────"]
+            for a in self.anomalies:
+                lignes.append(f"  {a['icone']} [{a['niveau']}] {a['message']}")
+        lignes += [
+            "",
+            "── JOURNAL DES DÉCISIONS ───────────────────────────",
+        ]
+        for entry in self.log:
+            lignes.append(f"  [{entry['etape']}] {entry['decision']}" +
+                          (f" — {entry['detail']}" if entry['detail'] else ""))
+        lignes += ["", "=" * 60]
+        return "\n".join(lignes)
+
+    # ────────────────────────────────────────────
+    # PIPELINE COMPLET
+    # ────────────────────────────────────────────
+    def run(self, n_sim=10000):
+        self.etape_0_validation()
+        self.etape_1_burning_cost()
+        self.etape_2_simulation(n_sim)
+        self.etape_3_controles()
+        self.etape_4_market_curve()
+        self.etape_5_rapport()
+        return self.generer_rapport_texte()
 
 
-    def executer_outil(nom, inputs):
-        """Dispatcher vers la bonne fonction"""
-        if nom == "calculer_burning_cost":
-            return _executer_burning_cost()
-        elif nom == "lancer_simulation":
-            return _executer_simulation(
-                alpha=inputs.get("alpha", st.session_state.get("alpha_est", 1.5)),
-                lambda_=inputs.get("lambda_", st.session_state.get("lambda_est", 5.0)),
-                seuil=inputs.get("seuil", st.session_state.get("seuil_est", 1_600_000)),
-                n_sim=int(inputs.get("n_sim", 10000)))
-        elif nom == "construire_market_curve":
-            return _executer_market_curve(
-                rol_min=inputs.get("rol_min", 0.05), rol_max=inputs.get("rol_max", 1.0),
-                r2_min=inputs.get("r2_min", 0.30), tolerance=inputs.get("tolerance", 0.50))
-        elif nom == "generer_rapport_final":
-            return _executer_rapport(
-                methode_travaillante=inputs.get("methode_travaillante", "simulation"),
-                methode_cat=inputs.get("methode_cat", "max_sim_mkt"))
-        elif nom == "signaler_anomalie":
-            return {"status": "anomalie_enregistree", "type": inputs.get("type_anomalie","autre"),
-                    "description": inputs.get("description",""), "action": inputs.get("action","")}
-        else:
-            return {"erreur": f"Outil inconnu : {nom}"}
+# ════════════════════════════════════════════
+# TAB AGENT — AGENT PYTHON PUR (HORS LIGNE)
+# ════════════════════════════════════════════
 
+with tab_agent:
+    section_header("Agent Autonome Python", "Pipeline complet — logique codée, 0 API, fonctionne hors ligne", "🤖")
 
-    # ════════════════════════
-    # BOUCLE AGENTIQUE
-    # ════════════════════════
+    st.markdown("""<div style="background:linear-gradient(135deg,#0d2b1a,#1a1a1a);border-radius:12px;
+        padding:18px 24px;margin-bottom:16px;border:1px solid rgba(45,138,78,0.4)">
+        <div style="color:#2d8a4e;font-weight:700;font-size:15px;margin-bottom:8px">
+            ⚡ Agent Python pur — Aucune API, aucun coût, fonctionne hors ligne
+        </div>
+        <div style="color:#ccc;font-size:13px;line-height:1.9">
+            1. Valide les paramètres (alpha, lambda) →
+            2. Calcule le BC (R1/R2) →
+            3. Lance la simulation →
+            4. Contrôle BC vs Sim →
+            5. Construit la market curve cat →
+            6. Génère le rapport avec sélection conservative
+        </div>
+        <div style="color:#888;font-size:12px;margin-top:8px">
+            La logique de décision est entièrement codée en Python — chaque règle est visible et auditable.
+        </div></div>""", unsafe_allow_html=True)
 
-    def run_agent(api_key, instructions, contraintes, log_container, result_container):
-        """Boucle agentique complète avec affichage temps réel"""
-        client = anthropic.Anthropic(api_key=api_key)
+    # Prérequis
+    prereqs = {
+        "Programme validé"   : "tranches_input" in st.session_state or True,
+        "Triangle transformé": "df_proj"         in st.session_state,
+        "Alpha/Lambda calibrés":"alpha_est"      in st.session_state,
+    }
+    c1, c2, c3 = st.columns(3)
+    for col, (nom_p, ok) in zip([c1,c2,c3], prereqs.items()):
+        col.markdown(f"""<div style="background:{'rgba(45,138,78,0.12)' if ok else 'rgba(239,68,68,0.08)'};
+            border:1px solid {'#2d8a4e' if ok else '#ef4444'};border-radius:10px;
+            padding:12px;text-align:center">
+            <div style="font-size:20px">{'✅' if ok else '❌'}</div>
+            <div style="font-size:11px;font-weight:600;color:{'#2d8a4e' if ok else '#ef4444'};margin-top:4px">{nom_p}</div>
+            </div>""", unsafe_allow_html=True)
 
-        alpha_0  = st.session_state.get("alpha_est",  1.5)
-        lambda_0 = st.session_state.get("lambda_est", 5.0)
-        seuil_0  = st.session_state.get("seuil_est",  1_600_000)
-        n_sim_0  = n_sim_agent
+    st.markdown("")
+    c_left, c_right = st.columns([2, 1])
+    with c_left:
+        n_sim_py = st.number_input("Nb simulations", value=10000, step=5000, min_value=1000, key="nsim_py")
+    with c_right:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        lancer_py = st.button("▶ Lancer l'agent", type="primary", use_container_width=True,
+                              disabled=not st.session_state.get("df_proj") is not None or
+                                       "df_proj" not in st.session_state)
 
-        system_prompt = f"""Tu es un agent actuariel autonome de niveau expert, spécialiste en tarification réassurance XL non-proportionnelle automobile.
-Tu travailles sur le programme Atlantic Re — GNPI {gnpi:,} MAD. Tu es conforme aux standards CAS, SOA, Institut des Actuaires et IFoA.
+    if "df_proj" not in st.session_state:
+        st.warning("⚠️ Transformez d'abord le triangle dans l'onglet Données & Triangle")
 
-PARAMÈTRES CALIBRÉS :
-- Alpha Pareto (MLE Hill) : {alpha_0:.4f}
-- Lambda Poisson : {lambda_0:.4f}
-- Seuil modélisation (p80×D) : {seuil_0:,.0f} MAD
-- Pm proxy (P99.5) : {st.session_state.get('Pm_proxy', 0):,.0f} MAD
+    elif lancer_py:
+        with st.spinner("⚙️ Pipeline en cours..."):
+            prog_bar = st.progress(0, text="Initialisation...")
 
-PROGRAMME :
-{json.dumps(tranches_input, indent=2)}
-
-RÈGLES ACTUARIELLES OBLIGATOIRES — BURNING COST :
-R1 — τ_risque = τ_pur + σ_hist × 20% (écart-type BC annuels non nuls × chargement sécurité)
-     NE PAS utiliser τ_pur × 1.20 — utiliser la formule σ
-R2 — Si années BC non nulles < 3 → τ_BC = 0 (données insuffisantes, ne pas extrapoler)
-R3 — Les tranches cat avec τ_BC = 0 sont tarifiées UNIQUEMENT par simulation + market curve
-
-RÈGLES ACTUARIELLES OBLIGATOIRES — MARKET CURVE :
-R4 — Market curve UNIQUEMENT pour tranches cat — JAMAIS pour la travaillante
-R5 — Critères sélection : R² ≥ 0.45, b > 0, N ≥ 15 points, ROL T2 > ROL T3 (cohérence)
-R6 — Si R² < 0.30 → signaler anomalie et relancer avec filtres plus larges
-
-RÈGLE DE SÉLECTION FINALE :
-T1 (travaillante) : taux_retenu = max(τ_BC, τ_sim) — méthode conservative
-T2, T3 (cat)      : taux_retenu = max(τ_sim, τ_marché) — toujours côté sécurité
-
-SÉQUENCE OBLIGATOIRE :
-1. Burning Cost (formule σ + règle R2)
-2. Simulation Pareto/Poisson
-3. Market Curve (cat uniquement, R² ≥ 0.45)
-4. Rapport final + Variantes A/B/C optimisation
-
-INSTRUCTIONS UTILISATEUR : {instructions if instructions else "Aucune instruction spécifique."}
-CONTRAINTES MÉTIER : {contraintes if contraintes else "Contraintes standard."}
-
-Justifie chaque décision avec des chiffres. Mets en évidence les anomalies. Reste explicable pour un comité de direction."""
-
-        messages = [{"role": "user", "content":
-            "Lance la tarification complète du programme Atlantic Re 2026. Exécute toutes les étapes nécessaires de façon autonome."}]
-
-        tour = 0; max_tours = 10
-        agent_log = []  # [(type, contenu)]
-
-        while tour < max_tours:
-            tour += 1
-
-            with log_container:
-                st.markdown(f"**Tour {tour}/{max_tours}** — Appel Claude...")
-
-            response = client.messages.create(
-                model="claude-opus-4-5",  # Opus requis pour le mode agent autonome
-                max_tokens=4096,
-                system=system_prompt,
-                tools=AGENT_TOOLS,
-                messages=messages
+            agent = AgentActuarielPython(
+                tranches           = tranches_input,
+                gnpi               = gnpi,
+                df_proj            = st.session_state["df_proj"],
+                coeffs             = st.session_state.get("coeffs", np.array([1.0])),
+                alpha_est          = st.session_state.get("alpha_est", 1.5),
+                lambda_est         = st.session_state.get("lambda_est", 5.0),
+                seuil_est          = st.session_state.get("seuil_est", 1_600_000),
+                Pm_proxy           = st.session_state.get("Pm_proxy", 0),
+                chargement_majeurs = st.session_state.get("chargement_majeurs", 0.0),
+                df_mkt_clean       = st.session_state.get("df_mkt_clean"),
             )
 
-            # Traiter le contenu de la réponse
-            for block in response.content:
-                if hasattr(block, 'text') and block.text:
-                    agent_log.append(("reasoning", block.text))
-                    with log_container:
-                        st.markdown(f"""<div style="background:rgba(45,138,78,0.08);border-left:3px solid #2d8a4e;
-                            border-radius:0 8px 8px 0;padding:12px 16px;margin:8px 0;font-size:13px">
-                            🧠 <b>Raisonnement Claude</b><br>{block.text}</div>""",
-                            unsafe_allow_html=True)
+            prog_bar.progress(10, "Validation paramètres...")
+            agent.etape_0_validation()
+            prog_bar.progress(25, "Burning Cost...")
+            agent.etape_1_burning_cost()
+            prog_bar.progress(50, "Simulation...")
+            agent.etape_2_simulation(int(n_sim_py))
+            prog_bar.progress(65, "Contrôles...")
+            agent.etape_3_controles()
+            prog_bar.progress(75, "Market Curve...")
+            agent.etape_4_market_curve()
+            prog_bar.progress(90, "Rapport...")
+            agent.etape_5_rapport()
+            rapport_txt = agent.generer_rapport_texte()
+            prog_bar.progress(100, "Terminé !")
 
-                if block.type == "tool_use":
-                    agent_log.append(("tool_call", {"name": block.name, "input": block.input}))
-                    with log_container:
-                        st.markdown(f"""<div style="background:rgba(26,26,26,0.06);border-left:3px solid #1a1a1a;
-                            border-radius:0 8px 8px 0;padding:12px 16px;margin:8px 0;font-size:13px">
-                            ⚙️ <b>Outil appelé :</b> <code>{block.name}</code><br>
-                            <small style="color:#666">{json.dumps({k:v for k,v in block.input.items() if k!='justification'}, ensure_ascii=False)}</small>
-                            </div>""", unsafe_allow_html=True)
+            # Stocker dans session_state
+            st.session_state["resultats_bc"]   = agent.resultats_bc
+            st.session_state["resultats_sim"]  = agent.resultats_sim
+            st.session_state["taux_mkt_final"] = agent.resultats_mkt
+            st.session_state["df_rapport"]     = pd.DataFrame(agent.rapport_rows)
+            st.session_state["prime_totale"]   = agent.prime_totale
+            st.session_state["agent_py_log"]   = agent.log
+            st.session_state["agent_py_anomalies"] = agent.anomalies
+            st.session_state["agent_py_rapport"]   = rapport_txt
+            st.session_state["agent_py_done"]      = True
 
-            # Fin de la boucle
-            if response.stop_reason == "end_turn":
-                agent_log.append(("done", "Agent terminé"))
-                break
+            # Auto-save
+            try:
+                db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
+                db_save_etape("bc",  [{k:v for k,v in r.items() if k!="detail_annuel"} for r in agent.resultats_bc])
+                db_save_etape("sim", agent.resultats_sim)
+                if agent.resultats_mkt:
+                    db_save_etape("mkt", {"resultats_mkt":[], "taux_mkt_final": agent.resultats_mkt})
+                db_save_etape("rapport", {"rows": agent.rapport_rows, "prime_totale": agent.prime_totale})
+            except: pass
 
-            # Exécuter les outils
-            if response.stop_reason == "tool_use":
-                tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use":
-                        with log_container:
-                            with st.spinner(f"⚙️ Exécution : {block.name}..."):
-                                result = executer_outil(block.name, block.input)
+    # ── Affichage des résultats ──
+    if st.session_state.get("agent_py_done"):
 
-                        agent_log.append(("tool_result", {"name": block.name, "result": result}))
-                        with log_container:
-                            status = result.get("status", "")
-                            erreur = result.get("erreur", "")
-                            if erreur:
-                                st.markdown(f"""<div style="background:rgba(239,68,68,0.08);border-left:3px solid #ef4444;
-                                    border-radius:0 8px 8px 0;padding:10px 14px;margin:4px 0;font-size:12px">
-                                    ❌ <b>{block.name}</b> : {erreur}</div>""", unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"""<div style="background:rgba(45,138,78,0.06);border-left:3px solid #2d8a4e;
-                                    border-radius:0 8px 8px 0;padding:10px 14px;margin:4px 0;font-size:12px">
-                                    ✅ <b>{block.name}</b> terminé</div>""", unsafe_allow_html=True)
+        # Alertes
+        anomalies = st.session_state.get("agent_py_anomalies", [])
+        if anomalies:
+            st.markdown("### 🚨 Alertes détectées")
+            for a in anomalies:
+                color = {"CRITIQUE":"#ef4444","WARN":"#f59e0b","INFO":"#3b82f6"}.get(a["niveau"],"#888")
+                st.markdown(f"""<div style="background:rgba(0,0,0,0.04);border-left:4px solid {color};
+                    border-radius:0 8px 8px 0;padding:10px 14px;margin:4px 0;font-size:13px">
+                    {a['icone']} <b>[{a['niveau']}]</b> {a['message']}</div>""",
+                    unsafe_allow_html=True)
 
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps(_json_safe(result), ensure_ascii=False)
-                        })
-
-                messages.append({"role": "assistant", "content": response.content})
-                messages.append({"role": "user",      "content": tool_results})
-
-            else:
-                break
-
-        # Afficher les résultats finaux
-        with result_container:
-            if "resultats_bc" in st.session_state and "resultats_sim" in st.session_state:
-                st.markdown("---")
-                st.markdown("### 📊 Résultats BC")
-                tableau_resultats([{
-                    "Tranche": r["tranche"], "Type": r["type"],
-                    "Rec": f"{r['Rec']:.4%}",
-                    "Taux pur": f"{r['taux_pur']:.4%}",
-                    "Taux technique": f"{r['taux_technique']:.4%}",
-                    "Charg. majeurs": f"{r.get('chargement_majeurs',0):.4%}",
-                } for r in st.session_state["resultats_bc"]])
-
-                st.markdown("### 📊 Résultats Simulation")
+        # Résultats tabulaires
+        if st.session_state.get("resultats_bc"):
+            st.markdown("### 📊 Résultats par méthode")
+            c_bc, c_sim = st.columns(2)
+            with c_bc:
+                st.markdown("**🔥 Burning Cost**")
                 tableau_resultats([{
                     "Tranche": r["tranche"],
-                    "Taux pur": f"{r['taux_pur']:.4%}",
-                    "Taux technique": f"{r['taux_technique']:.4%}",
-                    "Charg. majeurs": f"{r.get('chargement_majeurs',0):.4%}",
-                    "Sans AAL": f"{r['sans_aal']:.4%}",
-                    "Impact reconst.": f"{r.get('impact_rec', 0):.4%}",
+                    "Ans non-nuls": f"{r.get('n_ann_nonzero',0)} {'⚠️' if r.get('n_ann_nonzero',0)<3 else '✅'}",
+                    "τ pur": f"{r['taux_pur']:.4%}",
+                    "σ": f"{r.get('sigma_hist',0):.4%}",
+                    "τ tech.": f"{r['taux_technique']:.4%}",
+                } for r in st.session_state["resultats_bc"]])
+            with c_sim:
+                st.markdown("**🎲 Simulation**")
+                tableau_resultats([{
+                    "Tranche": r["tranche"],
+                    "τ pur": f"{r['taux_pur']:.4%}",
+                    "τ tech.": f"{r['taux_technique']:.4%}",
+                    "Impact rec.": f"{r.get('impact_rec',0):.4%}",
                 } for r in st.session_state["resultats_sim"]])
 
-            if "taux_mkt_final" in st.session_state:
-                st.markdown("### 📊 Market Curve")
-                tableau_resultats([{
-                    "Tranche": tt["tranche"],
-                    "ROL estimé": f"{tt['rol']:.4%}",
-                    "Taux tech.": f"{tt['taux_tech']:.4%}",
-                    "Taux final": f"{tt['taux']:.4%}",
-                } for tt in st.session_state["taux_mkt_final"]])
+        if st.session_state.get("df_rapport") is not None:
+            st.markdown("### 📋 Rapport final")
+            tableau_resultats([{
+                "Tranche": row["tranche"], "Type": row["type"],
+                "BC": f"{row['taux_bc']:.4%}",
+                "Sim.": f"{row['taux_sim']:.4%}",
+                "Mkt": f"{row['taux_mkt']:.4%}",
+                "✅ Retenu": f"{row['taux_retenu']:.4%}",
+                "Prime (MAD)": f"{row['prime_MAD']:,.0f}",
+                "Méthode": row["methode"],
+                "Écart BC/Sim": f"{row['ecart_bc_sim_pct']:.0f}%",
+            } for row in st.session_state["df_rapport"].to_dict("records")])
+            pt = st.session_state.get("prime_totale",0)
+            c1,c2,c3 = st.columns(3)
+            with c1: card("Prime totale", f"{pt:,.0f} MAD", icone="💰")
+            with c2: card("Taux global",  f"{pt/gnpi:.4%}", couleur="#1a1a1a", icone="📊")
+            with c3: card("Mode",         "Python pur ✅", couleur="#2d8a4e", icone="⚡")
 
-            if "df_rapport" in st.session_state:
-                st.markdown("### 📋 Rapport Final Agent")
-                tableau_resultats([{
-                    "Tranche": row["tranche"], "Type": row["type"],
-                    "Taux BC": f"{row['taux_bc']:.4%}",
-                    "Taux Sim.": f"{row['taux_sim']:.4%}",
-                    "Taux Marché": f"{row['taux_mkt']:.4%}",
-                    "Taux retenu": f"{row['taux_retenu']:.4%}",
-                    "Prime (MAD)": f"{row['prime_MAD']:,.0f}",
-                    "Méthode": row["methode"],
-                    "Ecart BC/Sim": f"{row['ecart_bc_sim_pct']:.0f}%",
-                } for row in st.session_state["df_rapport"].to_dict("records")])
-                prime_tot = st.session_state.get("prime_totale", 0)
-                c1, c2, c3 = st.columns(3)
-                with c1: card("Prime totale agent", f"{prime_tot:,.0f} MAD", icone="💰")
-                with c2: card("Taux global",        f"{prime_tot/gnpi:.4%}", couleur="#1a1a1a", icone="📊")
-                with c3: card("Méthode",            "Agent autonome", couleur="#2d8a4e", icone="🤖")
+        # Journal des décisions
+        with st.expander("📋 Journal des décisions de l'agent", expanded=False):
+            st.caption("Chaque décision est tracée avec son étape et sa justification — aucune boîte noire")
+            log_data = [{"Étape": e["etape"], "Décision": e["decision"],
+                         "Détail": e["detail"]} for e in st.session_state.get("agent_py_log",[])]
+            if log_data: tableau_resultats(log_data)
 
-        return agent_log
+        # Rapport texte complet
+        with st.expander("📄 Rapport texte complet (exportable)", expanded=False):
+            st.code(st.session_state.get("agent_py_rapport",""), language="text")
 
-
-    # ════════════════════════
-    # LANCEMENT
-    # ════════════════════════
-
-    if lancer:
-        st.session_state["agent_running"] = True
-        st.markdown("---")
-        st.markdown("### 🤖 Exécution de l'Agent")
-
-        log_container    = st.container()
-        result_container = st.container()
-
-        with log_container:
-            st.markdown("""<div style="background:linear-gradient(135deg,#0d2b1a,#1a1a1a);
-                border-radius:10px;padding:14px 18px;margin-bottom:12px;
-                border:1px solid rgba(45,138,78,0.4)">
-                <span style="color:#2d8a4e;font-weight:700">🤖 Agent démarré</span>
-                <span style="color:#888;font-size:12px;margin-left:8px">Raisonnement en cours...</span>
-                </div>""", unsafe_allow_html=True)
-
-        try:
-            instructions = st.session_state.get("agent_instructions", "")
-            contraintes  = st.session_state.get("agent_contraintes", "")
-            log = run_agent(api_key, instructions, contraintes, log_container, result_container)
-            st.session_state["agent_log"]     = log
-            st.session_state["agent_running"] = False
-            with log_container:
-                st.success("✅ Agent terminé — résultats disponibles ci-dessous et dans les autres onglets")
-        except Exception as e:
-            st.error(f"❌ Erreur agent : {e}")
-
-    elif "agent_log" in st.session_state:
-        st.markdown("---")
-        st.info("✅ Dernière exécution agent disponible. Les résultats sont synchronisés dans les onglets BC, Simulation, Market Curve et Rapport.")
-        if st.button("🔄 Relancer l'agent", key="relancer_agent"):
-            for k in ["agent_log","agent_running"]: st.session_state.pop(k, None)
+        if st.button("🔄 Relancer l'agent", key="relancer_py"):
+            for k in ["agent_py_done","agent_py_log","agent_py_anomalies","agent_py_rapport"]:
+                st.session_state.pop(k, None)
             st.rerun()
 
 
 # ════════════════════════════════════════════
-# TAB PHASE 3 — AGENT COMPLET AUTONOME
+# TAB FULL — Redirige vers Agent Python
 # ════════════════════════════════════════════
 
 with tab_full:
-    section_header("Agent Complet Autonome", "Fichiers bruts → Rapport final — zéro clic intermédiaire", "🚀")
+    section_header("Agent Complet", "Même pipeline que l'onglet Agent — uploadez les fichiers dans Données & Triangle", "🚀")
+    st.info("✅ L'agent autonome Python est dans l'onglet **🤖 Mode Agent**. Uploadez vos fichiers dans **📂 Données & Triangle**, puis lancez l'agent.")
+    if st.session_state.get("agent_py_done"):
+        st.success("✅ Dernière exécution disponible — résultats synchronisés dans tous les onglets.")
 
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d0d1a,#1a1a1a);border-radius:12px;
-        padding:20px 24px;margin-bottom:24px;border:1px solid rgba(59,130,246,0.4)">
-        <div style="color:#3b82f6;font-weight:700;font-size:15px;margin-bottom:10px">
-            ⚡ Phase 3 — Agent totalement autonome
-        </div>
-        <div style="display:flex;gap:32px;flex-wrap:wrap">
-            <div style="color:#ccc;font-size:13px;line-height:2">
-                ✅ Uploade les fichiers bruts ici<br>
-                ✅ Claude parse le triangle seul<br>
-                ✅ Claude décide branche longue/courte<br>
-                ✅ Claude calibre alpha et lambda
-            </div>
-            <div style="color:#ccc;font-size:13px;line-height:2">
-                ✅ Claude lance BC + Simulation + Market Curve<br>
-                ✅ Claude détecte et corrige les anomalies<br>
-                ✅ Claude choisit la méthode par tranche<br>
-                ✅ Claude produit le rapport final
-            </div>
-        </div>
-        <div style="color:#888;font-size:12px;margin-top:10px">
-            Seul un <b style="color:#f59e0b">seuil d'alerte critique</b> interrompt l'agent pour validation humaine.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Uploads directs ──
-    st.markdown("### 📁 Fichiers sources")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: f3_tri = st.file_uploader("Triangle développement", type=["xlsx","csv"], key="f3_tri")
-    with c2: f3_gnp = st.file_uploader("Base GNPIs",             type=["xlsx","csv"], key="f3_gnp")
-    with c3: f3_idx = st.file_uploader("Table indices",          type=["xlsx","csv"], key="f3_idx")
-    with c4: f3_mkt = st.file_uploader("Données marché",         type=["xlsx","csv"], key="f3_mkt")
-
-    # ── Config minimale ──
-    st.markdown("### ⚙️ Configuration minimale")
-    c1, c2, c3 = st.columns(3)
-    with c1: gnpi3      = st.number_input("GNPI (MAD)", value=183_000_000, step=1_000_000, key="gnpi3")
-    with c2: annee3     = st.number_input("Année de cotation", value=2026, step=1, key="annee3")
-    with c3: retour3    = st.number_input("Période de retour sinistres majeurs (ans)", value=20, step=5, key="retour3")
-
-    # ── Contexte pour l'agent ──
-    contexte3 = st.text_area("📌 Contexte pour l'agent (optionnel)",
-        placeholder="Ex: Portefeuille automobile Maroc 2026, GNPI en hausse +8%, 3 tranches : Risk&Cat 13M xs 2M, Cat L1 10M xs 15M, Cat L2 15M xs 25M. Objectif prime < 14M MAD. Réassureur cible : Partner Re.",
-        height=90, key="contexte3")
-
-    seuil_alerte = st.slider(
-        "🚨 Seuil d'alerte critique (interrompt l'agent)",
-        min_value=10, max_value=60, value=35, step=5,
-        help="Si écart BC/Simulation > ce seuil sur tranche travaillante → agent demande validation avant de continuer",
-        key="seuil_alerte3")
-
-    fichiers_ok = all([f3_tri, f3_gnp, f3_idx, f3_mkt, api_key])
-
-    if not api_key:
-        st.warning("⚠️ Clé API requise dans la sidebar")
-    elif not fichiers_ok:
-        manquants3 = [n for n, f in [("Triangle",f3_tri),("GNPIs",f3_gnp),("Indices",f3_idx),("Marché",f3_mkt)] if not f]
-        st.warning(f"⚠️ Fichiers manquants : {', '.join(manquants3)}")
-
-    lancer3 = st.button("🚀 Lancer l'Agent Complet", type="primary",
-                        use_container_width=True, disabled=not fichiers_ok,
-                        key="lancer3")
-
-    # ════════════════════════════════
-    # OUTILS PHASE 3 (étend phase 2)
-    # ════════════════════════════════
-
-    TOOLS_FULL = [
-        {
-            "name": "analyser_et_transformer_triangle",
-            "description": """Parse et transforme le triangle de liquidation brut.
-Détecte automatiquement le type de branche (long/court), applique As-If, stabilisation, Chain Ladder.
-Estime alpha (MLE Hill), lambda Poisson, seuil p80×D, Pm proxy.
-Retourne les statistiques clés et les paramètres calibrés.""",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "type_branche": {
-                        "type": "string",
-                        "enum": ["long", "court"],
-                        "description": "Branche longue (As-If+Stab+CL) ou courte (As-If seul)"
-                    },
-                    "seuil_stabilisation": {
-                        "type": "number",
-                        "description": "Seuil de déclenchement clause stabilisation (0.0 = toujours, 0.1 = 10%)"
-                    },
-                    "pct_seuil_pareto": {
-                        "type": "number",
-                        "description": "Percentile pour le seuil Pareto (0.80 = p80 × D)"
-                    },
-                    "justification": {"type": "string"}
-                },
-                "required": ["type_branche", "seuil_stabilisation", "pct_seuil_pareto", "justification"]
-            }
-        },
-        {
-            "name": "definir_programme_tranches",
-            "description": """Définit ou ajuste le programme de réassurance (tranches, conditions, frais).
-Claude peut proposer les tranches basées sur le contexte fourni ou ajuster les valeurs par défaut.""",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "tranches": {
-                        "type": "array",
-                        "description": "Liste des tranches avec leurs paramètres",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "nom"              : {"type": "string"},
-                                "type"             : {"type": "string", "enum": ["travaillante","cat","non_travaillante"]},
-                                "priorite"         : {"type": "number"},
-                                "portee"           : {"type": "number"},
-                                "nb_reconstitutions": {"type": "integer"},
-                                "taux_reconstitution": {"type": "number"},
-                                "brokage_pct"      : {"type": "number"},
-                                "frais_pct"        : {"type": "number"},
-                                "marge_pct"        : {"type": "number"}
-                            }
-                        }
-                    },
-                    "justification": {"type": "string"}
-                },
-                "required": ["tranches", "justification"]
-            }
-        },
-        {
-            "name": "calculer_burning_cost_complet",
-            "description": "Calcule le BC sur les données transformées. Identique à l'outil Phase 2.",
-            "input_schema": {
-                "type": "object",
-                "properties": {"justification": {"type": "string"}},
-                "required": ["justification"]
-            }
-        },
-        {
-            "name": "lancer_simulation_complete",
-            "description": "Lance la simulation avec les paramètres calibrés automatiquement.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "alpha"         : {"type": "number"},
-                    "lambda_"       : {"type": "number"},
-                    "seuil"         : {"type": "number"},
-                    "n_sim"         : {"type": "integer"},
-                    "justification" : {"type": "string"}
-                },
-                "required": ["alpha", "lambda_", "seuil", "n_sim", "justification"]
-            }
-        },
-        {
-            "name": "construire_market_curve_complete",
-            "description": "Construit la market curve sur les données uploadées.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "rol_min"       : {"type": "number"},
-                    "rol_max"       : {"type": "number"},
-                    "r2_min"        : {"type": "number"},
-                    "tolerance"     : {"type": "number"},
-                    "filtre_branche": {"type": "string", "description": "Mot-clé colonne INT_BUSINESS (ex: EVENEMENT)"},
-                    "justification" : {"type": "string"}
-                },
-                "required": ["rol_min", "rol_max", "r2_min", "tolerance", "filtre_branche", "justification"]
-            }
-        },
-        {
-            "name": "demander_validation_humaine",
-            "description": """Interrompt l'agent pour demander une validation humaine sur un point critique.
-À utiliser UNIQUEMENT si : anomalie grave, écart très élevé, paramètre hors norme, données suspectes.""",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "niveau"   : {"type": "string", "enum": ["avertissement", "critique", "bloquant"]},
-                    "message"  : {"type": "string", "description": "Message clair pour l'humain"},
-                    "question" : {"type": "string", "description": "Question précise à poser à l'humain"},
-                    "choix"    : {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Options proposées à l'humain"
-                    }
-                },
-                "required": ["niveau", "message", "question", "choix"]
-            }
-        },
-        {
-            "name": "generer_rapport_final_complet",
-            "description": "Génère le rapport final complet avec recommandations.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "methode_travaillante": {"type": "string", "enum": ["bc","simulation","moyenne_bc_sim"]},
-                    "methode_cat"         : {"type": "string", "enum": ["simulation","market_curve","max_sim_mkt"]},
-                    "justification"       : {"type": "string"}
-                },
-                "required": ["methode_travaillante", "methode_cat", "justification"]
-            }
-        }
-    ]
-
-    # ── Exécuteur triangle complet ──
-    def _executer_transformer_triangle_complet(type_branche, seuil_stab, pct_seuil_p,
-                                                f_tri, f_gnp, f_idx, gnpi_val, annee_cot):
-        try:
-            import io as _io
-            is_long_p3 = (type_branche == "long")
-            # ── Seek & read files (Streamlit UploadedFile needs seek before each read) ──
-            f_gnp.seek(0)
-            df_gnpis_p3 = pd.read_excel(_io.BytesIO(f_gnp.read())) if f_gnp.name.endswith('xlsx') else pd.read_csv(f_gnp)
-            f_idx.seek(0)
-            df_idx_p3   = pd.read_excel(_io.BytesIO(f_idx.read())) if f_idx.name.endswith('xlsx') else pd.read_csv(f_idx)
-            df_gnpis_p3.columns = [str(c).strip() for c in df_gnpis_p3.columns]
-            df_idx_p3.columns   = [str(c).strip() for c in df_idx_p3.columns]
-
-            df_idx_p3['Annee'] = pd.to_numeric(
-                df_idx_p3['Annee'].astype(str).str.strip().str.replace('.0','',regex=False), errors='coerce')
-            df_idx_p3['Coefficients'] = pd.to_numeric(
-                df_idx_p3['Coefficients'].astype(str).str.replace(',','.',regex=False).str.replace(' ','',regex=False), errors='coerce')
-            df_idx_p3 = df_idx_p3.dropna(subset=['Annee','Coefficients'])
-            df_idx_p3['Annee'] = df_idx_p3['Annee'].astype(int)
-            df_idx_p3 = df_idx_p3.sort_values('Annee')
-            df_idx_set_p3 = df_idx_p3.set_index('Annee')['Coefficients']
-
-            def get_idx(annee):
-                annee = int(annee)
-                ann = df_idx_set_p3.index.values.astype(int)
-                val = df_idx_set_p3.values.astype(float)
-                if annee in ann: return float(df_idx_set_p3.loc[annee])
-                if annee < ann[0]:  return float(val[0] - (val[1]-val[0])*(ann[0]-annee))
-                if annee > ann[-1]: return float(val[-1] + (val[-1]-val[-2])*(annee-ann[-1]))
-                return float(np.interp(annee, ann, val))
-
-            I_cot = get_idx(annee_cot)
-
-            f_tri.seek(0)
-            tri_bytes = f_tri.read()
-            if f_tri.name.endswith('xlsx'):
-                df_raw_p3 = pd.read_excel(_io.BytesIO(tri_bytes), header=None)
-            else:
-                df_raw_p3 = pd.read_csv(_io.BytesIO(tri_bytes), header=None)
-            ligne_ann = df_raw_p3.iloc[0].tolist(); ligne_typ = df_raw_p3.iloc[1].tolist()
-            annee_cur = None; col_info_p3 = []
-            for i, (a, t) in enumerate(zip(ligne_ann, ligne_typ)):
-                if i == 0: col_info_p3.append(('UW_YEAR','')); continue
-                try:
-                    av = int(float(str(a).strip().replace('.0','')))
-                    if 2010 <= av <= 2050: annee_cur = av
-                except: pass
-                col_info_p3.append((annee_cur, str(t).strip().upper() if pd.notna(t) else ''))
-
-            df_data_p3 = df_raw_p3.iloc[2:].reset_index(drop=True)
-            df_data_p3.iloc[:, 0] = df_data_p3.iloc[:, 0].ffill()
-
-            recs = []
-            for idx_r, row in df_data_p3.iterrows():
-                try:
-                    as_ = int(float(str(row.iloc[0]).strip().replace('.0','')))
-                    if not (2010 <= as_ <= 2050): continue
-                except: continue
-                sid = f"{as_}_{idx_r}"
-                for ci, (ar, ty) in enumerate(col_info_p3):
-                    if ty != 'TOTAL' or ar is None: continue
-                    v = row.iloc[ci]
-                    try:
-                        if isinstance(v, str):
-                            v = v.strip().replace(',','.').replace(' ','')
-                            if any(c.isalpha() for c in v) or '#' in v: continue
-                        v = float(v)
-                        if v <= 0 or np.isnan(v): continue
-                    except: continue
-                    dv = ar - as_
-                    if dv < 0 or dv > 9: continue
-                    recs.append({'sinistre_id':sid,'annee_surv':as_,'annee_reg':ar,'dev':dv,'total':v})
-
-            df_liq_p3 = pd.DataFrame(recs)
-            df_liq_p3['annee_ultime'] = df_liq_p3['annee_surv'] + 9
-            df_liq_p3['I_ultime'] = df_liq_p3['annee_ultime'].apply(get_idx)
-            df_liq_p3['I_reg']    = df_liq_p3['annee_reg'].apply(get_idx)
-            df_liq_p3['I_surv']   = df_liq_p3['annee_surv'].apply(get_idx)
-            df_liq_p3['Sk']       = df_liq_p3['total'] * (df_liq_p3['I_ultime'] / df_liq_p3['I_reg'])
-            df_liq_p3['ratio_check'] = df_liq_p3['I_reg'] / df_liq_p3['I_surv']
-            mask_s = df_liq_p3['ratio_check'] >= (1.0 + seuil_stab)
-            df_liq_p3['S_prime_k'] = np.where(mask_s, df_liq_p3['Sk']*(df_liq_p3['I_surv']/df_liq_p3['I_reg']), df_liq_p3['Sk'])
-            df_liq_p3['coeff_stab'] = np.where(df_liq_p3['S_prime_k']>0, df_liq_p3['Sk']/df_liq_p3['S_prime_k'], 1.0)
-
-            if is_long_p3:
-                facteurs_p3 = {k: [] for k in range(9)}
-                for sid, grp in df_liq_p3.groupby('sinistre_id'):
-                    grp = grp.sort_values('dev').set_index('dev')
-                    for k in range(9):
-                        if k in grp.index and (k+1) in grp.index:
-                            tk = grp.loc[k,'S_prime_k']; tk1 = grp.loc[k+1,'S_prime_k']
-                            if tk > 0:
-                                f = tk1/tk
-                                if 0.9 <= f <= 2.5: facteurs_p3[k].append(f)
-                f_moy_p3 = {k: np.mean(facteurs_p3[k]) if facteurs_p3[k] else 1.0 for k in range(9)}
-                projs = []
-                for sid, grp in df_liq_p3.groupby('sinistre_id'):
-                    grp = grp.sort_values('dev').set_index('dev')
-                    as_p = grp['annee_surv'].iloc[0]; dm = grp.index.max()
-                    sp = grp.loc[dm,'S_prime_k']; cs = grp.loc[dm,'coeff_stab']
-                    for k in range(dm,9): sp *= f_moy_p3[k]
-                    projs.append({'sinistre_id':sid,'annee_surv':as_p,'dev_max':dm,
-                                  'Sprime_ultime':sp,'Sk_ultime':sp*cs,'coeff_stab':cs})
-            else:
-                f_moy_p3 = {k:1.0 for k in range(9)}
-                projs = []
-                for sid, grp in df_liq_p3.groupby('sinistre_id'):
-                    grp = grp.sort_values('dev').set_index('dev')
-                    as_p = grp['annee_surv'].iloc[0]; dm = grp.index.max()
-                    sk_ = grp.loc[dm,'Sk']
-                    projs.append({'sinistre_id':sid,'annee_surv':as_p,'dev_max':dm,
-                                  'Sprime_ultime':sk_,'Sk_ultime':sk_,'coeff_stab':1.0})
-
-            df_proj_p3 = pd.DataFrame(projs)
-            D_trav_p3  = next((t['priorite'] for t in st.session_state.get("tranches_p3", tranches_input) if t['type']=='travaillante'), 2_000_000)
-            sm_p3      = pct_seuil_p * D_trav_p3
-            X_p3       = df_proj_p3['Sprime_ultime'].values; X_p3 = X_p3[X_p3>0]
-            Pm_p3      = np.percentile(X_p3, 99.5)
-            Xm_p3      = X_p3[(X_p3>=sm_p3)&(X_p3<Pm_p3)]
-            if len(Xm_p3)<5: Xm_p3 = X_p3[X_p3>=sm_p3]
-            alpha_p3   = len(Xm_p3) / np.sum(np.log(Xm_p3/np.min(Xm_p3)))
-
-            df_gi      = df_gnpis_p3.set_index(df_gnpis_p3.columns[0])
-            gc_p3      = df_gnpis_p3.columns[1]
-            dpm        = df_proj_p3[(df_proj_p3['Sprime_ultime']>=sm_p3)&(df_proj_p3['Sprime_ultime']<Pm_p3)]
-            N_obs_p3   = dpm.groupby('annee_surv').size()
-            lv = []
-            for an, cn in N_obs_p3.items():
-                try: lv.append(cn * gnpi_val / float(df_gi.loc[an, gc_p3]))
-                except: lv.append(cn)
-            lambda_p3  = float(np.mean(lv)) if lv else 5.0
-            coeffs_p3  = df_proj_p3['coeff_stab'].values
-            coeffs_p3  = coeffs_p3[(coeffs_p3>0)&np.isfinite(coeffs_p3)]
-
-            # Stocker dans session
-            st.session_state.update({
-                "df_liq": df_liq_p3, "df_proj": df_proj_p3, "f_moyens": f_moy_p3,
-                "alpha_est": float(alpha_p3), "lambda_est": float(lambda_p3),
-                "seuil_est": float(sm_p3), "Pm_proxy": float(Pm_p3),
-                "coeffs": coeffs_p3, "is_long": is_long_p3,
-                "I_cotation": I_cot, "annee_cotation": annee_cot,
-                "seuil_stabilisation": seuil_stab, "df_gnpis_df": df_gnpis_p3,
-            })
-
-            n_sins = df_proj_p3['sinistre_id'].nunique()
-            n_ann  = df_proj_p3['annee_surv'].nunique()
-            return {
-                "status": "ok",
-                "type_branche": type_branche,
-                "nb_sinistres": int(n_sins), "nb_annees": int(n_ann),
-                "nb_observations": len(df_liq_p3),
-                "alpha_estime": round(float(alpha_p3), 4),
-                "lambda_estime": round(float(lambda_p3), 4),
-                "seuil_pareto_MAD": round(float(sm_p3), 0),
-                "Pm_proxy_MAD": round(float(Pm_p3), 0),
-                "I_cotation": round(float(I_cot), 4),
-                "nb_obs_stabilisees": int(mask_s.sum()),
-                "observations": f"{n_sins} sinistres sur {n_ann} années",
-                "recommandation_alpha": "Cohérent" if 1.0 < alpha_p3 < 3.0 else "Vérifier — hors norme [1.0, 3.0]"
-            }
-        except Exception as e:
-            return {"erreur": str(e)}
-
-
-    def _executer_definir_programme(tranches_def):
-        """Définit le programme depuis la décision de l'agent"""
-        prog = []
-        for t in tranches_def:
-            prog.append({
-                "numero": len(prog)+1,
-                "nom": t.get("nom", f"Tranche {len(prog)+1}"),
-                "type": t.get("type", "travaillante"),
-                "priorite": float(t.get("priorite", 2_000_000)),
-                "portee":   float(t.get("portee",   13_000_000)),
-                "AAL": None, "AAD": None,
-                "nb_reconstitutions":  int(t.get("nb_reconstitutions", 1)),
-                "taux_reconstitution": float(t.get("taux_reconstitution", 100)),
-                "indices": False,
-                "brokage":      float(t.get("brokage_pct", 10)) / 100,
-                "frais":        float(t.get("frais_pct",    5)) / 100,
-                "marge":        float(t.get("marge_pct",   10)) / 100,
-                "retrocession": 0.0
-            })
-        st.session_state["tranches_p3"] = prog
-        return {"status": "ok", "programme": [{
-            "nom": t["nom"], "type": t["type"],
-            "priorite_MAD": t["priorite"], "portee_MAD": t["portee"],
-            "reconstitutions": f"{t['nb_reconstitutions']} x {t['taux_reconstitution']}%",
-            "charges": f"Brokage {t['brokage']:.0%} | Frais {t['frais']:.0%} | Marge {t['marge']:.0%}"
-        } for t in prog]}
-
-
-    def _executer_market_curve_p3(rol_min, rol_max, r2_min, tolerance, filtre, f_mkt_file, gnpi_val):
-        """Market curve sur fichier uploadé directement"""
-        try:
-            import io as _io
-            f_mkt_file.seek(0)
-            df_mkt_p3 = pd.read_excel(_io.BytesIO(f_mkt_file.read())) if f_mkt_file.name.endswith('xlsx') else pd.read_csv(f_mkt_file)
-            df_mkt_p3.columns = [c.strip() for c in df_mkt_p3.columns]
-            for col in ['ROLs','midpoints','Garantie en MAD']:
-                if col in df_mkt_p3.columns and df_mkt_p3[col].dtype == object:
-                    df_mkt_p3[col] = (df_mkt_p3[col].astype(str).str.replace('%','').str.replace(' ','').str.replace(',','.')
-                        .apply(lambda x: float(x)/100 if x not in ['nan',''] and float(x)>1.5
-                               else (float(x) if x not in ['nan',''] else np.nan)))
-            df_mkt_p3 = df_mkt_p3.dropna(subset=['ROLs','midpoints'])
-            if filtre.strip():
-                col_b = next((c for c in df_mkt_p3.columns if 'BUSINESS' in c.upper()), None)
-                if col_b:
-                    df_mkt_p3 = df_mkt_p3[df_mkt_p3[col_b].astype(str).str.upper()
-                                           .str.contains(filtre.upper(), regex=False, na=False)]
-            mask_r = (df_mkt_p3['ROLs'] >= rol_min) & (df_mkt_p3['ROLs'] <= rol_max)
-            df_mkt_p3 = df_mkt_p3[mask_r].copy()
-            df_mkt_p3['diff_rel'] = np.where(df_mkt_p3['midpoints']!=0,
-                np.abs(df_mkt_p3['ROLs']-df_mkt_p3['midpoints'])/np.abs(df_mkt_p3['midpoints']),1.0)
-            df_mkt_p3 = df_mkt_p3[df_mkt_p3['diff_rel']>=tolerance].copy()
-            df_mkt_p3 = df_mkt_p3[df_mkt_p3['midpoints']>0].copy()
-            if len(df_mkt_p3) < 5: return {"erreur": f"Seulement {len(df_mkt_p3)} points — filtres trop restrictifs"}
-
-            st.session_state["df_mkt_clean"] = df_mkt_p3
-            prog_p3 = st.session_state.get("tranches_p3", tranches_input)
-
-            def fit_p(x, y):
-                lx=np.log(x); ly=np.log(y); c=np.polyfit(lx,ly,1)
-                a=np.exp(c[1]); b=-c[0]; lyp=np.polyval(c,lx)
-                r2=1-np.sum((ly-lyp)**2)/np.sum((ly-ly.mean())**2+1e-10)
-                return a,b,r2
-
-            def ctt(t, a, b):
-                x=(t['priorite']+t['portee']/2)/gnpi_val
-                rol=a*(x**(-b)); tp=rol*t['portee']/gnpi_val
-                tr=tp*1.002; tt=tr/(1-t['brokage']-t['frais']-0.0021)
-                L=t['portee']; t_r=t['taux_reconstitution']/100; n_r=t['nb_reconstitutions']
-                Pr=sum(t_r*min(L,max(tp*gnpi_val-(r-1)*L,0)) for r in range(1,n_r+1))/(L or 1)
-                Rec=Pr/(Pr+10)
-                return {"tranche":t["nom"],"type":t["type"],"x_norm":round(x,6),
-                        "rol":round(rol,6),"taux_pur":round(tp,6),"taux_tech":round(tt,6),
-                        "chargement_majeurs":round(st.session_state.get("chargement_majeurs",0.0),6),"taux":round(tt,6)}
-
-            resultats_p3_mkt = []
-            for q in [0.20,0.40,0.60,0.80,1.0]:
-                mq = np.quantile(df_mkt_p3['midpoints'],q)
-                dq = df_mkt_p3[df_mkt_p3['midpoints']<=mq]
-                if len(dq)<5: continue
-                try:
-                    a,b,r2=fit_p(dq['midpoints'].values,dq['ROLs'].values)
-                    if b<=0: continue
-                    tts=[ctt(t,a,b) for t in prog_p3]
-                    if any(tt['taux']<=0 for tt in tts): continue
-                    resultats_p3_mkt.append({"quantile":q,"n_points":len(dq),"a":round(a,6),
-                        "b":round(b,4),"r2":round(r2,4),"r2_ok":r2>=r2_min,
-                        "taux_tranches":tts,"score":r2-(0 if r2>=r2_min else 0.5)})
-                except: continue
-
-            if not resultats_p3_mkt: return {"erreur": "Aucun ajustement valide"}
-            best = max(resultats_p3_mkt, key=lambda x: x["score"])
-            st.session_state["resultats_mkt"]  = resultats_p3_mkt
-            st.session_state["taux_mkt_final"] = best["taux_tranches"]
-            return _json_safe({"status":"ok","a":best["a"],"b":best["b"],"r2":best["r2"],
-                    "r2_ok":best["r2_ok"],"n_points":best["n_points"],
-                    "taux_par_tranche":best["taux_tranches"],
-                    "interpretation": "R² satisfaisant" if best["r2_ok"] else "R² faible — interpréter avec prudence"})
-        except Exception as e:
-            return {"erreur": str(e)}
-
-
-    def executer_outil_full(nom, inputs, f_tri_f, f_gnp_f, f_idx_f, f_mkt_f, gnpi_v, annee_v):
-        """Dispatcher Phase 3 — inclut les outils de parsing fichiers"""
-        if nom == "analyser_et_transformer_triangle":
-            return _executer_transformer_triangle_complet(
-                inputs.get("type_branche", "long"), inputs.get("seuil_stabilisation", 0.0),
-                inputs.get("pct_seuil_pareto", 0.80), f_tri_f, f_gnp_f, f_idx_f, gnpi_v, annee_v)
-        elif nom == "definir_programme_tranches":
-            return _executer_definir_programme(inputs.get("tranches", []))
-        elif nom == "calculer_burning_cost_complet":
-            prog = st.session_state.get("tranches_p3", tranches_input)
-            return _executer_burning_cost_p3(prog, gnpi_v)
-        elif nom == "lancer_simulation_complete":
-            prog = st.session_state.get("tranches_p3", tranches_input)
-            return _executer_simulation(inputs.get("alpha", st.session_state.get("alpha_est",1.5)), inputs.get("lambda_", st.session_state.get("lambda_est",5.0)), inputs.get("seuil", st.session_state.get("seuil_est",1_600_000)), int(inputs.get("n_sim", 10000)))
-        elif nom == "construire_market_curve_complete":
-            return _executer_market_curve_p3(
-                inputs.get("rol_min", 0.05), inputs.get("rol_max", 1.0), inputs.get("r2_min", 0.30),
-                inputs.get("tolerance", 0.50), inputs.get("filtre_branche", "EVENEMENT"), f_mkt_f, gnpi_v)
-        elif nom == "demander_validation_humaine":
-            return {"status": "validation_requise",
-                    "niveau": inputs.get("niveau","avertissement"), "message": inputs.get("message",""),
-                    "question": inputs.get("question",""), "choix": inputs.get("choix", ["Continuer", "Arrêter"])}
-        elif nom == "generer_rapport_final_complet":
-            prog = st.session_state.get("tranches_p3", tranches_input)
-            return _executer_rapport_p3(inputs.get("methode_travaillante","simulation"), inputs.get("methode_cat","max_sim_mkt"), prog, gnpi_v)
-        else:
-            return {"erreur": f"Outil inconnu : {nom}"}
-
-
-    def _executer_burning_cost_p3(prog, gnpi_v):
-        if "df_proj" not in st.session_state: return {"erreur": "df_proj manquant"}
-        df_proj = st.session_state["df_proj"].copy()
-        resultats = []
-        for t_info in prog:
-            D=t_info["priorite"]; L=t_info["portee"]
-            aal=t_info["AAL"]; aad=t_info["AAD"]
-            n_rec=t_info["nb_reconstitutions"]; t_r=t_info["taux_reconstitution"]/100
-            cap=(n_rec+1)*L
-            df_proj["Ck"] = df_proj.apply(
-                lambda row: min(max(row["Sprime_ultime"]-D,0),L)*row["coeff_stab"], axis=1)
-            charges_ann = df_proj.groupby("annee_surv")["Ck"].sum()
-            cfs = []
-            for an, ch in charges_ann.items():
-                if aad: ch=max(ch-aad,0)
-                if aal: ch=min(ch,aal)
-                cfs.append({"annee":int(an),"charge":round(float(min(ch,cap)),2)})
-            df_ch=pd.DataFrame(cfs); N=len(df_ch)
-            Pr=0.0
-            for Cn in df_ch["charge"].values:
-                for r in range(1,n_rec+1): Pr+=t_r*min(L,max(Cn-(r-1)*L,0))
-            Pr/=L if L>0 else 1
-            Rec=Pr/(Pr+N) if (Pr+N)>0 else 0.0
-            cm = df_ch["charge"].mean()
-            charges_nz = [c for c in df_ch["charge"].values if c > 0]
-            n_nz = len(charges_nz)
-            charg_maj_p3 = st.session_state.get("chargement_majeurs", 0.0)
-            if n_nz < 3:
-                tp = tr = tt = 0.0; sig_p3 = 0.0
-            else:
-                tp = cm / gnpi_v
-                sig_p3 = float(np.std(charges_nz)) / gnpi_v
-                tr = tp + sig_p3 * 0.20
-                tt = (tr*(1-Rec))/(1-t_info["brokage"]-t_info["frais"]-t_info["marge"]-t_info["retrocession"])
-            resultats.append({"tranche":t_info["nom"],"type":t_info["type"],
-                "charge_moy":round(cm,2),"n_ann_nonzero":n_nz,"sigma_hist":round(sig_p3,6),
-                "Pr_Rec":round(Pr,6),"Rec":round(Rec,6),
-                "taux_pur":round(tp,6),"taux_risque":round(tr,6),
-                "taux_technique":round(tt,6),
-                "chargement_majeurs":round(charg_maj_p3,6),
-                "detail_annuel":cfs})
-        st.session_state["resultats_bc"] = resultats
-        return {"status":"ok","resultats":[{k:v for k,v in r.items() if k!="detail_annuel"} for r in resultats]}
-
-
-    def _executer_rapport_p3(meth_trav, meth_cat, prog, gnpi_v):
-        if not all(k in st.session_state for k in ["resultats_bc","resultats_sim","taux_mkt_final"]):
-            return {"erreur": "Résultats intermédiaires manquants"}
-        _bc_l = st.session_state["resultats_bc"]
-        _si_l = st.session_state["resultats_sim"]
-        _mk_l = st.session_state["taux_mkt_final"]
-        rows=[]; pt=0
-        for idx_t, t in enumerate(prog):
-            n=t["nom"]
-            bt  = _lookup_taux(_bc_l, n, idx_t, "taux_technique")
-            st_ = _lookup_taux(_si_l, n, idx_t, "taux_technique")
-            mk  = _lookup_taux(_mk_l, n, idx_t, "taux") if t["type"]!="travaillante" else 0.0
-            if t["type"]=="travaillante":
-                if meth_trav=="bc": tx=bt; me="BC"
-                elif meth_trav=="moyenne_bc_sim": tx=(bt+st_)/2; me="Moy BC+Sim"
-                else: tx=max(bt,st_); me=f"max(BC,Sim)→{'BC' if bt>=st_ else 'Sim'}"
-            else:
-                if meth_cat=="market_curve": tx=mk; me="Marché"
-                elif meth_cat=="max_sim_mkt": tx=max(st_,mk); me=f"max(Sim,Mkt)→{'Mkt' if mk>=st_ else 'Sim'}"
-                else: tx=st_; me="Simulation"
-            pr=gnpi_v*tx; pt+=pr
-            ec=abs(bt-st_)/bt*100 if bt>0 else 0
-            rows.append({"tranche":n,"type":t["type"],
-                "taux_bc":round(bt,6),"taux_sim":round(st_,6),"taux_mkt":round(mk,6),
-                "taux_retenu":round(tx,6),"methode":me,"prime_MAD":round(pr,2),
-                "ecart_bc_sim_pct":round(ec,1)})
-        st.session_state["df_rapport"]=pd.DataFrame(rows); st.session_state["prime_totale"]=pt
-        return {"status":"ok","synthese":rows,"prime_totale_MAD":round(pt,2),"taux_global":round(pt/gnpi_v,6)}
-
-
-    # ════════════════════════════════
-    # BOUCLE AGENTIQUE PHASE 3
-    # ════════════════════════════════
-
-    def run_agent_full(api_key, f_tri_f, f_gnp_f, f_idx_f, f_mkt_f,
-                       gnpi_v, annee_v, contexte_v, seuil_al,
-                       log_cont, result_cont, alert_cont):
-        client = anthropic.Anthropic(api_key=api_key)
-
-        system_p3 = f"""Tu es un agent actuariel autonome de niveau expert, certifié CAS/SOA/IFoA.
-Tu as accès aux fichiers bruts pour la tarification XL non-proportionnelle.
-
-CONTEXTE UTILISATEUR :
-{contexte_v if contexte_v else f"Portefeuille automobile, GNPI {gnpi_v:,} MAD, année cotation {annee_v}."}
-
-GNPI : {gnpi_v:,} MAD | Année cotation : {annee_v}
-Seuil alerte critique (écart BC/Sim) : {seuil_al}% | Période retour : {retour3} ans
-
-RÈGLES ACTUARIELLES OBLIGATOIRES — BURNING COST :
-R1 — tau_risque = tau_pur + sigma_hist * 20% (écart-type BC annuels non nuls x chargement sécurité 20%)
-     JAMAIS tau_pur * 1.20
-R2 — Années BC non nulles < 3 => tau_BC = 0 automatiquement (pas d'extrapolation)
-R3 — Tranches cat avec tau_BC = 0 => tarification par simulation + market curve uniquement
-
-RÈGLES ACTUARIELLES — MARKET CURVE :
-R4 — Market curve UNIQUEMENT pour tranches cat. Jamais pour la travaillante.
-R5 — Critères sélection : R2 >= 0.45, b > 0, N >= 15, cohérence ROL T2 > ROL T3
-R6 — R2 < 0.30 => DEMANDER_VALIDATION_HUMAINE
-
-SÉLECTION FINALE :
-- Travaillante : taux = max(tau_BC, tau_sim)
-- Cat : taux = max(tau_sim, tau_marché)
-
-SÉQUENCE OBLIGATOIRE :
-1. DÉFINIR programme (tranches, priorités, portées, frais) depuis le contexte
-2. TRANSFORMER triangle (branche longue obligatoire si RC auto)
-3. CALCULER Burning Cost (formule sigma + règle R2)
-4. LANCER Simulation Pareto/Poisson
-5. Si écart BC/Sim > {seuil_al}% => DEMANDER_VALIDATION_HUMAINE
-6. CONSTRUIRE Market Curve cat (R2 >= 0.45, N >= 15)
-7. Si R2 < 0.30 => DEMANDER_VALIDATION_HUMAINE
-8. GÉNÉRER rapport final avec sélection conservative
-
-RÈGLES AUTONOMES :
-- Branche longue si RC auto ou développement > 3 ans
-- Alpha < 0.8 ou > 4.0 => signaler anomalie
-- Ne jamais demander validation pour décisions techniques mineures
-- Justifier CHAQUE décision avec des chiffres précis
-
-Sois conforme aux standards actuariels. Explicite pour un comité de direction."""
-
-        messages = [{"role": "user", "content":
-            f"Lance la tarification complète Atlantic Re 2026. GNPI={gnpi_v:,} MAD. Contexte : {contexte_v if contexte_v else 'Standard automobile Maroc'}. Go."}]
-
-        tour=0; max_t=15; validation_en_attente=None
-
-        while tour < max_t:
-            tour+=1
-            with log_cont:
-                st.markdown(f"""<div style="background:#1a1a1a;border-radius:6px;padding:6px 12px;
-                    margin:4px 0;font-size:11px;color:#888">Tour {tour}/{max_t}</div>""",
-                    unsafe_allow_html=True)
-
-            resp = client.messages.create(
-                model="claude-opus-4-5", max_tokens=4096,
-                system=system_p3, tools=TOOLS_FULL, messages=messages)
-
-            for block in resp.content:
-                if hasattr(block,'text') and block.text:
-                    with log_cont:
-                        st.markdown(f"""<div style="background:rgba(45,138,78,0.07);
-                            border-left:3px solid #2d8a4e;border-radius:0 8px 8px 0;
-                            padding:12px 16px;margin:6px 0;font-size:13px;line-height:1.6">
-                            🧠 {block.text}</div>""", unsafe_allow_html=True)
-
-                if block.type == "tool_use":
-                    with log_cont:
-                        just = block.input.get("justification","")
-                        params_display = {k:v for k,v in block.input.items() if k not in ["justification","tranches"]}
-                        st.markdown(f"""<div style="background:rgba(59,130,246,0.07);
-                            border-left:3px solid #3b82f6;border-radius:0 8px 8px 0;
-                            padding:12px 16px;margin:6px 0;font-size:13px">
-                            ⚙️ <b style="color:#3b82f6">{block.name}</b><br>
-                            <span style="color:#666;font-size:11px">{just}</span><br>
-                            <code style="font-size:11px">{json.dumps(params_display,ensure_ascii=False)[:200]}</code>
-                            </div>""", unsafe_allow_html=True)
-
-            if resp.stop_reason == "end_turn": break
-
-            if resp.stop_reason == "tool_use":
-                tool_results = []
-                for block in resp.content:
-                    if block.type != "tool_use": continue
-
-                    with log_cont:
-                        with st.spinner(f"⚙️ {block.name}..."):
-                            result = executer_outil_full(
-                                block.name, block.input,
-                                f_tri_f, f_gnp_f, f_idx_f, f_mkt_f,
-                                gnpi_v, annee_v)
-
-                    # Gestion validation humaine
-                    if result.get("status") == "validation_requise":
-                        # ── Validation non-bloquante : affiche l'alerte et continue ──
-                        niveau = result.get("niveau","avertissement")
-                        color_map = {"avertissement":"#f59e0b","critique":"#ef4444","bloquant":"#7c3aed"}
-                        col_a = color_map.get(niveau, "#f59e0b")
-                        with alert_cont:
-                            choix_defaut = result.get("choix", ["Continuer"])[0]
-                            st.markdown(f"""<div style="background:rgba(245,158,11,0.08);
-                                border:2px solid {col_a};border-radius:12px;
-                                padding:16px 20px;margin:8px 0">
-                                <div style="color:{col_a};font-weight:700;font-size:14px;margin-bottom:6px">
-                                    🚨 {niveau.upper()} — {result.get('message','')}
-                                </div>
-                                <div style="color:#555;font-size:13px">
-                                    {result.get('question','')}
-                                </div>
-                                <div style="color:#2d8a4e;font-size:12px;margin-top:8px">
-                                    ✅ L'agent continue automatiquement avec : <b>{choix_defaut}</b>
-                                </div></div>""", unsafe_allow_html=True)
-                        result = {"status": "validation_confirmee",
-                                  "choix_humain": choix_defaut,
-                                  "message": f"Auto-continué : {choix_defaut}"}
-
-                    erreur = result.get("erreur","")
-                    with log_cont:
-                        if erreur:
-                            st.markdown(f"""<div style="background:rgba(239,68,68,0.08);
-                                border-left:3px solid #ef4444;border-radius:0 8px 8px 0;
-                                padding:10px 14px;margin:4px 0;font-size:12px">
-                                ❌ <b>{block.name}</b> : {erreur}</div>""", unsafe_allow_html=True)
-                        else:
-                            status_txt = result.get("status","ok")
-                            st.markdown(f"""<div style="background:rgba(45,138,78,0.06);
-                                border-left:3px solid #2d8a4e;border-radius:0 8px 8px 0;
-                                padding:10px 14px;margin:4px 0;font-size:12px">
-                                ✅ <b>{block.name}</b> — {status_txt}</div>""", unsafe_allow_html=True)
-
-                    tool_results.append({
-                        "type": "tool_result", "tool_use_id": block.id,
-                        "content": json.dumps(_json_safe(result), ensure_ascii=False)})
-
-                messages.append({"role":"assistant","content":resp.content})
-                messages.append({"role":"user","content":tool_results})
-            else:
-                break
-
-        # Résultats finaux
-        with result_cont:
-            st.markdown("---")
-            st.markdown("## 📊 Résultats Agent Complet")
-
-            if "tranches_p3" in st.session_state:
-                st.markdown("### 📋 Programme défini par l'agent")
-                tableau_resultats([{
-                    "Tranche": t["nom"], "Type": t["type"],
-                    "Priorité": f"{t['priorite']:,.0f} MAD",
-                    "Portée": f"{t['portee']:,.0f} MAD",
-                    "Reconst.": f"{t['nb_reconstitutions']} x {t['taux_reconstitution']}%",
-                    "Charges": f"Brok {t['brokage']:.0%} | Frais {t['frais']:.0%} | Marge {t['marge']:.0%}"
-                } for t in st.session_state["tranches_p3"]])
-
-            if "df_proj" in st.session_state:
-                c1,c2,c3,c4 = st.columns(4)
-                c1.metric("Sinistres",  st.session_state["df_proj"]["sinistre_id"].nunique())
-                c2.metric("Alpha",      f"{st.session_state.get('alpha_est',0):.4f}")
-                c3.metric("Lambda",     f"{st.session_state.get('lambda_est',0):.4f}")
-                c4.metric("Seuil MAD",  f"{st.session_state.get('seuil_est',0):,.0f}")
-
-            if "resultats_bc" in st.session_state and "resultats_sim" in st.session_state:
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.markdown("### 🔥 Burning Cost")
-                    tableau_resultats([{
-                        "Tranche": r["tranche"],
-                        "Rec": f"{r['Rec']:.4%}",
-                        "Taux pur": f"{r['taux_pur']:.4%}",
-                        "Taux tech.": f"{r['taux_technique']:.4%}",
-                    } for r in st.session_state["resultats_bc"]])
-                with col_b:
-                    st.markdown("### 🎲 Simulation")
-                    tableau_resultats([{
-                        "Tranche": r["tranche"],
-                        "Taux pur": f"{r['taux_pur']:.4%}",
-                        "Taux tech.": f"{r['taux_technique']:.4%}",
-                        "Impact rec.": f"{r.get('impact_rec', 0):.4%}",
-                    } for r in st.session_state["resultats_sim"]])
-
-            if "taux_mkt_final" in st.session_state:
-                st.markdown("### 📈 Market Curve")
-                tableau_resultats([{
-                    "Tranche": tt["tranche"],
-                    "ROL": f"{tt['rol']:.4%}",
-                    "Taux tech.": f"{tt['taux_tech']:.4%}",
-                    "Taux final": f"{tt['taux']:.4%}",
-                } for tt in st.session_state["taux_mkt_final"]])
-
-            if "df_rapport" in st.session_state:
-                st.markdown("### 📋 Rapport Final")
-                tableau_resultats([{
-                    "Tranche": row["tranche"], "Type": row["type"],
-                    "Taux BC": f"{row['taux_bc']:.4%}",
-                    "Taux Sim.": f"{row['taux_sim']:.4%}",
-                    "Taux Marché": f"{row['taux_mkt']:.4%}",
-                    "✅ Retenu": f"{row['taux_retenu']:.4%}",
-                    "Prime (MAD)": f"{row['prime_MAD']:,.0f}",
-                    "Méthode": row["methode"],
-                    "Écart BC/Sim": f"{row['ecart_bc_sim_pct']:.0f}%",
-                } for row in st.session_state["df_rapport"].to_dict("records")])
-
-                pt = st.session_state.get("prime_totale", 0)
-                c1,c2,c3 = st.columns(3)
-                with c1: card("Prime totale", f"{pt:,.0f} MAD", icone="💰")
-                with c2: card("Taux global",  f"{pt/gnpi_v:.4%}", couleur="#1a1a1a", icone="📊")
-                with c3: card("Agent",        "Complet ✅", couleur="#3b82f6", icone="🚀")
-
-
-    # ── Lancement Phase 3 ──
-    if lancer3:
-        st.markdown("---")
-        st.markdown("### 🚀 Exécution Agent Complet")
-        alert_cont  = st.container()
-        log_cont    = st.container()
-        result_cont = st.container()
-
-        with log_cont:
-            st.markdown("""<div style="background:linear-gradient(135deg,#0d0d1a,#1a1a1a);
-                border-radius:10px;padding:14px 18px;margin-bottom:12px;
-                border:1px solid rgba(59,130,246,0.4)">
-                <span style="color:#3b82f6;font-weight:700">🚀 Agent Complet démarré</span>
-                <span style="color:#888;font-size:12px;margin-left:8px">
-                Pipeline complet en cours — fichiers bruts → rapport final...</span>
-                </div>""", unsafe_allow_html=True)
-        try:
-            run_agent_full(api_key, f3_tri, f3_gnp, f3_idx, f3_mkt,
-                           gnpi3, annee3, contexte3, seuil_alerte,
-                           log_cont, result_cont, alert_cont)
-            with log_cont:
-                st.success("✅ Agent Complet terminé — rapport disponible ci-dessus et dans tous les onglets")
-        except Exception as e:
-            st.error(f"❌ Erreur agent complet : {e}")
-
-    elif not lancer3 and "df_rapport" in st.session_state:
-        st.info("✅ Résultats de la dernière exécution disponibles dans les onglets.")
-        if st.button("🔄 Relancer l'Agent Complet", key="relancer3"):
-            for k in ["tranches_p3","df_proj","df_liq","resultats_bc","resultats_sim",
-                      "resultats_mkt","taux_mkt_final","df_rapport"]:
-                st.session_state.pop(k, None)
-            st.rerun()
 
 
 
