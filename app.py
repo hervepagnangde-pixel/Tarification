@@ -6634,22 +6634,46 @@ with tab_hist:
 with tab_admin:
     st.header("🔐 Interface Administrateur")
 
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#1a1a1a,#2d8a4e);
-        border-radius:14px;padding:22px 26px;margin-bottom:22px;
-        box-shadow:0 4px 14px rgba(0,0,0,0.18);">
-        <div style="color:white;font-size:20px;font-weight:800;margin-bottom:8px;">
-            Atlantic Re IA — Signature concepteur
-        </div>
-        <div style="color:#e8f5ec;font-size:14px;line-height:1.6;">
-            Cet outil a été conçu et développé par <b>Hervé NONGPANGA</b>,
-            stagiaire actuaire tarificateur chez <b>Atlantic Re</b>.
-            Il a été pensé pour faciliter une tarification rapide des affaires
-            de réassurance non-proportionnelle et accompagner l’analyse actuarielle
-            dans un cadre structuré, traçable et professionnel.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+if st.button("ℹ️ À propos de l’outil", use_container_width=True):
+    st.session_state["show_about_tool"] = True
+
+if st.session_state.get("show_about_tool", False):
+    with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
+        st.markdown("""
+        ### Atlantic Re IA — Assistant actuariel de tarification
+
+        **Atlantic Re IA** est un outil d’aide à la tarification en réassurance
+        non-proportionnelle, conçu pour accélérer l’analyse des affaires,
+        structurer les calculs actuariels et produire une vision claire des
+        résultats techniques.
+
+        L’outil permet notamment de :
+
+        - construire un programme de réassurance par tranches ;
+        - calculer les taux par approche **Burning Cost** ;
+        - réaliser des simulations fréquentielles et sévérité ;
+        - intégrer une approche **Market Curve** ;
+        - comparer plusieurs méthodes de tarification ;
+        - générer une synthèse finale avec prime totale et taux global ;
+        - produire un rapport PDF professionnel ;
+        - accompagner l’analyse par un agent IA ;
+        - conserver des sessions et résultats pour audit et traçabilité.
+
+        ---
+
+        ### Concepteur
+
+        Cet outil a été conçu et développé par **Hervé NONGPANGA**,
+        **stagiaire actuaire tarificateur chez Atlantic Re**.
+
+        Il a été développé dans l’objectif de faciliter une tarification rapide,
+        fiable et structurée des affaires, tout en offrant un accompagnement
+        dans l’analyse actuarielle, la comparaison des méthodes et la préparation
+        des décisions techniques.
+
+        > L’outil ne remplace pas le jugement actuariel : il sert de support
+        > d’analyse, de calcul, de documentation et d’aide à la décision.
+        """)
 
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
 
