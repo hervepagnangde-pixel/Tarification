@@ -2153,104 +2153,116 @@ with tab2:
         branch_label = "Longue" if st.session_state.get("is_long") else "Courte"
         st.info(f"🌿 Branche : **{branch_label}** | I_cotation({st.session_state.get('annee_cotation')}) = {st.session_state.get('I_cotation',1):.4f}")
         st.info(f"Seuil : {st.session_state.get('seuil_est',0):,.0f} | Pm P99.5 : {st.session_state.get('Pm_proxy',0):,.0f} | Alpha : {st.session_state.get('alpha_est',0):.4f} | Lambda : {st.session_state.get('lambda_est',0):.4f}")
+
+        # ── Bouton pour relancer l'analyse GPD sans re-uploader ──
+        if "df_proj" in st.session_state and "alpha_est" in st.session_state:
+            col_gpd1, col_gpd2 = st.columns([3,1])
+            with col_gpd2:
+                if st.button("Relancer analyse GPD", key="btn_rerun_gpd", use_container_width=True):
+                    with st.spinner("Fit GPD en cours..."):
+                        res_new = identifier_sinistres_majeurs_gpd(
+                            df_proj        = st.session_state["df_proj"],
+                            gnpi           = gnpi,
+                            tranches_input = tranches_input,
+                            nb_annees_obs  = st.session_state["df_proj"]["annee_surv"].nunique(),
+                            retour_ans     = 20,
+                            pct_seuil      = st.session_state.get("pct_seuil_pareto", 0.80)
+                        )
+                    st.session_state["res_majeurs"]             = res_new
+                    st.session_state["chargement_majeurs"]      = res_new["chargement"]
+                    st.session_state["chargements_par_tranche"] = res_new.get("chargements_par_tranche", {})
+                    st.rerun()
+
         if "res_majeurs" in st.session_state:
-            res = st.session_state["res_majeurs"]
+            res  = st.session_state["res_majeurs"]
             diag = res.get("gpd_diag", {})
 
-            # ── Métriques clés ──
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Sinistres majeurs",  res["n_majeurs"])
-            c2.metric("Sinistres courants", res["n_courants"])
-            c3.metric("Pm — niveau de retour", f"{res['Pm']:,.0f} MAD")
-            c4.metric("Chargement trav.", f"{res['chargement']:.4%}")
+            # Détecter session ancienne format (pas de GPD)
+            if not diag or diag.get("u", 0) == 0:
+                st.warning("Données GPD absentes — cliquez sur 'Relancer analyse GPD' pour recalculer.")
+            else:
+                # ── Métriques clés ──
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Sinistres majeurs",     res["n_majeurs"])
+                c2.metric("Sinistres courants",    res["n_courants"])
+                c3.metric("Pm — niveau de retour", f"{res['Pm']:,.0f} MAD")
+                c4.metric("Chargement trav.",      f"{res['chargement']:.4%}")
 
-            # ── Résumé GPD ──
-            with st.expander("Analyse TVE — GPD · Paramètres · Diagnostics", expanded=True):
-                st.markdown("#### Paramètres GPD ajustés (évir::gpd en Python)")
-                c1g, c2g, c3g, c4g, c5g = st.columns(5)
-                c1g.metric("Seuil u (MAD)",    f"{diag.get('u',0):,.0f}")
-                c2g.metric("xi (forme)",         f"{diag.get('xi',0):.4f}")
-                c3g.metric("sigma (échelle)",    f"{diag.get('sigma_gpd',0):.0f}")
-                c4g.metric("N excédances",       diag.get('n_excesses',0))
-                c5g.metric("Pm retour " + str(20) + " ans", f"{diag.get('Pm',0):,.0f}")
+                # ── Résumé GPD ──
+                with st.expander("Analyse TVE — GPD · Paramètres · Diagnostics", expanded=True):
+                    st.markdown("#### Paramètres GPD ajustés")
+                    c1g,c2g,c3g,c4g,c5g = st.columns(5)
+                    c1g.metric("Seuil u (MAD)",       f"{diag['u']:,.0f}")
+                    c2g.metric("xi (forme)",            f"{diag['xi']:.4f}")
+                    c3g.metric("sigma (échelle)",       f"{diag['sigma_gpd']:.0f}")
+                    c4g.metric("N excédances",          diag['n_excesses'])
+                    c5g.metric("Pm retour 20 ans",      f"{diag['Pm']:,.0f}")
 
-                # Tableau résumé (équivalent cat(sprintf...) du code R)
-                tableau_resultats([{
-                    "Indicateur": k, "Valeur": str(v)
-                } for k,v in {
-                    "n_total":           diag.get("n_excesses","—"),
-                    "Seuil u (MAD)":     f"{diag.get('u',0):,.0f}",
-                    "xi (forme GPD)":    f"{diag.get('xi',0):.4f}",
-                    "sigma (échelle)":   f"{diag.get('sigma_gpd',0):.2f} MAD",
-                    "P(X > u)":          f"{diag.get('survie_P_X_gt_u',0):.6f}",
-                    "Obs. > u":          diag.get("n_excesses",0),
-                    "Fréq. annuelle":    f"{diag.get('freq_annuelle',0):.4f} sin/an",
-                    "m (obs. retour)":   f"{diag.get('m',0):.2f}",
-                    "Pm (retour 20 ans)":f"{diag.get('Pm',0):,.0f} MAD",
-                    "Nb majeurs":        res["n_majeurs"],
-                    "Nb courants":       res["n_courants"],
-                }.items()])
+                    tableau_resultats([{"Indicateur": k, "Valeur": v} for k,v in {
+                        "n_total sinistres":   diag.get("n_excesses","—"),
+                        "Seuil u (MAD)":       f"{diag['u']:,.0f}",
+                        "xi (forme GPD)":      f"{diag['xi']:.4f}",
+                        "sigma (échelle MAD)": f"{diag['sigma_gpd']:.2f}",
+                        "P(X > u)":            f"{diag['survie_P_X_gt_u']:.6f}",
+                        "Observations > u":    diag['n_excesses'],
+                        "Fréq. annuelle":      f"{diag['freq_annuelle']:.4f} sin/an",
+                        "m (retour × fréq.)":  f"{diag['m']:.2f}",
+                        "Pm (retour 20 ans)":  f"{diag['Pm']:,.0f} MAD",
+                        "Nb sinistres majeurs":res["n_majeurs"],
+                        "Nb sinistres courants":res["n_courants"],
+                    }.items()])
 
-                # ── PP-plot et QQ-plot GPD ──
-                excesses = np.array(diag.get("excesses", []))
-                if len(excesses) >= 5:
-                    import matplotlib.pyplot as plt
-                    from scipy import stats as _sp
-                    xi_v = float(diag.get("xi", 0))
-                    sig_v = float(diag.get("sigma_gpd", 1))
-                    pp = np.arange(1, len(excesses)+1) / (len(excesses)+1)
-                    exc_sorted = np.sort(excesses)
+                    # ── PP-plot et QQ-plot ──
+                    excesses = np.array(diag.get("excesses", []))
+                    if len(excesses) >= 5:
+                        import matplotlib.pyplot as plt
+                        from scipy import stats as _sp
+                        xi_v  = float(diag["xi"])
+                        sig_v = float(diag["sigma_gpd"])
+                        pp         = np.arange(1, len(excesses)+1) / (len(excesses)+1)
+                        exc_sorted = np.sort(excesses)
+                        fig_d, axes = plt.subplots(1, 2, figsize=(10,4))
+                        fig_d.patch.set_facecolor('#f5f5f5')
+                        # PP
+                        cdf_gpd = _sp.genpareto.cdf(exc_sorted, xi_v, loc=0, scale=sig_v)
+                        axes[0].scatter(pp, cdf_gpd, color="#2d8a4e", s=20, alpha=0.7)
+                        axes[0].plot([0,1],[0,1],"r--",lw=1.5)
+                        axes[0].set_xlabel("Probabilités empiriques")
+                        axes[0].set_ylabel("Probabilités GPD théoriques")
+                        axes[0].set_title("PP-plot GPD"); axes[0].grid(alpha=0.3)
+                        # QQ
+                        q_gpd = _sp.genpareto.ppf(pp, xi_v, loc=0, scale=sig_v)
+                        axes[1].scatter(q_gpd, exc_sorted, color="#2d8a4e", s=20, alpha=0.7)
+                        mn_v = min(q_gpd.min(), exc_sorted.min())
+                        mx_v = max(q_gpd.max(), exc_sorted.max())
+                        axes[1].plot([mn_v,mx_v],[mn_v,mx_v],"r--",lw=1.5)
+                        axes[1].set_xlabel("Quantiles GPD théoriques (MAD)")
+                        axes[1].set_ylabel("Quantiles empiriques (MAD)")
+                        axes[1].set_title("QQ-plot GPD"); axes[1].grid(alpha=0.3)
+                        plt.tight_layout(); st.pyplot(fig_d); plt.close()
+                        st.caption("Alignement sur la diagonale = bon ajustement. Déviation en queue haute = sous-estimation des extrêmes.")
 
-                    fig_diag, axes = plt.subplots(1, 2, figsize=(10, 4))
-                    fig_diag.patch.set_facecolor('#f5f5f5')
+                # ── Chargements par tranche ──
+                charg_par_t = res.get("chargements_par_tranche", {})
+                if charg_par_t:
+                    with st.expander("Chargements sinistres majeurs par tranche", expanded=True):
+                        st.caption("Chargement = sum((1/T) × min(max(X−D, 0), C)) / GNPI | T = 20 ans")
+                        tableau_resultats([{
+                            "Tranche": n, "Type": ct["type"],
+                            "Priorité D": f"{ct['D']:,.0f}",
+                            "Portée C":   f"{ct['C']:,.0f}",
+                            "Pm (MAD)":   f"{res['Pm']:,.0f}",
+                            "N majeurs":  res["n_majeurs"],
+                            "Chargement": f"{ct['chargement']:.6f}",
+                            "Charg. %":   f"{ct['chargement']:.4%}",
+                        } for n,ct in charg_par_t.items()])
 
-                    # PP-plot
-                    cdf_gpd = _sp.genpareto.cdf(exc_sorted, xi_v, loc=0, scale=sig_v)
-                    axes[0].scatter(pp, cdf_gpd, color="#2d8a4e", s=20, alpha=0.7)
-                    axes[0].plot([0,1],[0,1],"r--",lw=1.5)
-                    axes[0].set_xlabel("Probabilités empiriques")
-                    axes[0].set_ylabel("Probabilités GPD théoriques")
-                    axes[0].set_title("PP-plot GPD"); axes[0].grid(alpha=0.3)
-
-                    # QQ-plot
-                    q_gpd = _sp.genpareto.ppf(pp, xi_v, loc=0, scale=sig_v)
-                    axes[1].scatter(q_gpd, exc_sorted, color="#2d8a4e", s=20, alpha=0.7)
-                    min_v = min(q_gpd.min(), exc_sorted.min())
-                    max_v = max(q_gpd.max(), exc_sorted.max())
-                    axes[1].plot([min_v,max_v],[min_v,max_v],"r--",lw=1.5)
-                    axes[1].set_xlabel("Quantiles GPD théoriques (MAD)")
-                    axes[1].set_ylabel("Quantiles empiriques (MAD)")
-                    axes[1].set_title("QQ-plot GPD"); axes[1].grid(alpha=0.3)
-
-                    plt.tight_layout()
-                    st.pyplot(fig_diag); plt.close()
-                    st.caption("Alignement sur la diagonale = bon ajustement GPD. Déviation en queue haute = sous-estimation des extrêmes.")
-
-            # ── Chargements par tranche ──
-            charg_par_t = res.get("chargements_par_tranche", {})
-            if charg_par_t:
-                with st.expander("Chargements sinistres majeurs par tranche", expanded=True):
-                    st.caption("Chargement = sum((1/T) × min(max(X−D, 0), C)) / GNPI | T = période de retour 20 ans")
-                    rows_ct = []
-                    for nom_t, ct in charg_par_t.items():
-                        rows_ct.append({
-                            "Tranche": nom_t, "Type": ct["type"],
-                            "Priorité D (MAD)": f"{ct['D']:,.0f}",
-                            "Portée C (MAD)":   f"{ct['C']:,.0f}",
-                            "Pm (MAD)":         f"{res['Pm']:,.0f}",
-                            "Nb majeurs":        res["n_majeurs"],
-                            "Chargement":       f"{ct['chargement']:.6f}",
-                            "Chargement %":     f"{ct['chargement']:.4%}",
-                        })
-                    tableau_resultats(rows_ct)
-                    st.info("Ces chargements sont utilisés automatiquement dans le Burning Cost de chaque tranche.")
-
-            # ── Tableau détaillé sinistres majeurs ──
-            with st.expander("Détail sinistres majeurs (data_extremes)"):
-                if len(res["df_chargements"]) > 0:
-                    st.dataframe(res["df_chargements"], use_container_width=True)
-                else:
-                    st.info("Aucun sinistre au-dessus de Pm.")
+                # ── Détail sinistres majeurs ──
+                with st.expander("Détail sinistres majeurs (data_extremes)"):
+                    if len(res.get("df_chargements", [])) > 0:
+                        st.dataframe(res["df_chargements"], use_container_width=True)
+                    else:
+                        st.info("Aucun sinistre au-dessus de Pm.")
 
             if "df_seuils_pareto" in st.session_state:
                 with st.expander("Sélection seuil Pareto (TVE)"):
