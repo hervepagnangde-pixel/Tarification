@@ -2776,6 +2776,436 @@ with tab6:
             gnpi)
 
 # ════════════════════════════════════════════
+
+# ════════════════════════════════════════════
+# MODULE AGENTIQUE V2 — RAISONNEMENT · CRITIQUE · MACHINE LEARNING
+# ════════════════════════════════════════════
+
+class AgentRaisonnement:
+    """
+    Moteur de raisonnement déterministe.
+    Il ne remplace pas l'actuaire : il construit un plan d'analyse explicable
+    à partir de l'état du dossier.
+    """
+
+    def planifier(self, contexte):
+        plan = []
+
+        def add(code, titre, justification, priorite="normale"):
+            plan.append({
+                "code": code,
+                "titre": titre,
+                "justification": justification,
+                "priorite": priorite
+            })
+
+        add("validation", "Valider les paramètres", 
+            "Contrôler alpha, lambda, GNPI, tranches et cohérence du programme.", "haute")
+
+        if contexte.get("has_triangle"):
+            add("burning_cost", "Calculer le Burning Cost",
+                "Le triangle/projeté est disponible ; le BC permet une lecture historique.", "haute")
+        else:
+            add("missing_triangle", "Bloquer le BC",
+                "Aucune donnée projetée disponible ; le BC ne doit pas être simulé artificiellement.", "critique")
+
+        add("simulation", "Lancer la simulation Pareto/Poisson",
+            "Comparer l'expérience historique à une vision stochastique de la queue.", "haute")
+
+        if contexte.get("has_market"):
+            add("market_curve", "Ajuster la Market Curve",
+                "Les données marché sont disponibles ; elles servent de benchmark pour les tranches cat.", "normale")
+        else:
+            add("market_curve_skip", "Ignorer la Market Curve",
+                "Aucune donnée marché fiable fournie ; ne pas inventer de benchmark.", "normale")
+
+        add("critique", "Auditer les résultats",
+            "Détecter les incohérences, écarts BC/Simulation, taux extrêmes et insuffisances de données.", "haute")
+
+        if contexte.get("n_rows", 0) >= 30:
+            add("machine_learning", "Tester des modèles ML",
+                "Volume minimal disponible pour un benchmark ML exploratoire.", "normale")
+        else:
+            add("machine_learning_skip", "Ne pas surinterpréter le ML",
+                "Volume trop faible pour faire du ML robuste ; conserver le ML comme diagnostic secondaire.", "normale")
+
+        add("selection", "Sélectionner le taux retenu",
+            "Appliquer une règle prudente et documentée par tranche.", "haute")
+
+        add("negociation", "Proposer des variantes de négociation",
+            "Produire plusieurs programmes possibles selon l'intérêt cédante/réassureur.", "normale")
+
+        return plan
+
+
+class AgentCritique:
+    """
+    Moteur critique indépendant.
+    Il relit les sorties BC, Simulation, Market Curve et Rapport final.
+    """
+
+    def __init__(self,
+                 seuil_ecart_warn=0.30,
+                 seuil_ecart_critique=0.50,
+                 seuil_taux_extreme=0.50):
+        self.seuil_ecart_warn = seuil_ecart_warn
+        self.seuil_ecart_critique = seuil_ecart_critique
+        self.seuil_taux_extreme = seuil_taux_extreme
+
+    @staticmethod
+    def _map_by_name(rows):
+        return {r.get("tranche", r.get("Tranche", "")): r for r in (rows or [])}
+
+    @staticmethod
+    def _num(x, default=0.0):
+        try:
+            if x is None or x == "":
+                return default
+            if isinstance(x, str):
+                return float(x.replace("%", "").replace(",", ".").strip())
+            return float(x)
+        except Exception:
+            return default
+
+    def auditer(self, tranches, gnpi, resultats_bc, resultats_sim, resultats_mkt, rapport_rows):
+        alertes = []
+        decisions = []
+        score = 100
+
+        bc_map = self._map_by_name(resultats_bc)
+        sim_map = self._map_by_name(resultats_sim)
+        mkt_map = self._map_by_name(resultats_mkt)
+        rpt_map = self._map_by_name(rapport_rows)
+
+        def alerte(niveau, tranche, message, impact=-5):
+            nonlocal score
+            alertes.append({
+                "niveau": niveau,
+                "tranche": tranche,
+                "message": message
+            })
+            score += impact
+
+        for i, t in enumerate(tranches or []):
+            nom = t.get("nom", f"Tranche {i+1}")
+            typ = t.get("type", "")
+            bc = bc_map.get(nom, {})
+            sim = sim_map.get(nom, {})
+            mkt = mkt_map.get(nom, {})
+            rpt = rpt_map.get(nom, {})
+
+            bc_pur = self._num(bc.get("taux_pur"))
+            bc_risque = self._num(bc.get("taux_risque"))
+            bc_tech = self._num(bc.get("taux_technique"))
+            sim_pur = self._num(sim.get("taux_pur"))
+            sim_risque = self._num(sim.get("taux_risque"))
+            sim_tech = self._num(sim.get("taux_technique"))
+            mkt_tech = self._num(mkt.get("taux", mkt.get("taux_tech")))
+            retenu = self._num(rpt.get("taux_retenu"))
+
+            # Hiérarchie interne BC
+            if bc_tech > 0 and not (bc_pur <= bc_risque <= bc_tech + 1e-12):
+                alerte("CRITIQUE", nom,
+                       "Hiérarchie BC incohérente : taux_pur <= taux_risque <= taux_technique non respectée.",
+                       -15)
+
+            # Hiérarchie interne Simulation
+            if sim_tech > 0 and not (sim_pur <= sim_risque <= sim_tech + 1e-12):
+                alerte("CRITIQUE", nom,
+                       "Hiérarchie Simulation incohérente : taux_pur <= taux_risque <= taux_technique non respectée.",
+                       -15)
+
+            # Données insuffisantes BC
+            n_nz = int(self._num(bc.get("n_ann_nonzero"), 0))
+            if n_nz < 3:
+                if typ == "travaillante":
+                    alerte("WARN", nom,
+                           f"BC fragile : seulement {n_nz} année(s) non nulle(s). La simulation doit être prioritaire.",
+                           -6)
+                else:
+                    decisions.append({
+                        "tranche": nom,
+                        "decision": "BC nul ou faible acceptable pour une tranche cat avec peu d'observations."
+                    })
+
+            # Écart BC / Simulation
+            if bc_tech > 0 and sim_tech > 0:
+                ecart = abs(bc_tech - sim_tech) / max(bc_tech, 1e-12)
+                if ecart >= self.seuil_ecart_critique:
+                    alerte("CRITIQUE", nom,
+                           f"Écart BC/Simulation très élevé : {ecart:.0%}. Vérifier seuil, sinistres majeurs et stabilisation.",
+                           -15)
+                elif ecart >= self.seuil_ecart_warn:
+                    alerte("WARN", nom,
+                           f"Écart BC/Simulation significatif : {ecart:.0%}. Justification obligatoire dans le rapport.",
+                           -8)
+
+            # Taux extrêmes
+            for label, val in [("BC", bc_tech), ("Simulation", sim_tech), ("Market", mkt_tech), ("Retenu", retenu)]:
+                if val < 0:
+                    alerte("CRITIQUE", nom, f"Taux {label} négatif détecté.", -20)
+                if val > self.seuil_taux_extreme:
+                    alerte("CRITIQUE", nom, f"Taux {label} supérieur à {self.seuil_taux_extreme:.0%}. Valeur extrême à contrôler.", -20)
+
+            # Règle de sélection
+            if typ == "travaillante":
+                attendu = max(bc_tech, sim_tech)
+                if retenu > 0 and abs(retenu - attendu) > 1e-6:
+                    alerte("WARN", nom,
+                           "Le taux retenu ne correspond pas à la règle max(BC, Simulation) pour une tranche travaillante.",
+                           -8)
+            else:
+                attendu = max(sim_tech, mkt_tech)
+                if retenu > 0 and abs(retenu - attendu) > 1e-6:
+                    alerte("WARN", nom,
+                           "Le taux retenu ne correspond pas à la règle max(Simulation, Market) pour une tranche cat.",
+                           -8)
+
+            # Logique de programme
+            if t.get("portee", 0) <= 0 or t.get("priorite", 0) < 0:
+                alerte("CRITIQUE", nom, "Priorité ou portée invalide.", -20)
+
+        score = max(0, min(100, score))
+        if score >= 85:
+            verdict = "ROBUSTE"
+        elif score >= 65:
+            verdict = "ACCEPTABLE AVEC RÉSERVES"
+        else:
+            verdict = "À REVOIR"
+
+        synthese = {
+            "score": score,
+            "verdict": verdict,
+            "nb_alertes": len(alertes),
+            "nb_critiques": sum(1 for a in alertes if a["niveau"] == "CRITIQUE"),
+            "nb_warn": sum(1 for a in alertes if a["niveau"] == "WARN"),
+        }
+
+        return {
+            "synthese": synthese,
+            "alertes": alertes,
+            "decisions": decisions
+        }
+
+
+class AgentML:
+    """
+    Moteur ML exploratoire.
+    Il compare Arbre simple, Random Forest, XGBoost et CatBoost si les bibliothèques sont installées.
+    Le ML reste secondaire : il sert de benchmark, pas de vérité actuarielle.
+    """
+
+    def __init__(self, random_state=42):
+        self.random_state = random_state
+
+    @staticmethod
+    def _prepare_dataset(df, target="Sprime_ultime"):
+        if df is None or df.empty or target not in df.columns:
+            return None, None, "Target indisponible."
+
+        data = df.copy()
+        data = data.replace([np.inf, -np.inf], np.nan)
+
+        # Garde les colonnes utiles : numériques + catégorielles simples.
+        y = pd.to_numeric(data[target], errors="coerce")
+        X = data.drop(columns=[target], errors="ignore")
+
+        # Supprime colonnes presque entièrement vides.
+        keep_cols = [c for c in X.columns if X[c].notna().mean() >= 0.60]
+        X = X[keep_cols]
+
+        # Encodage simple robuste.
+        for c in X.columns:
+            if X[c].dtype == "object":
+                X[c] = X[c].astype(str).fillna("NA")
+                # Limite cardinalité.
+                if X[c].nunique() > 25:
+                    X[c] = "AUTRE"
+            else:
+                X[c] = pd.to_numeric(X[c], errors="coerce")
+
+        mask = y.notna()
+        X = X.loc[mask].copy()
+        y = y.loc[mask].copy()
+
+        if len(X) < 30:
+            return None, None, "Moins de 30 observations exploitables : ML non robuste."
+
+        # One-hot pour modèles sklearn.
+        X_encoded = pd.get_dummies(X, dummy_na=True)
+        X_encoded = X_encoded.fillna(X_encoded.median(numeric_only=True)).fillna(0)
+
+        return X_encoded, y, ""
+
+    def entrainer_depuis_df_proj(self, df_proj, target="Sprime_ultime"):
+        X, y, msg = self._prepare_dataset(df_proj, target=target)
+        if X is None:
+            return {
+                "disponible": False,
+                "message": msg,
+                "modeles": [],
+                "meilleur_modele": None,
+                "importance": []
+            }
+
+        try:
+            from sklearn.model_selection import train_test_split
+            from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+            from sklearn.tree import DecisionTreeRegressor
+            from sklearn.ensemble import RandomForestRegressor
+        except Exception as e:
+            return {
+                "disponible": False,
+                "message": f"scikit-learn indisponible : {e}",
+                "modeles": [],
+                "meilleur_modele": None,
+                "importance": []
+            }
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.25, random_state=self.random_state
+        )
+
+        models = {
+            "Arbre simple": DecisionTreeRegressor(max_depth=4, min_samples_leaf=5, random_state=self.random_state),
+            "Random Forest": RandomForestRegressor(n_estimators=250, max_depth=8, min_samples_leaf=3,
+                                                   random_state=self.random_state, n_jobs=-1),
+        }
+
+        # XGBoost optionnel.
+        try:
+            from xgboost import XGBRegressor
+            models["XGBoost"] = XGBRegressor(
+                n_estimators=300, max_depth=4, learning_rate=0.05,
+                subsample=0.85, colsample_bytree=0.85,
+                objective="reg:squarederror", random_state=self.random_state
+            )
+        except Exception:
+            pass
+
+        # CatBoost optionnel.
+        try:
+            from catboost import CatBoostRegressor
+            models["CatBoost"] = CatBoostRegressor(
+                iterations=300, depth=5, learning_rate=0.05,
+                loss_function="RMSE", random_seed=self.random_state,
+                verbose=False
+            )
+        except Exception:
+            pass
+
+        resultats = []
+        best_name = None
+        best_mae = None
+        best_model = None
+
+        for name, model in models.items():
+            try:
+                model.fit(X_train, y_train)
+                pred = model.predict(X_test)
+                mae = float(mean_absolute_error(y_test, pred))
+                rmse = float(np.sqrt(mean_squared_error(y_test, pred)))
+                r2 = float(r2_score(y_test, pred))
+                resultats.append({
+                    "modele": name,
+                    "MAE": mae,
+                    "RMSE": rmse,
+                    "R2": r2,
+                    "n_train": int(len(X_train)),
+                    "n_test": int(len(X_test))
+                })
+                if best_mae is None or mae < best_mae:
+                    best_mae = mae
+                    best_name = name
+                    best_model = model
+            except Exception as e:
+                resultats.append({
+                    "modele": name,
+                    "MAE": None,
+                    "RMSE": None,
+                    "R2": None,
+                    "erreur": str(e)
+                })
+
+        importance = []
+        if best_model is not None and hasattr(best_model, "feature_importances_"):
+            imp = pd.Series(best_model.feature_importances_, index=X.columns)
+            imp = imp.sort_values(ascending=False).head(10)
+            importance = [{"variable": k, "importance": float(v)} for k, v in imp.items()]
+
+        return {
+            "disponible": True,
+            "message": "Benchmark ML exécuté. Interprétation prudente recommandée.",
+            "modeles": resultats,
+            "meilleur_modele": best_name,
+            "importance": importance
+        }
+
+
+def afficher_plan_agentique(plan):
+    if not plan:
+        return
+    rows = []
+    for i, p in enumerate(plan, 1):
+        rows.append({
+            "Ordre": i,
+            "Étape": p["titre"],
+            "Priorité": p["priorite"],
+            "Justification": p["justification"]
+        })
+    tableau_resultats(rows, "Plan de raisonnement agentique")
+
+
+def afficher_critique_agentique(critique):
+    if not critique:
+        return
+    syn = critique.get("synthese", {})
+    st.markdown("#### Moteur critique")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        card("Score audit", f"{syn.get('score', 0)}/100", icone="🧠")
+    with c2:
+        card("Verdict", syn.get("verdict", "—"), couleur="#1a1a1a", icone="⚖️")
+    with c3:
+        card("Alertes", f"{syn.get('nb_alertes', 0)}", couleur="#f59e0b", icone="⚠️")
+
+    alertes = critique.get("alertes", [])
+    if alertes:
+        rows = [{
+            "Niveau": a["niveau"],
+            "Tranche": a["tranche"],
+            "Message": a["message"]
+        } for a in alertes]
+        tableau_resultats(rows, "Alertes critiques")
+
+
+def afficher_ml_agentique(ml):
+    if not ml:
+        return
+    st.markdown("#### Benchmark Machine Learning")
+    if not ml.get("disponible"):
+        st.info(ml.get("message", "ML non disponible."))
+        return
+
+    rows = []
+    for r in ml.get("modeles", []):
+        rows.append({
+            "Modèle": r.get("modele"),
+            "MAE": f"{r.get('MAE', 0):,.0f}" if r.get("MAE") is not None else "Erreur",
+            "RMSE": f"{r.get('RMSE', 0):,.0f}" if r.get("RMSE") is not None else "Erreur",
+            "R²": f"{r.get('R2', 0):.4f}" if r.get("R2") is not None else "Erreur",
+            "Statut": "✅" if r.get("MAE") is not None else r.get("erreur", "Erreur")
+        })
+    tableau_resultats(rows, "Comparaison des modèles ML")
+
+    if ml.get("importance"):
+        rows_imp = [{
+            "Variable": x["variable"],
+            "Importance": f"{x['importance']:.4f}"
+        } for x in ml["importance"]]
+        tableau_resultats(rows_imp, f"Variables importantes — {ml.get('meilleur_modele')}")
+
+
 # AGENT PYTHON PUR — LOGIQUE ACTUARIELLE CODÉE
 # ════════════════════════════════════════════
 
@@ -3545,6 +3975,40 @@ with tab_agent:
             agent.etape_4_market_curve()
             prog_bar.progress(90, "Rapport...")
             agent.etape_5_rapport()
+
+            # ── Moteur de raisonnement / critique / ML
+            contexte_agentique = {
+                "has_triangle": "df_proj" in st.session_state,
+                "has_market": st.session_state.get("df_mkt_clean") is not None,
+                "n_rows": len(st.session_state.get("df_proj", [])) if "df_proj" in st.session_state else 0,
+                "n_tranches": len(tranches_input),
+            }
+
+            moteur_raisonnement = AgentRaisonnement()
+            plan_agentique = moteur_raisonnement.planifier(contexte_agentique)
+
+            moteur_critique = AgentCritique()
+            critique_agentique = moteur_critique.auditer(
+                tranches=agent.tranches,
+                gnpi=agent.gnpi,
+                resultats_bc=agent.resultats_bc,
+                resultats_sim=agent.resultats_sim,
+                resultats_mkt=agent.resultats_mkt,
+                rapport_rows=agent.rapport_rows
+            )
+
+            for a in critique_agentique.get("alertes", []):
+                agent._alerte(a.get("niveau", "INFO"),
+                              f"{a.get('tranche', '')}: {a.get('message', '')}")
+
+            for d in critique_agentique.get("decisions", []):
+                agent._log("Moteur critique",
+                           d.get("decision", ""),
+                           d.get("tranche", ""))
+
+            moteur_ml = AgentML()
+            ml_agentique = moteur_ml.entrainer_depuis_df_proj(agent.df_proj, target="Sprime_ultime")
+
             prog_bar.progress(95, "Optimisation du programme...")
             agent.variantes = agent.etape_6_optimisation()
             rapport_txt = agent.generer_rapport_texte()
@@ -3560,6 +4024,9 @@ with tab_agent:
             st.session_state["agent_py_anomalies"]   = agent.anomalies
             st.session_state["agent_py_rapport"]     = rapport_txt
             st.session_state["agent_py_variantes"]   = agent.variantes
+            st.session_state["agent_plan_agentique"] = plan_agentique
+            st.session_state["agent_critique"]       = critique_agentique
+            st.session_state["agent_ml"]             = ml_agentique
             st.session_state["agent_py_done"]        = True
 
             # Auto-save
@@ -3574,6 +4041,12 @@ with tab_agent:
 
     # ── Affichage des résultats ──
     if st.session_state.get("agent_py_done"):
+
+        # ── Couche agentique V2 : raisonnement, critique, ML
+        with st.expander("🧠 Raisonnement agentique, moteur critique et ML", expanded=True):
+            afficher_plan_agentique(st.session_state.get("agent_plan_agentique"))
+            afficher_critique_agentique(st.session_state.get("agent_critique"))
+            afficher_ml_agentique(st.session_state.get("agent_ml"))
 
         # ── Alertes
         anomalies = st.session_state.get("agent_py_anomalies", [])
@@ -3686,7 +4159,8 @@ with tab_agent:
         st.markdown("")
         if st.button("Nouvelle tarification", key="relancer_py"):
             for k in ["agent_py_done","agent_py_log","agent_py_anomalies",
-                      "agent_py_rapport","agent_py_variantes"]:
+                      "agent_py_rapport","agent_py_variantes",
+                      "agent_plan_agentique","agent_critique","agent_ml"]:
                 st.session_state.pop(k, None)
             st.rerun()
 
