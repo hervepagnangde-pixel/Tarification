@@ -6638,9 +6638,11 @@ with tab_admin:
     if st.button("ℹ️ À propos de l’outil", use_container_width=True):
         st.session_state["show_about_tool"] = not st.session_state.get("show_about_tool", False)
 
-   if st.session_state.get("show_about_tool", False):
-    with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
-        st.markdown("""
+    if st.session_state.get("show_about_tool", False):
+        with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
+            st.markdown("""
+<div style="padding: 12px 28px 12px 28px;">
+
 ### Atlantic Re IA — Assistant actuariel de tarification
 
 **Hervé NONGPANGA :**
@@ -6671,7 +6673,10 @@ Atlantic Re IA, comme tout outil, peut comporter certaines limites, que ce soit 
 L’outil est encore en phase d’amélioration continue et s’enrichit progressivement à travers les cas traités, les retours d’expérience et les évolutions apportées.
 
 Merci et bon usage.
-""")
+
+</div>
+""", unsafe_allow_html=True)
+
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
 
     if admin_pwd == get_admin_password():
