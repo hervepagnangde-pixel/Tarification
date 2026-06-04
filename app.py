@@ -657,9 +657,62 @@ def get_admin_password():
     try: return st.secrets["admin_password"]
     except: return "Admin@AtlanticRe2026"
 
+def get_users_details():
+    """
+    Retourne les utilisateurs sous forme normalisée.
+
+    Formats acceptés dans st.secrets :
+
+    1) Format simple historique :
+       [users]
+       "demo@atlanticre.ia" = "DEMO2026"
+
+    2) Format enrichi recommandé :
+       [users."demo@atlanticre.ia"]
+       code = "DEMO2026"
+       poste = "Actuaire tarificateur"
+       nom = "Utilisateur Démo"
+    """
+    fallback = {
+        "demo@atlanticre.ia": {
+            "code": "DEMO2026",
+            "poste": "Utilisateur démo",
+            "nom": "Compte Démo",
+            "statut": "Actif",
+        }
+    }
+    try:
+        raw_users = dict(st.secrets.get("users", {}))
+    except Exception:
+        raw_users = {}
+
+    if not raw_users:
+        return fallback
+
+    details = {}
+    for email, value in raw_users.items():
+        email_norm = str(email).lower().strip()
+        if isinstance(value, dict):
+            v = dict(value)
+            code_val = str(v.get("code", v.get("password", v.get("cle", v.get("code_acces", ""))))).strip()
+            details[email_norm] = {
+                "code": code_val,
+                "poste": str(v.get("poste", v.get("role", "Non renseigné"))),
+                "nom": str(v.get("nom", v.get("name", ""))),
+                "statut": str(v.get("statut", "Actif")),
+            }
+        else:
+            details[email_norm] = {
+                "code": str(value).strip(),
+                "poste": "Non renseigné",
+                "nom": "",
+                "statut": "Actif",
+            }
+    return details
+
 def get_users():
-    try: return dict(st.secrets["users"])
-    except: return {"demo@atlanticre.ia": "DEMO2026"}
+    """Compatibilité avec l'ancien système : retourne {email: code}."""
+    return {email: info.get("code", "") for email, info in get_users_details().items()}
 
 def check_access(email, code):
     return get_users().get(email.lower().strip()) == code.strip()
@@ -687,8 +740,11 @@ if not st.session_state["authenticated"]:
         code  = st.text_input("🔑 Code d'accès", type="password", placeholder="CODE123", key="login_code")
         if st.button("Se connecter", type="primary", use_container_width=True):
             if check_access(email, code):
+                email_norm = email.lower().strip()
                 st.session_state["authenticated"] = True
-                st.session_state["user_email"]    = email
+                st.session_state["user_email"]    = email_norm
+                st.session_state["user_poste"]    = get_users_details().get(email_norm, {}).get("poste", "")
+                st.session_state["user_nom"]      = get_users_details().get(email_norm, {}).get("nom", "")
                 st.rerun()
             else:
                 st.error("❌ Email ou code d'accès incorrect")
@@ -4542,7 +4598,7 @@ class AgentLaboTarification:
 
     # ── 7. ENTRAÎNEMENT ML ──────────────────────────────────────────
 
-    def entrainer_modeles(self, target=None): 
+    def entrainer_modeles(self, target=None):
         target = target or self.TARGET
         if self.df_ml is None or len(self.df_ml) < 10:
             return {"erreur":"Dataset insuffisant (min 10 lignes)"}
@@ -8227,27 +8283,115 @@ with tab_hist:
 
 with tab_admin:
     st.header("🔐 Interface Administrateur")
+
+    if st.button("ℹ️ À propos de l’outil", use_container_width=True, key="admin_about_btn"):
+        st.session_state["show_about_tool"] = not st.session_state.get("show_about_tool", False)
+
+    if st.session_state.get("show_about_tool", False):
+        with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
+            st.markdown('''
+### Atlantic Re IA — Assistant actuariel de tarification
+
+**Atlantic Re IA** est un assistant actuariel conçu pour accompagner la tarification des programmes de réassurance non-proportionnelle, notamment en automobile.
+
+L’outil centralise les principales méthodes utilisées dans l’étude d’un programme de réassurance :
+
+- **Burning Cost** avec As-If, stabilisation, Chain Ladder et règles de prudence ;
+- **Simulation fréquence/sévérité** avec calibration Pareto / Poisson ;
+- **Market Curve** par ajustement log-log ;
+- **Comparaison des méthodes** et sélection du taux final ;
+- **Optimisation de programme** selon différentes perspectives ;
+- **Agent LLM Claude** pour l’analyse, la justification et la recommandation ;
+- **Rapport PDF professionnel** avec synthèse, taux retenus et recommandations.
+
+L’IA ne remplace pas l’actuaire : elle propose, explique et contrôle. La décision finale reste sous responsabilité humaine.
+            ''')
+
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
+
     if admin_pwd == get_admin_password():
         st.success("✅ Accès accordé")
-        users = get_users()
+
+        users_details = get_users_details()
+
         st.markdown("#### 👥 Utilisateurs autorisés")
-        st.dataframe(pd.DataFrame([{"Email": e, "Code": c, "Statut": "Actif"}
-                                    for e, c in users.items()]), use_container_width=True)
+        df_users = pd.DataFrame([
+            {
+                "Email": email,
+                "Nom": info.get("nom", ""),
+                "Poste": info.get("poste", "Non renseigné"),
+                "Code": info.get("code", ""),
+                "Statut": info.get("statut", "Actif"),
+            }
+            for email, info in users_details.items()
+        ])
+        st.dataframe(df_users, use_container_width=True, hide_index=True)
+
         st.divider()
-        st.markdown("#### ⚙️ Gérer les utilisateurs")
-        st.info("Allez sur Streamlit Cloud -> Settings -> Secrets et ajoutez :\nadmin_password = 'VotreMDP'\n[users]\n'email@ex.com' = 'CODE'")
-        st.divider()
-        st.markdown("#### 🎲 Générateur de code")
-        col1, col2 = st.columns(2)
-        with col1:
-            email_new = st.text_input("Email du nouvel utilisateur", key="new_email")
-        with col2:
-            if st.button("Générer un code"):
+        st.markdown("#### ⚙️ Ajouter ou modifier un utilisateur")
+        st.info(
+            "Pour enregistrer définitivement un utilisateur, copiez le bloc généré dans "
+            "Streamlit Cloud → Settings → Secrets. Le format enrichi permet maintenant de renseigner le poste."
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            email_new = st.text_input("Email", placeholder="prenom.nom@entreprise.com", key="admin_new_email")
+            nom_new = st.text_input("Nom complet", placeholder="Ex: Hervé NONGPANGA", key="admin_new_nom")
+        with c2:
+            poste_new = st.text_input("Poste", placeholder="Ex: Actuaire tarificateur", key="admin_new_poste")
+            statut_new = st.selectbox("Statut", ["Actif", "Suspendu", "Lecture seule"], key="admin_new_statut")
+
+        col_code1, col_code2 = st.columns([1, 1])
+        with col_code1:
+            code_custom = st.text_input("Code d’accès manuel (optionnel)", key="admin_code_custom")
+        with col_code2:
+            if st.button("🎲 Générer un code", use_container_width=True, key="admin_generate_code"):
                 st.session_state["generated_code"] = secrets_lib.token_hex(4).upper()
-        if "generated_code" in st.session_state:
-            st.success(f"Code généré : **{st.session_state['generated_code']}**")
-            if email_new:
-                st.code(f'"{email_new}" = "{st.session_state["generated_code"]}"')
+
+        code_final = code_custom.strip() or st.session_state.get("generated_code", "")
+
+        if code_final:
+            st.success(f"Code actif : **{code_final}**")
+
+        if email_new and code_final:
+            email_clean = email_new.lower().strip()
+            st.markdown("##### Bloc Secrets à copier")
+            secrets_block = f'''[users."{email_clean}"]
+code = "{code_final}"
+nom = "{nom_new.strip()}"
+poste = "{poste_new.strip()}"
+statut = "{statut_new}"'''
+            st.code(secrets_block, language="toml")
+
+            st.caption("Ancien format encore compatible, mais sans poste :")
+            legacy_block = f'''[users]
+"{email_clean}" = "{code_final}"'''
+            st.code(legacy_block, language="toml")
+
+        st.divider()
+        st.markdown("#### 🧾 Exemple complet de configuration Secrets")
+        with st.expander("Voir un exemple", expanded=False):
+            st.code('''admin_password = "VotreMotDePasseAdmin"
+
+[users."actuaire@atlanticre.ia"]
+code = "ACT2026"
+nom = "Actuaire Senior"
+poste = "Actuaire tarificateur"
+statut = "Actif"
+
+[users."manager@atlanticre.ia"]
+code = "MNG2026"
+nom = "Manager Technique"
+poste = "Responsable Réassurance"
+statut = "Actif"''', language="toml")
+
+        st.divider()
+        st.markdown("#### 🧩 Informations session")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Utilisateur connecté", st.session_state.get("user_email", "—"))
+        c2.metric("Poste", st.session_state.get("user_poste", "—") or "—")
+        c3.metric("Sessions chargées", len(db_list_sessions(st.session_state.get("user_email", ""))) if st.session_state.get("user_email") else 0)
+
     elif admin_pwd:
         st.error("❌ Mot de passe incorrect")
