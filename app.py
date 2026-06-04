@@ -1794,7 +1794,7 @@ def _labo_display_section():
     st.markdown("---")
     st.markdown("#### Laboratoire de tarification ML")
     st.caption(
-        "120 scénarios/tranche · BC + Simulation + Market Curve · RF/DT/XGB · "
+        "120 scénarios/tranche · BC + Simulation + Market Curve · Arbre/RF/XGB/CatBoost · "
         "Optimisation Dichotomie (actuarielle) + De Finetti · Programme multi-tranches"
     )
 
@@ -2042,7 +2042,7 @@ def _labo_display_section():
     # ÉTAPE 3 — ML
     # ═══════════════════════════════════════════════════════════
     if "labo_df_ml" in st.session_state:
-        with st.expander("Étape 3 — Entraînement ML (RF / DT / XGB)", expanded=True):
+        with st.expander("Étape 3 — Entraînement ML (Arbre / RF / XGB / CatBoost)", expanded=True):
             df_ml = st.session_state["labo_df_ml"]
             n_feat = len(AgentLaboTarification.FEATURES)
             st.caption(
@@ -2060,7 +2060,7 @@ def _labo_display_section():
                 st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
                 if st.button("Entraîner les modèles", type="primary", key="btn_labo_train"):
                     labo = _make_labo(); labo.df_ml = df_ml
-                    with st.spinner("Entraînement RF / DT / XGB..."):
+                    with st.spinner("Entraînement Arbre / RF / XGB / CatBoost..."):
                         res_train = labo.entrainer_modeles(target=target_choice)
                     if isinstance(res_train, dict) and res_train.get("erreur"):
                         st.error(res_train["erreur"])
@@ -2072,11 +2072,12 @@ def _labo_display_section():
                 best = st.session_state.get("labo_best","")
                 tableau_resultats([{
                     "Modèle":     nom,
-                    "MAE (pts)":  f"{v.get('MAE',0)*100:.4f}" if "MAE" in v else "—",
-                    "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if "RMSE" in v else "—",
-                    "R²":         f"{v.get('R2',0):.4f}" if "R2" in v else "—",
+                    "MAE (pts)":  f"{v.get('MAE',0)*100:.4f}" if v.get("MAE") is not None else "—",
+                    "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if v.get("RMSE") is not None else "—",
+                    "R²":         f"{v.get('R2',0):.4f}" if v.get("R2") is not None else "—",
                     "N train":    v.get("n_train","—"),
                     "✓ Meilleur": "✅" if nom == best else "",
+                    "Statut":     "✅ Exécuté" if v.get("MAE") is not None else v.get("erreur", "Indisponible"),
                 } for nom, v in st.session_state["labo_metriques"].items()])
 
                 imp_dict = st.session_state.get("labo_importance", {})
@@ -4368,20 +4369,32 @@ class AgentML:
         X_tr,X_te,y_tr,y_te=train_test_split(X_enc,y,test_size=0.25,random_state=self.random_state)
         models={"Arbre":DecisionTreeRegressor(max_depth=4,min_samples_leaf=5,random_state=self.random_state),
                 "Random Forest":RandomForestRegressor(n_estimators=250,max_depth=8,min_samples_leaf=3,random_state=self.random_state,n_jobs=-1)}
+        modeles_indisponibles = []
         try:
             from xgboost import XGBRegressor
-            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
-        except: pass
+            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
+                subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
+        except Exception as e:
+            modeles_indisponibles.append({"modele":"XGBoost","MAE":None,"RMSE":None,"R2":None,
+                "erreur":f"Indisponible ou non importable : {e}"})
+        try:
+            from catboost import CatBoostRegressor
+            models["CatBoost"]=CatBoostRegressor(iterations=350,depth=5,learning_rate=0.05,
+                loss_function="RMSE",random_seed=self.random_state,verbose=False)
+        except Exception as e:
+            modeles_indisponibles.append({"modele":"CatBoost","MAE":None,"RMSE":None,"R2":None,
+                "erreur":f"Indisponible ou non importable : {e}"})
 
         resultats=[]; best_name=None; best_mae=None; best_model=None
         for name,model in models.items():
             try:
                 model.fit(X_tr,y_tr); pred=model.predict(X_te)
                 mae=float(mean_absolute_error(y_te,pred)); rmse=float(np.sqrt(mean_squared_error(y_te,pred))); r2=float(r2_score(y_te,pred))
-                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te))})
+                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te)),"statut":"OK"})
                 if best_mae is None or mae<best_mae: best_mae=mae; best_name=name; best_model=model
             except Exception as e:
                 resultats.append({"modele":name,"MAE":None,"RMSE":None,"R2":None,"erreur":str(e)})
+        resultats.extend(modeles_indisponibles)
 
         importance=[]
         if best_model is not None and hasattr(best_model,"feature_importances_"):
@@ -4600,13 +4613,32 @@ def afficher_optimisation_avancee(opt):
     if rows: tableau_resultats(rows)
 
 def afficher_ml_agentique(ml):
-    if not ml: return
     st.markdown("#### Benchmark Machine Learning")
-    if not ml.get("disponible"): st.info(ml.get("message","ML non disponible.")); return
-    rows=[{"Modèle":r.get("modele"),"MAE":f"{r.get('MAE',0):,.0f}" if r.get("MAE") else "Erreur",
-        "RMSE":f"{r.get('RMSE',0):,.0f}" if r.get("RMSE") else "Erreur",
-        "R²":f"{r.get('R2',0):.4f}" if r.get("R2") else "Erreur",
-        "Statut":"✅" if r.get("MAE") else r.get("erreur","Erreur")} for r in ml.get("modeles",[])]
+    if not ml:
+        st.info("Benchmark ML non exécuté : lancez d'abord l'Agent Python ou l'entraînement ML.")
+        return
+    if not ml.get("disponible"):
+        st.info(ml.get("message","ML non disponible."))
+        return
+    modeles = ml.get("modeles", []) or []
+    if not modeles:
+        st.warning("Aucun modèle ML n'a été retourné. Vérifiez le dataset ML, scikit-learn et les dépendances optionnelles.")
+        return
+    def _fmt(v, pct=False):
+        if v is None or (isinstance(v, float) and not np.isfinite(v)): return "—"
+        return f"{v:.4f}" if pct else f"{v:,.6f}"
+    rows=[]
+    for r in modeles:
+        ok = r.get("MAE") is not None
+        rows.append({
+            "Modèle": r.get("modele", "—"),
+            "MAE": _fmt(r.get("MAE")),
+            "RMSE": _fmt(r.get("RMSE")),
+            "R²": _fmt(r.get("R2"), pct=True),
+            "N train": r.get("n_train", "—"),
+            "N test": r.get("n_test", "—"),
+            "Statut": "✅ Exécuté" if ok else r.get("erreur", "Erreur / indisponible")
+        })
     tableau_resultats(rows,"Comparaison des modèles ML")
     if ml.get("importance"):
         tableau_resultats([{"Variable":x["variable"],"Importance":f"{x['importance']:.4f}"} for x in ml["importance"]],
@@ -4623,7 +4655,7 @@ class AgentLaboTarification:
       1. Grille 120 scenarios/tranche (auto, modifiable)
       2. Batch BC + Simulation + Market Curve
       3. Dataset ML (conditions + params -> taux)
-      4. RF / DT / XGB
+      4. Arbre / RF / XGB / CatBoost
       5. Optimisation : dichotomie actuarielle + De Finetti
       6. Programme multi-tranches optimal
     """
@@ -4962,11 +4994,19 @@ class AgentLaboTarification:
             "Random Forest":     RandomForestRegressor(n_estimators=300,max_depth=10,
                                      min_samples_leaf=2,random_state=42,n_jobs=-1),
         }
+        modeles_indisponibles = {}
         try:
             from xgboost import XGBRegressor
             models["XGBoost"] = XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
                 subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=42)
-        except: pass
+        except Exception as e:
+            modeles_indisponibles["XGBoost"] = {"erreur": f"Indisponible ou non importable : {e}"}
+        try:
+            from catboost import CatBoostRegressor
+            models["CatBoost"] = CatBoostRegressor(iterations=350,depth=5,learning_rate=0.05,
+                loss_function="RMSE",random_seed=42,verbose=False)
+        except Exception as e:
+            modeles_indisponibles["CatBoost"] = {"erreur": f"Indisponible ou non importable : {e}"}
 
         resultats = {}; best_name = None; best_mae = None
         for nom, model in models.items():
@@ -4976,10 +5016,11 @@ class AgentLaboTarification:
                 rmse = float(np.sqrt(mean_squared_error(y_te, pred)))
                 r2   = float(r2_score(y_te, pred))
                 resultats[nom] = {"MAE":mae,"RMSE":rmse,"R2":r2,
-                                  "n_train":len(X_tr),"n_test":len(X_te)}
+                                  "n_train":len(X_tr),"n_test":len(X_te),"statut":"OK"}
                 self.modeles_entraines[nom] = model
                 if best_mae is None or mae < best_mae: best_mae=mae; best_name=nom
             except Exception as e: resultats[nom] = {"erreur":str(e)}
+        resultats.update(modeles_indisponibles)
 
         self.metriques_ml = resultats
         self._features_used  = feats
@@ -6367,20 +6408,32 @@ class AgentML:
         X_tr,X_te,y_tr,y_te=train_test_split(X_enc,y,test_size=0.25,random_state=self.random_state)
         models={"Arbre":DecisionTreeRegressor(max_depth=4,min_samples_leaf=5,random_state=self.random_state),
                 "Random Forest":RandomForestRegressor(n_estimators=250,max_depth=8,min_samples_leaf=3,random_state=self.random_state,n_jobs=-1)}
+        modeles_indisponibles = []
         try:
             from xgboost import XGBRegressor
-            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
-        except: pass
+            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
+                subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
+        except Exception as e:
+            modeles_indisponibles.append({"modele":"XGBoost","MAE":None,"RMSE":None,"R2":None,
+                "erreur":f"Indisponible ou non importable : {e}"})
+        try:
+            from catboost import CatBoostRegressor
+            models["CatBoost"]=CatBoostRegressor(iterations=350,depth=5,learning_rate=0.05,
+                loss_function="RMSE",random_seed=self.random_state,verbose=False)
+        except Exception as e:
+            modeles_indisponibles.append({"modele":"CatBoost","MAE":None,"RMSE":None,"R2":None,
+                "erreur":f"Indisponible ou non importable : {e}"})
 
         resultats=[]; best_name=None; best_mae=None; best_model=None
         for name,model in models.items():
             try:
                 model.fit(X_tr,y_tr); pred=model.predict(X_te)
                 mae=float(mean_absolute_error(y_te,pred)); rmse=float(np.sqrt(mean_squared_error(y_te,pred))); r2=float(r2_score(y_te,pred))
-                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te))})
+                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te)),"statut":"OK"})
                 if best_mae is None or mae<best_mae: best_mae=mae; best_name=name; best_model=model
             except Exception as e:
                 resultats.append({"modele":name,"MAE":None,"RMSE":None,"R2":None,"erreur":str(e)})
+        resultats.extend(modeles_indisponibles)
 
         importance=[]
         if best_model is not None and hasattr(best_model,"feature_importances_"):
@@ -6599,13 +6652,32 @@ def afficher_optimisation_avancee(opt):
     if rows: tableau_resultats(rows)
 
 def afficher_ml_agentique(ml):
-    if not ml: return
     st.markdown("#### Benchmark Machine Learning")
-    if not ml.get("disponible"): st.info(ml.get("message","ML non disponible.")); return
-    rows=[{"Modèle":r.get("modele"),"MAE":f"{r.get('MAE',0):,.0f}" if r.get("MAE") else "Erreur",
-        "RMSE":f"{r.get('RMSE',0):,.0f}" if r.get("RMSE") else "Erreur",
-        "R²":f"{r.get('R2',0):.4f}" if r.get("R2") else "Erreur",
-        "Statut":"✅" if r.get("MAE") else r.get("erreur","Erreur")} for r in ml.get("modeles",[])]
+    if not ml:
+        st.info("Benchmark ML non exécuté : lancez d'abord l'Agent Python ou l'entraînement ML.")
+        return
+    if not ml.get("disponible"):
+        st.info(ml.get("message","ML non disponible."))
+        return
+    modeles = ml.get("modeles", []) or []
+    if not modeles:
+        st.warning("Aucun modèle ML n'a été retourné. Vérifiez le dataset ML, scikit-learn et les dépendances optionnelles.")
+        return
+    def _fmt(v, pct=False):
+        if v is None or (isinstance(v, float) and not np.isfinite(v)): return "—"
+        return f"{v:.4f}" if pct else f"{v:,.6f}"
+    rows=[]
+    for r in modeles:
+        ok = r.get("MAE") is not None
+        rows.append({
+            "Modèle": r.get("modele", "—"),
+            "MAE": _fmt(r.get("MAE")),
+            "RMSE": _fmt(r.get("RMSE")),
+            "R²": _fmt(r.get("R2"), pct=True),
+            "N train": r.get("n_train", "—"),
+            "N test": r.get("n_test", "—"),
+            "Statut": "✅ Exécuté" if ok else r.get("erreur", "Erreur / indisponible")
+        })
     tableau_resultats(rows,"Comparaison des modèles ML")
     if ml.get("importance"):
         tableau_resultats([{"Variable":x["variable"],"Importance":f"{x['importance']:.4f}"} for x in ml["importance"]],
