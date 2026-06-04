@@ -5893,7 +5893,7 @@ def _executer_market_curve(rol_min, rol_max, r2_min, tolerance):
     if not resultats_mkt: return {"erreur": "Aucun ajustement valide"}
     best = max(resultats_mkt, key=lambda x: x["score"])
     st.session_state["resultats_mkt"]  = resultats_mkt
-    st.session_state["taux_mkt_final"] = best["taux_tranches"]
+    st.session_state["taux_mkt_final"] = best["taux_tranches"] 
     return _json_safe({"status": "ok",
         "meilleur_ajustement": {k:v for k,v in best.items() if k!="taux_tranches"},
         "taux_par_tranche": best["taux_tranches"]})
