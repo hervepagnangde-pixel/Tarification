@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import anthropic
 import pandas as pd
 import numpy as np
@@ -1384,61 +1385,81 @@ modules_restants = [n for n, k in capacites_suivi if not (k in st.session_state 
 modules_html = " · ".join([f"<span style='color:#86efac;font-weight:700'>{e}</span>" for e in modules_realises]) if modules_realises else "<span style='color:#cbd5e1'>Aucun module encore exécuté</span>"
 prochaine = modules_restants[0] if modules_restants else "Tous les modules clés sont disponibles"
 
-st.markdown(f"""
-<div style="background:linear-gradient(135deg,#0b1220 0%,#111827 42%,#14532d 100%);
-    border-radius:18px;padding:22px 28px;margin-bottom:18px;
-    box-shadow:0 8px 28px rgba(0,0,0,0.28);border:1px solid rgba(134,239,172,0.25)">
-    <div style="display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap">
+bandeau_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+    body {{ margin:0; padding:0; font-family: Inter, Arial, sans-serif; background: transparent; }}
+    .ar-banner {{
+        background: linear-gradient(135deg,#0b1220 0%,#111827 42%,#14532d 100%);
+        border-radius:18px;
+        padding:22px 28px;
+        box-shadow:0 8px 28px rgba(0,0,0,0.28);
+        border:1px solid rgba(134,239,172,0.25);
+        color:white;
+        box-sizing:border-box;
+        width:100%;
+    }}
+    .ar-top {{ display:flex; justify-content:space-between; gap:18px; align-items:flex-start; flex-wrap:wrap; }}
+    .ar-title {{ font-size:20px; font-weight:800; letter-spacing:-0.2px; }}
+    .ar-subtitle {{ font-size:12px; color:rgba(255,255,255,0.74); margin-top:7px; line-height:1.7; }}
+    .ar-state {{
+        background:rgba(255,255,255,0.08);
+        border:1px solid rgba(255,255,255,0.14);
+        border-radius:12px;
+        padding:10px 14px;
+        min-width:210px;
+        text-align:center;
+        box-sizing:border-box;
+    }}
+    .ar-state-label {{ font-size:11px; color:#cbd5e1; text-transform:uppercase; letter-spacing:0.6px; }}
+    .ar-state-value {{ font-size:16px; color:#86efac; font-weight:800; margin-top:3px; }}
+    .ar-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:10px; margin-top:18px; }}
+    .ar-card {{ background:rgba(255,255,255,0.07); border-radius:12px; padding:11px 13px; box-sizing:border-box; }}
+    .ar-card-title {{ font-size:13px; color:white; font-weight:700; }}
+    .ar-card-text {{ font-size:11px; color:#cbd5e1; margin-top:3px; }}
+    .green {{ border-left:3px solid #22c55e; }}
+    .blue {{ border-left:3px solid #3b82f6; }}
+    .orange {{ border-left:3px solid #f59e0b; }}
+    .purple {{ border-left:3px solid #a855f7; }}
+    .red {{ border-left:3px solid #ef4444; }}
+    .cyan {{ border-left:3px solid #14b8a6; }}
+    .ar-footer {{ font-size:12px; color:rgba(255,255,255,0.72); margin-top:14px; line-height:1.7; }}
+</style>
+</head>
+<body>
+<div class="ar-banner">
+    <div class="ar-top">
         <div style="flex:1;min-width:280px">
-            <div style="font-size:20px;font-weight:800;color:white;letter-spacing:-0.2px">
-                🤖 Atlantic Re IA — Agent actuariel XL non-proportionnel
-            </div>
-            <div style="font-size:12px;color:rgba(255,255,255,0.74);margin-top:7px;line-height:1.7">
-                Tarification complète · IA agentique LLM/Python · ML supervisé · Optimisation de programmes · Audit critique · Reporting PDF
-            </div>
+            <div class="ar-title">🤖 Atlantic Re IA — Agent actuariel XL non-proportionnel</div>
+            <div class="ar-subtitle">Tarification complète · IA agentique LLM/Python · ML supervisé · Optimisation de programmes · Audit critique · Reporting PDF</div>
         </div>
-        <div style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);
-            border-radius:12px;padding:10px 14px;min-width:210px;text-align:center">
-            <div style="font-size:11px;color:#cbd5e1;text-transform:uppercase;letter-spacing:0.6px">État du dossier</div>
-            <div style="font-size:16px;color:#86efac;font-weight:800;margin-top:3px">
-                {len(modules_realises)}/{len(capacites_suivi)} modules actifs
-            </div>
+        <div class="ar-state">
+            <div class="ar-state-label">État du dossier</div>
+            <div class="ar-state-value">{len(modules_realises)}/{len(capacites_suivi)} modules actifs</div>
         </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-top:18px">
-        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #22c55e">
-            <div style="font-size:13px;color:white;font-weight:700">📊 Tarification XL</div>
-            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">BC, Simulation, Market Curve</div>
-        </div>
-        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #3b82f6">
-            <div style="font-size:13px;color:white;font-weight:700">🧠 IA agentique</div>
-            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">LLM + outils + décisions</div>
-        </div>
-        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #f59e0b">
-            <div style="font-size:13px;color:white;font-weight:700">⚙️ Optimisation</div>
-            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Programmes complets multi-tranches</div>
-        </div>
-        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #a855f7">
-            <div style="font-size:13px;color:white;font-weight:700">🤖 Machine Learning</div>
-            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">RF, arbre, XGBoost, CatBoost</div>
-        </div>
-        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #ef4444">
-            <div style="font-size:13px;color:white;font-weight:700">🔍 Audit critique</div>
-            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Contrôle, challenger, cohérence</div>
-        </div>
-        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #14b8a6">
-            <div style="font-size:13px;color:white;font-weight:700">📄 Reporting</div>
-            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Synthèse, justification, PDF</div>
-        </div>
+    <div class="ar-grid">
+        <div class="ar-card green"><div class="ar-card-title">📊 Tarification XL</div><div class="ar-card-text">BC, Simulation, Market Curve</div></div>
+        <div class="ar-card blue"><div class="ar-card-title">🧠 IA agentique</div><div class="ar-card-text">LLM + outils + décisions</div></div>
+        <div class="ar-card orange"><div class="ar-card-title">⚙️ Optimisation</div><div class="ar-card-text">Programmes complets multi-tranches</div></div>
+        <div class="ar-card purple"><div class="ar-card-title">🤖 Machine Learning</div><div class="ar-card-text">RF, arbre, XGBoost, CatBoost</div></div>
+        <div class="ar-card red"><div class="ar-card-title">🔍 Audit critique</div><div class="ar-card-text">Contrôle, challenger, cohérence</div></div>
+        <div class="ar-card cyan"><div class="ar-card-title">📄 Reporting</div><div class="ar-card-text">Synthèse, justification, PDF</div></div>
     </div>
 
-    <div style="font-size:12px;color:rgba(255,255,255,0.72);margin-top:14px;line-height:1.7">
+    <div class="ar-footer">
         ✅ Modules exécutés : {modules_html}<br>
         ⏭️ Prochain module utile : <b style="color:#fbbf24">{prochaine}</b>
     </div>
 </div>
-""", unsafe_allow_html=True)
+</body>
+</html>
+"""
+components.html(bandeau_html, height=345, scrolling=False)
 
 # ── Analyse IA sur demande uniquement (évite les appels automatiques coûteux) ──
 if "accueil_ia_msg" in st.session_state:
