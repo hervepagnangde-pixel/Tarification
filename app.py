@@ -204,21 +204,11 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
     TableStyle, PageBreak, HRFlowable)
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 import io as _io_db
-from xml.sax.saxutils import escape
 
 _VERT  = colors.HexColor("#2d8a4e")
 _NOIR  = colors.HexColor("#1a1a1a")
 _GRIS  = colors.HexColor("#f4f6f4")
 _GRIS2 = colors.HexColor("#888888")
-
-
-def _rl_safe(x):
-    """Sécurise le texte envoyé à ReportLab Paragraph().
-    Évite les erreurs paraparser quand le texte contient <, > ou &.
-    """
-    if x is None:
-        return ""
-    return escape(str(x))
 
 def _pdf_styles():
     s = getSampleStyleSheet()
@@ -244,7 +234,7 @@ def _pdf_table_rl(data_rows, col_widths=None):
         r = []
         for cell in row:
             sty = S["AR_CellB"] if i == 0 else S["AR_Cell"]
-            r.append(Paragraph(_rl_safe(cell), sty))
+            r.append(Paragraph(str(cell), sty))
         rows.append(r)
     t = Table(rows, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
@@ -381,9 +371,8 @@ def generer_pdf_rapport(user_email, gnpi_val, tranches,
             line = line.strip()
             if not line: story.append(Spacer(1, 0.15*cm)); continue
             line_c = line.replace("**","").replace("*","").replace("`","").replace("#","")
-            line_c = _rl_safe(line_c)
-            if line.startswith("## "): story.append(Paragraph(_rl_safe(line[3:]), S["AR_H2"]))
-            elif line.startswith("# "): story.append(Paragraph(_rl_safe(line[2:]), S["AR_H1"]))
+            if line.startswith("## "): story.append(Paragraph(line[3:], S["AR_H2"]))
+            elif line.startswith("# "): story.append(Paragraph(line[2:], S["AR_H1"]))
             else: story.append(Paragraph(line_c, S["AR_Body"]))
 
     # ── FOOTER ──
@@ -3560,6 +3549,302 @@ def afficher_ml_agentique(ml):
 
 
 # ════════════════════════════════════════════
+# LABORATOIRE DE TARIFICATION ML
+# ════════════════════════════════════════════
+
+class AgentLaboTarification:
+    """
+    Laboratoire de tarification ML.
+    Workflow :
+      1. Grille de conditions (auto-generee, modifiable)
+      2. Batch BC + Simulation sur chaque scenario
+      3. Dataset ML (conditions + params -> taux)
+      4. RF / DT / XGB
+      5. Prediction + Optimisation au-dela de la grille
+    """
+
+    MULT_PRIORITE  = [0.70, 0.85, 1.00, 1.15, 1.30]
+    MULT_PORTEE    = [0.85, 1.00, 1.15]
+    AAD_PCT        = [0.00, 0.10, 0.20]
+    NB_RECON       = [0, 1, 2, 3]
+    K_SECURITE     = [0.15, 0.20, 0.25]
+
+    FEATURES = [
+        "priorite","portee","AAD_val","AAL_val",
+        "nb_reconstitutions","taux_reconstitution",
+        "brokage","frais","marge","retrocession","k_securite",
+        "alpha","lambda_","seuil_modelisation",
+        "type_travaillante","type_cat","type_non_trav",
+        "ratio_D_GNPI","ratio_C_GNPI","ratio_aad_C","ratio_aal_C",
+        "levier_frais",
+    ]
+    TARGET = "taux_retenu"
+
+    def __init__(self, tranches_base, gnpi, df_proj, coeffs,
+                 alpha, lambda_, seuil, chargement_majeurs=0.0, df_mkt=None):
+        self.tranches_base      = tranches_base
+        self.gnpi               = gnpi
+        self.df_proj            = df_proj
+        self.coeffs             = coeffs
+        self.alpha              = alpha
+        self.lambda_            = lambda_
+        self.seuil              = seuil
+        self.chargement_majeurs = chargement_majeurs
+        self.df_mkt             = df_mkt
+        self.grille             = []
+        self.resultats          = []
+        self.df_ml              = None
+        self.modeles_entraines  = {}
+        self.metriques_ml       = {}
+        self.importance_vars    = {}
+        self._features_used     = list(self.FEATURES)
+        self._best_model_name   = None
+
+    def generer_grille_auto(self, n_max_par_tranche=25):
+        import itertools
+        scenarios = []
+        for t in self.tranches_base:
+            D0 = t["priorite"]; C0 = t["portee"]
+            count = 0
+            for mD, mC, aad_p, n_rec, k_sec in itertools.product(
+                self.MULT_PRIORITE, self.MULT_PORTEE,
+                self.AAD_PCT, self.NB_RECON, self.K_SECURITE
+            ):
+                if count >= n_max_par_tranche: break
+                D = max(round(D0*mD/500_000)*500_000, 500_000)
+                C = max(round(C0*mC/500_000)*500_000, 500_000)
+                aad = round(C*aad_p/100_000)*100_000 if aad_p > 0 else None
+                scenarios.append(self._make_scenario(t, D, C, aad, None, n_rec, k_sec))
+                count += 1
+            if t["type"] == "travaillante":
+                for aal_m in [1.5, 2.0]:
+                    if count < n_max_par_tranche + 4:
+                        scenarios.append(self._make_scenario(t, D0, C0, None, C0*aal_m, 1, 0.20))
+                        count += 1
+            for dm in [-0.02, 0.02]:
+                if count < n_max_par_tranche + 6:
+                    s = self._make_scenario(t, D0, C0, None, None, 1, 0.20)
+                    s["marge"] = max(t["marge"]+dm, 0.02)
+                    scenarios.append(s); count += 1
+        self.grille = scenarios
+        return scenarios
+
+    def _make_scenario(self, t, D, C, aad, aal, n_rec, k_sec):
+        return {
+            "tranche_base":t["nom"],"type":t["type"],
+            "priorite":float(D),"portee":float(C),
+            "AAD":float(aad) if aad else None,
+            "AAL":float(aal) if aal else None,
+            "nb_reconstitutions":int(n_rec),"taux_reconstitution":100.0,
+            "brokage":t["brokage"],"frais":t["frais"],
+            "marge":t["marge"],"retrocession":t["retrocession"],
+            "alpha":float(self.alpha),"lambda_":float(self.lambda_),
+            "seuil_modelisation":float(self.seuil),"k_securite":float(k_sec),
+        }
+
+    def _bc_scenario(self, s):
+        D=s["priorite"]; L=s["portee"]; aad=s.get("AAD"); aal=s.get("AAL")
+        n_rec=int(s.get("nb_reconstitutions",1)); t_r=float(s.get("taux_reconstitution",100))/100
+        k=float(s.get("k_securite",0.20)); bk=s["brokage"]; fg=s["frais"]
+        mg=s["marge"]; rt=s["retrocession"]; cap=(n_rec+1)*L
+        df=self.df_proj.copy()
+        df["Ck"]=df.apply(lambda r:min(max(r["Sprime_ultime"]-D,0),L)*r["coeff_stab"],axis=1)
+        cfs=[]
+        for _,ch in df.groupby("annee_surv")["Ck"].sum().items():
+            if aad: ch=max(ch-aad,0)
+            if aal: ch=min(ch,aal)
+            cfs.append(float(min(ch,cap)))
+        N=len(cfs); nz=[c for c in cfs if c>0]; n_nz=len(nz)
+        Pr=0.0
+        for C_n in cfs:
+            for ri in range(n_rec): Pr+=t_r*min(L,max(C_n-ri*L,0))
+        Pr/=L if L>0 else 1
+        Rec=Pr/(Pr+N) if (Pr+N)>0 else 0.0
+        if n_nz<3: return {"taux_pur_bc":0.0,"taux_technique_bc":0.0,"n_ann_nonzero":n_nz,"rec_bc":Rec,"valide_bc":False}
+        tp=np.mean(cfs)/self.gnpi; sigma=float(np.std(nz))/self.gnpi
+        tr=tp+k*sigma; tt=(tr*(1-Rec))/max(1-bk-fg-mg-rt,0.01)
+        return {"taux_pur_bc":round(tp,6),"taux_technique_bc":round(tt,6),
+                "n_ann_nonzero":n_nz,"rec_bc":round(Rec,6),"sigma_bc":round(sigma,6),"valide_bc":True}
+
+    def _sim_scenario(self, s, n_sim=5000):
+        D=s["priorite"]; P=s["portee"]; aad=s.get("AAD"); aal=s.get("AAL")
+        n_rec=int(s.get("nb_reconstitutions",1)); cap=(n_rec+1)*P
+        alp=float(s.get("alpha",self.alpha)); lam=float(s.get("lambda_",self.lambda_))
+        seu=float(s.get("seuil_modelisation",self.seuil)); k=float(s.get("k_securite",0.20))
+        bk=s["brokage"]; fg=s["frais"]; mg=s["marge"]; rt=s["retrocession"]
+        np.random.seed(42)
+        charges=[]
+        for _ in range(n_sim):
+            N_sin=np.random.poisson(lam); S=0.0
+            if N_sin>0:
+                U=np.random.uniform(size=N_sin); Sp=seu*(U**(-1.0/alp))
+                ic=np.random.choice(len(self.coeffs),size=N_sin,replace=True)
+                for j in range(N_sin):
+                    sp=Sp[j]; c=self.coeffs[ic[j]]
+                    if sp<=D: si=0
+                    elif sp<=D+P: si=c*(sp-D)
+                    else: si=c*P
+                    S+=si
+            ch=S
+            if aad: ch=max(ch-aad,0)
+            if aal: ch=min(ch,aal)
+            charges.append(min(ch,cap))
+        arr=np.array(charges); P0=np.mean(arr); sig_abs=np.std(arr)
+        tp=P0/self.gnpi; tr=tp+k*(sig_abs/self.gnpi)
+        tt=tr/max(1-bk-fg-mg-rt,0.01)
+        return {"taux_pur_sim":round(tp,6),"taux_technique_sim":round(tt,6),
+                "sigma_sim":round(sig_abs/self.gnpi,6),"valide_sim":True}
+
+    def executer_batch(self, n_sim=5000, progress_cb=None):
+        self.resultats=[]; n=len(self.grille)
+        for i,s in enumerate(self.grille):
+            if progress_cb: progress_cb(i,n)
+            bc=self._bc_scenario(s); sim=self._sim_scenario(s,n_sim)
+            row={**s,**bc,**sim}
+            if s["type"]=="travaillante":
+                row["taux_retenu"]=max(bc["taux_technique_bc"],sim["taux_technique_sim"])
+                row["methode_retenue"]="BC" if bc["taux_technique_bc"]>=sim["taux_technique_sim"] else "Sim"
+            else:
+                row["taux_retenu"]=sim["taux_technique_sim"]; row["methode_retenue"]="Sim"
+            row["prime_MAD"]=self.gnpi*row["taux_retenu"]
+            self.resultats.append(row)
+        return self.resultats
+
+    def construire_dataset(self):
+        if not self.resultats: return None
+        rows=[]
+        for r in self.resultats:
+            if r.get("taux_retenu",0)<=0: continue
+            D=r["priorite"]; C=r["portee"]
+            aad_v=r.get("AAD") or 0.0; aal_v=r.get("AAL") or 0.0
+            bk=r["brokage"]; fg=r["frais"]; mg=r["marge"]; rt=r["retrocession"]
+            rows.append({
+                "priorite":D,"portee":C,"AAD_val":aad_v,"AAL_val":aal_v,
+                "nb_reconstitutions":r.get("nb_reconstitutions",1),
+                "taux_reconstitution":r.get("taux_reconstitution",100),
+                "brokage":bk,"frais":fg,"marge":mg,"retrocession":rt,
+                "k_securite":r.get("k_securite",0.20),
+                "alpha":r.get("alpha",self.alpha),"lambda_":r.get("lambda_",self.lambda_),
+                "seuil_modelisation":r.get("seuil_modelisation",self.seuil),
+                "type_travaillante":1 if r["type"]=="travaillante" else 0,
+                "type_cat":1 if r["type"]=="cat" else 0,
+                "type_non_trav":1 if r["type"]=="non_travaillante" else 0,
+                "ratio_D_GNPI":D/max(self.gnpi,1),"ratio_C_GNPI":C/max(self.gnpi,1),
+                "ratio_aad_C":aad_v/max(C,1),"ratio_aal_C":aal_v/max(C,1),
+                "levier_frais":1-bk-fg-mg-rt,
+                "taux_pur_bc":r.get("taux_pur_bc",0),"taux_technique_bc":r.get("taux_technique_bc",0),
+                "taux_pur_sim":r.get("taux_pur_sim",0),"taux_technique_sim":r.get("taux_technique_sim",0),
+                "taux_retenu":r.get("taux_retenu",0),"prime_MAD":r.get("prime_MAD",0),
+                "tranche_base":r.get("tranche_base",""),"type":r["type"],
+                "methode_retenue":r.get("methode_retenue",""),
+            })
+        self.df_ml=pd.DataFrame(rows)
+        return self.df_ml
+
+    def entrainer_modeles(self, target=None):
+        target=target or self.TARGET
+        if self.df_ml is None or len(self.df_ml)<10: return {"erreur":"Dataset insuffisant (min 10 lignes)"}
+        try:
+            from sklearn.model_selection import train_test_split
+            from sklearn.metrics import mean_absolute_error,mean_squared_error,r2_score
+            from sklearn.tree import DecisionTreeRegressor
+            from sklearn.ensemble import RandomForestRegressor
+        except Exception as e: return {"erreur":f"scikit-learn manquant : {e}"}
+        feats=[f for f in self.FEATURES if f in self.df_ml.columns]
+        extra=[c for c in ["taux_pur_bc","taux_technique_bc","taux_pur_sim","taux_technique_sim"]
+               if c in self.df_ml.columns and c!=target]
+        feats=feats+extra
+        X=self.df_ml[feats].fillna(0); y=self.df_ml[target]
+        mask=(y>0)&np.isfinite(y); X=X[mask]; y=y[mask]
+        if len(X)<10: return {"erreur":"Trop peu de scenarios valides"}
+        X_tr,X_te,y_tr,y_te=train_test_split(X,y,test_size=0.25,random_state=42)
+        models={
+            "Arbre de decision":DecisionTreeRegressor(max_depth=5,min_samples_leaf=3,random_state=42),
+            "Random Forest":RandomForestRegressor(n_estimators=300,max_depth=8,min_samples_leaf=2,random_state=42,n_jobs=-1),
+        }
+        try:
+            from xgboost import XGBRegressor
+            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
+                subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=42)
+        except: pass
+        resultats={}; best_name=None; best_mae=None
+        for nom,model in models.items():
+            try:
+                model.fit(X_tr,y_tr); pred=model.predict(X_te)
+                mae=float(mean_absolute_error(y_te,pred)); rmse=float(np.sqrt(mean_squared_error(y_te,pred)))
+                r2=float(r2_score(y_te,pred))
+                resultats[nom]={"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":len(X_tr),"n_test":len(X_te)}
+                self.modeles_entraines[nom]=model
+                if best_mae is None or mae<best_mae: best_mae=mae; best_name=nom
+            except Exception as e: resultats[nom]={"erreur":str(e)}
+        self.metriques_ml=resultats; self._features_used=feats; self._best_model_name=best_name
+        if best_name and hasattr(self.modeles_entraines.get(best_name),"feature_importances_"):
+            imp=pd.Series(self.modeles_entraines[best_name].feature_importances_,index=feats)
+            self.importance_vars[best_name]=imp.sort_values(ascending=False)
+        return resultats
+
+    def predire_taux(self, conditions):
+        model=self.modeles_entraines.get(self._best_model_name)
+        if model is None: return None
+        D=conditions.get("priorite",2e6); C=conditions.get("portee",13e6)
+        aad_v=conditions.get("AAD") or 0.0; aal_v=conditions.get("AAL") or 0.0
+        bk=conditions.get("brokage",0.10); fg=conditions.get("frais",0.05)
+        mg=conditions.get("marge",0.10); rt=conditions.get("retrocession",0.0)
+        t=conditions.get("type","travaillante")
+        row={"priorite":D,"portee":C,"AAD_val":aad_v,"AAL_val":aal_v,
+             "nb_reconstitutions":conditions.get("nb_reconstitutions",1),
+             "taux_reconstitution":100.0,"brokage":bk,"frais":fg,"marge":mg,"retrocession":rt,
+             "k_securite":conditions.get("k_securite",0.20),
+             "alpha":conditions.get("alpha",self.alpha),"lambda_":conditions.get("lambda_",self.lambda_),
+             "seuil_modelisation":conditions.get("seuil_modelisation",self.seuil),
+             "type_travaillante":1 if t=="travaillante" else 0,
+             "type_cat":1 if t=="cat" else 0,"type_non_trav":1 if t=="non_travaillante" else 0,
+             "ratio_D_GNPI":D/max(self.gnpi,1),"ratio_C_GNPI":C/max(self.gnpi,1),
+             "ratio_aad_C":aad_v/max(C,1),"ratio_aal_C":aal_v/max(C,1),
+             "levier_frais":1-bk-fg-mg-rt}
+        X=pd.DataFrame([{f:row.get(f,0) for f in self._features_used}])
+        return float(model.predict(X)[0])
+
+    def optimiser_via_ml(self, tranche_type, taux_min, taux_max, n_candidats=1000):
+        model=self.modeles_entraines.get(self._best_model_name)
+        if model is None or self.df_ml is None: return []
+        D_min=float(self.df_ml["priorite"].min())*0.7; D_max=float(self.df_ml["priorite"].max())*1.4
+        C_min=float(self.df_ml["portee"].min())*0.7;   C_max=float(self.df_ml["portee"].max())*1.4
+        np.random.seed(0)
+        D_arr=np.random.uniform(D_min,D_max,n_candidats); C_arr=np.random.uniform(C_min,C_max,n_candidats)
+        aad_arr=np.random.uniform(0,C_arr*0.25); rec_arr=np.random.randint(0,4,n_candidats)
+        k_arr=np.random.uniform(0.15,0.30,n_candidats); mg_arr=np.random.uniform(0.06,0.15,n_candidats)
+        rows=[]
+        for i in range(n_candidats):
+            D=round(D_arr[i]/500_000)*500_000; C=round(C_arr[i]/500_000)*500_000
+            aad=round(aad_arr[i]/100_000)*100_000
+            bk=0.10; fg=0.05; mg=float(mg_arr[i]); rt=0.0
+            rows.append({"priorite":D,"portee":C,"AAD_val":aad,"AAL_val":0,
+                "nb_reconstitutions":int(rec_arr[i]),"taux_reconstitution":100,
+                "brokage":bk,"frais":fg,"marge":mg,"retrocession":rt,
+                "k_securite":float(k_arr[i]),
+                "alpha":self.alpha,"lambda_":self.lambda_,"seuil_modelisation":self.seuil,
+                "type_travaillante":1 if tranche_type=="travaillante" else 0,
+                "type_cat":1 if tranche_type=="cat" else 0,
+                "type_non_trav":1 if tranche_type=="non_travaillante" else 0,
+                "ratio_D_GNPI":D/max(self.gnpi,1),"ratio_C_GNPI":C/max(self.gnpi,1),
+                "ratio_aad_C":aad/max(C,1),"ratio_aal_C":0,"levier_frais":1-bk-fg-mg-rt})
+        X=pd.DataFrame([{f:r.get(f,0) for f in self._features_used} for r in rows])
+        preds=model.predict(X)
+        results=[]
+        for i,pred in enumerate(preds):
+            if taux_min<=pred<=taux_max:
+                r=rows[i]
+                results.append({"Priorite (MAD)":f"{r['priorite']:,.0f}","Portee (MAD)":f"{r['portee']:,.0f}",
+                    "AAD (MAD)":f"{r['AAD_val']:,.0f}","Reconst.":int(r["nb_reconstitutions"]),
+                    "Marge":f"{r['marge']:.2%}","k securite":f"{r['k_securite']:.2f}",
+                    "Taux predit":f"{pred:.4%}","Prime (MAD)":f"{self.gnpi*pred:,.0f}"})
+            if len(results)>=20: break
+        return results
+
+
+
+# ════════════════════════════════════════════
 # AGENT PYTHON PUR — LOGIQUE ACTUARIELLE CODÉE
 # ════════════════════════════════════════════
 
@@ -5576,10 +5861,244 @@ with tab_agent:
                 st.session_state.pop(k, None)
             st.rerun()
 
+    # ── Laboratoire ML (toujours accessible si df_proj disponible) ──
+    _labo_display_section()
 
-# ════════════════════════════════════════════
-# TAB PHASE 3 — AGENT COMPLET AUTONOME
-# ════════════════════════════════════════════
+
+def _labo_display_section():
+    """Laboratoire de tarification ML — affiché dans tab_agent."""
+    import matplotlib.pyplot as plt
+
+    st.markdown("---")
+    st.markdown("#### Laboratoire de tarification ML")
+    st.caption(
+        "Génère automatiquement une grille de conditions, tarifie chaque scénario "
+        "(BC + Simulation), entraîne RF / DT / XGB et propose des programmes optimisés — "
+        "y compris des conditions non encore testées."
+    )
+
+    if "df_proj" not in st.session_state or "alpha_est" not in st.session_state:
+        st.info("Transformez d'abord le triangle.")
+        return
+
+    def _make_labo():
+        return AgentLaboTarification(
+            tranches_base      = tranches_input,
+            gnpi               = gnpi,
+            df_proj            = st.session_state["df_proj"],
+            coeffs             = st.session_state.get("coeffs", np.array([1.0])),
+            alpha              = st.session_state.get("alpha_est", 1.5),
+            lambda_            = st.session_state.get("lambda_est", 5.0),
+            seuil              = st.session_state.get("seuil_est", 1_600_000),
+            chargement_majeurs = st.session_state.get("chargement_majeurs", 0.0),
+            df_mkt             = st.session_state.get("df_mkt_clean"),
+        )
+
+    # ═ ÉTAPE 1 — GRILLE ═
+    with st.expander("Étape 1 — Grille de conditions (modifiable)", expanded=True):
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            n_max = st.slider("Scénarios max par tranche", 10, 60, 25, 5, key="labo_n_max")
+        with c2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            if st.button("Générer la grille", key="btn_labo_gen", use_container_width=True):
+                labo = _make_labo()
+                st.session_state["labo_grille"] = labo.generer_grille_auto(n_max_par_tranche=n_max)
+                st.rerun()
+
+        if "labo_grille" in st.session_state:
+            grille = st.session_state["labo_grille"]
+            st.caption(f"{len(grille)} scénarios — modifiez directement dans le tableau")
+            df_g = pd.DataFrame([{
+                "Tranche":    s["tranche_base"],
+                "Type":       s["type"],
+                "Priorite":   s["priorite"],
+                "Portee":     s["portee"],
+                "AAD":        s.get("AAD") or 0.0,
+                "AAL":        s.get("AAL") or 0.0,
+                "Reconst.":   s["nb_reconstitutions"],
+                "Marge":      s["marge"],
+                "Frais":      s["frais"],
+                "Brokage":    s["brokage"],
+                "Retro.":     s["retrocession"],
+                "k_securite": s["k_securite"],
+                "Alpha":      s["alpha"],
+                "Lambda":     s["lambda_"],
+            } for s in grille])
+
+            df_edited = st.data_editor(
+                df_g, use_container_width=True, height=280, key="labo_editor",
+                column_config={
+                    "Priorite":   st.column_config.NumberColumn(format="%,.0f"),
+                    "Portee":     st.column_config.NumberColumn(format="%,.0f"),
+                    "AAD":        st.column_config.NumberColumn(format="%,.0f"),
+                    "AAL":        st.column_config.NumberColumn(format="%,.0f"),
+                    "Marge":      st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.30, step=0.01),
+                    "k_securite": st.column_config.NumberColumn(format="%.2f", min_value=0.05, max_value=0.50, step=0.05),
+                    "Type":       st.column_config.SelectboxColumn(options=["travaillante","cat","non_travaillante"]),
+                }
+            )
+            # Merge edits
+            grille_modif = []
+            for i, row in df_edited.iterrows():
+                s = dict(grille[i]) if i < len(grille) else dict(grille[-1])
+                s.update({
+                    "tranche_base":       row["Tranche"],
+                    "type":               row["Type"],
+                    "priorite":           float(row["Priorite"]),
+                    "portee":             float(row["Portee"]),
+                    "AAD":                float(row["AAD"]) if row["AAD"] else None,
+                    "AAL":                float(row["AAL"]) if row["AAL"] else None,
+                    "nb_reconstitutions": int(row["Reconst."]),
+                    "marge":              float(row["Marge"]),
+                    "frais":              float(row["Frais"]),
+                    "brokage":            float(row["Brokage"]),
+                    "retrocession":       float(row["Retro."]),
+                    "k_securite":         float(row["k_securite"]),
+                    "alpha":              float(row["Alpha"]),
+                    "lambda_":            float(row["Lambda"]),
+                })
+                grille_modif.append(s)
+            st.session_state["labo_grille"] = grille_modif
+
+    # ═ ÉTAPE 2 — BATCH ═
+    if "labo_grille" in st.session_state:
+        with st.expander("Étape 2 — Tarification batch (BC + Simulation)", expanded=True):
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                n_sim_labo = st.number_input("Simulations par scénario", value=5000,
+                    step=1000, min_value=1000, key="labo_nsim")
+            with c2:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("Lancer le batch", type="primary",
+                             key="btn_labo_batch", use_container_width=True):
+                    labo = _make_labo()
+                    labo.grille = st.session_state["labo_grille"]
+                    bar = st.progress(0, "Démarrage...")
+                    def _cb(i, n): bar.progress(int(i/n*100), f"Scénario {i+1}/{n}...")
+                    res    = labo.executer_batch(n_sim=int(n_sim_labo), progress_cb=_cb)
+                    df_ml  = labo.construire_dataset()
+                    bar.progress(100, "Terminé.")
+                    st.session_state["labo_resultats"] = res
+                    st.session_state["labo_df_ml"]     = df_ml
+                    st.rerun()
+
+            if "labo_resultats" in st.session_state:
+                res = st.session_state["labo_resultats"]
+                st.success(f"{len(res)} scénarios tarifés")
+                df_show = pd.DataFrame([{
+                    "Tranche":   r["tranche_base"],
+                    "Type":      r["type"],
+                    "D":         f"{r['priorite']:,.0f}",
+                    "C":         f"{r['portee']:,.0f}",
+                    "AAD":       f"{(r.get('AAD') or 0):,.0f}",
+                    "Rec.":      r["nb_reconstitutions"],
+                    "k sec.":    f"{r.get('k_securite',0.20):.2f}",
+                    "tau BC":    f"{r.get('taux_technique_bc',0):.4%}",
+                    "tau Sim":   f"{r.get('taux_technique_sim',0):.4%}",
+                    "tau Retenu":f"{r.get('taux_retenu',0):.4%}",
+                    "Prime":     f"{r.get('prime_MAD',0):,.0f}",
+                    "Methode":   r.get("methode_retenue",""),
+                } for r in res])
+                st.dataframe(df_show, use_container_width=True, height=260)
+                try:
+                    import io as _io_labo
+                    buf = _io_labo.BytesIO()
+                    st.session_state["labo_df_ml"].to_excel(buf, index=False, engine="openpyxl")
+                    st.download_button("Telecharger le dataset ML (Excel)", data=buf.getvalue(),
+                        file_name="labo_dataset_ml.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="btn_dl_labo")
+                except: pass
+
+    # ═ ÉTAPE 3 — ML ═
+    if "labo_df_ml" in st.session_state:
+        with st.expander("Étape 3 — Entraînement ML (RF / DT / XGB)", expanded=True):
+            df_ml = st.session_state["labo_df_ml"]
+            st.caption(f"Dataset : {len(df_ml)} lignes | Features : conditions + params simulation | Target : taux")
+            target_choice = st.radio(
+                "Variable cible",
+                ["taux_retenu", "taux_technique_bc", "taux_technique_sim"],
+                horizontal=True, key="labo_target")
+
+            if st.button("Entrainer les modeles ML", type="primary", key="btn_labo_train"):
+                labo = _make_labo(); labo.df_ml = df_ml
+                with st.spinner("Entraînement RF / DT / XGB..."):
+                    metriques = labo.entrainer_modeles(target=target_choice)
+                st.session_state["labo_modeles"]    = labo.modeles_entraines
+                st.session_state["labo_metriques"]  = labo.metriques_ml
+                st.session_state["labo_importance"] = labo.importance_vars
+                st.session_state["labo_features"]   = labo._features_used
+                st.session_state["labo_best"]       = labo._best_model_name
+                st.rerun()
+
+            if "labo_metriques" in st.session_state:
+                best = st.session_state.get("labo_best","")
+                tableau_resultats([{
+                    "Modele":     nom,
+                    "MAE (pts)":  f"{v.get('MAE',0)*100:.4f}" if "MAE" in v else "—",
+                    "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if "RMSE" in v else "—",
+                    "R2":         f"{v.get('R2',0):.4f}" if "R2" in v else "—",
+                    "N train":    v.get("n_train","—"),
+                    "Meilleur":   "OK" if nom == best else "",
+                } for nom, v in st.session_state["labo_metriques"].items()])
+
+                imp_dict = st.session_state.get("labo_importance", {})
+                if imp_dict:
+                    best_nom, imp = list(imp_dict.items())[0]
+                    fig_imp, ax_imp = plt.subplots(figsize=(8, 4))
+                    imp.head(12).plot.barh(ax=ax_imp, color="#2d8a4e", edgecolor="white")
+                    ax_imp.set_xlabel("Importance"); ax_imp.set_title("Variables importantes — " + best_nom)
+                    ax_imp.invert_yaxis(); ax_imp.grid(alpha=0.2)
+                    ax_imp.spines[["top","right"]].set_visible(False)
+                    st.pyplot(fig_imp); plt.close()
+                    st.caption(
+                        "priorite/portee dominant = geometrie de la tranche determinante. "
+                        "k_securite/sigma_bc dominant = volatilite historique preponderante."
+                    )
+
+    # ═ ÉTAPE 4 — OPTIMISATION ML ═
+    if "labo_modeles" in st.session_state:
+        with st.expander("Étape 4 — Optimisation par ML (explorer au-dela de la grille)", expanded=True):
+            st.caption(
+                "Le modele predit le taux pour n'importe quelle combinaison, y compris "
+                "des conditions non testees lors du batch. Definissez une plage de taux cible."
+            )
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                type_opt = st.selectbox("Type de tranche",
+                    ["travaillante","cat","non_travaillante"], key="labo_opt_type")
+            with c2:
+                taux_min_opt = st.number_input("Taux cible min (%)", value=2.0,
+                    step=0.1, min_value=0.1, key="labo_opt_tmin") / 100
+            with c3:
+                taux_max_opt = st.number_input("Taux cible max (%)", value=4.0,
+                    step=0.1, min_value=0.1, key="labo_opt_tmax") / 100
+
+            if st.button("Trouver les programmes optimaux",
+                         type="primary", key="btn_labo_optim"):
+                labo = _make_labo()
+                labo.modeles_entraines = st.session_state["labo_modeles"]
+                labo._features_used   = st.session_state["labo_features"]
+                labo._best_model_name = st.session_state["labo_best"]
+                labo.df_ml            = st.session_state["labo_df_ml"]
+                with st.spinner("Exploration de 1 000 combinaisons..."):
+                    props = labo.optimiser_via_ml(type_opt, taux_min_opt, taux_max_opt)
+                st.session_state["labo_props"] = props
+
+            if st.session_state.get("labo_props") is not None:
+                props = st.session_state["labo_props"]
+                if props:
+                    st.success(f"{len(props)} programme(s) dans [{taux_min_opt:.2%} — {taux_max_opt:.2%}]")
+                    tableau_resultats(props)
+                    st.caption(
+                        "Propositions du modele ML — a valider par un calcul BC/Simulation complet."
+                    )
+                else:
+                    st.warning(
+                        "Aucun programme trouve dans cette plage. "
+                        "Elargissez les bornes ou relancez le batch avec plus de scenarios."
+                    )
 
 with tab_full:
     section_header("Agent Complet LLM", "Fichiers bruts → Rapport final — Raisonnement LLM Claude (API requise)", "🚀")
@@ -6627,115 +7146,33 @@ with tab_hist:
                     except Exception as _e:
                         st.error(str(_e))
 
-
 # ════════════════════════════════════════════
 # TAB ADMIN
 # ════════════════════════════════════════════
 
 with tab_admin:
     st.header("🔐 Interface Administrateur")
-
-    if st.button("ℹ️ À propos de l’outil", use_container_width=True):
-        st.session_state["show_about_tool"] = not st.session_state.get("show_about_tool", False)
-
-    if st.session_state.get("show_about_tool", False):
-        with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
-            st.markdown("""
-<div style="padding: 12px 28px 12px 28px;">
-
-### Atlantic Re IA — Assistant actuariel de tarification
-
-**Hervé NONGPANGA :**
-
-Bonjour,
-
-Avant de commencer, il convient de noter que **Atlantic Re IA** a été développé pour accompagner le processus de tarification des affaires de réassurance non-proportionnelle.
-
-L’outil regroupe les principales méthodes de calcul et d’analyse utilisées dans l’étude des programmes de réassurance, tout en offrant des fonctionnalités d’automatisation, de reporting et d’assistance à l’interprétation des résultats.
-
-Il permet notamment de :
-
-- construire et analyser des programmes par tranches ;
-- réaliser une tarification par **Burning Cost** ;
-- effectuer des simulations fréquence/sévérité ;
-- intégrer une approche **Market Curve** ;
-- comparer les différentes méthodes de tarification ;
-- proposer des variantes d’optimisation du programme ;
-- générer un rapport technique professionnel ;
-- conserver les résultats pour l’audit et la traçabilité.
-
-Son objectif est de fournir un cadre de travail structuré permettant d’améliorer l’efficacité, la cohérence et la documentation des analyses réalisées.
-
-Cet outil constitue un support d’analyse et d’aide à la décision. La validation des hypothèses, des résultats et des conclusions demeure de la responsabilité de l’actuaire.
-
-Atlantic Re IA, comme tout outil, peut comporter certaines limites, que ce soit au niveau de son fonctionnement en **code agent** ou en **agent LLM**. Les résultats doivent donc être interprétés avec discernement et confrontés au jugement actuariel.
-
-L’outil est encore en phase d’amélioration continue et s’enrichit progressivement à travers les cas traités, les retours d’expérience et les évolutions apportées.
-
-Merci et bon usage.
-
-</div>
-""", unsafe_allow_html=True)
-
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
-
     if admin_pwd == get_admin_password():
         st.success("✅ Accès accordé")
-
         users = get_users()
-
         st.markdown("#### 👥 Utilisateurs autorisés")
-        def get_roles():
-            try:
-                return dict(st.secrets["roles"])
-            except:
-                return {}
-        
-        roles = get_roles()
-        
-        st.dataframe(
-            pd.DataFrame([
-                {
-                    "Email": e,
-                    "Code": c,
-                    "Poste": roles.get(e, "Utilisateur"),
-                    "Statut": "Actif"
-                }
-                for e, c in users.items()
-            ]),
-            use_container_width=True
-        )
-
+        st.dataframe(pd.DataFrame([{"Email": e, "Code": c, "Statut": "Actif"}
+                                    for e, c in users.items()]), use_container_width=True)
         st.divider()
-
         st.markdown("#### ⚙️ Gérer les utilisateurs")
-        st.info(
-            "Allez sur Streamlit Cloud -> Settings -> Secrets et ajoutez :\n"
-            "admin_password = 'VotreMDP'\n"
-            "[users]\n"
-            "'email@ex.com' = 'CODE'"
-        )
-
+        st.info("Allez sur Streamlit Cloud -> Settings -> Secrets et ajoutez :\nadmin_password = 'VotreMDP'\n[users]\n'email@ex.com' = 'CODE'")
         st.divider()
-
         st.markdown("#### 🎲 Générateur de code")
         col1, col2 = st.columns(2)
-
         with col1:
-            email_new = st.text_input(
-                "Email du nouvel utilisateur",
-                key="new_email"
-            )
-
+            email_new = st.text_input("Email du nouvel utilisateur", key="new_email")
         with col2:
             if st.button("Générer un code"):
                 st.session_state["generated_code"] = secrets_lib.token_hex(4).upper()
-
         if "generated_code" in st.session_state:
             st.success(f"Code généré : **{st.session_state['generated_code']}**")
-
             if email_new:
                 st.code(f'"{email_new}" = "{st.session_state["generated_code"]}"')
-
     elif admin_pwd:
         st.error("❌ Mot de passe incorrect")
