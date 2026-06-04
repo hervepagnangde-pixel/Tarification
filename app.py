@@ -5211,7 +5211,7 @@ class AgentLaboTarification:
 
 
 # ════════════════════════════════════════════
-# AGENT PYTHON PUR — LOGIQUE ACTUARIELLE CODÉE
+# AGENT PYTHON PUR — LOGIQUE ACTUARIELLE
 # ════════════════════════════════════════════
 
 class AgentActuarielPython:
