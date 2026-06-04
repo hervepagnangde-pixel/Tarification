@@ -2021,211 +2021,451 @@ def _labo_display_section():
                     )
 
     # ═══════════════════════════════════════════════════════════
-    # ÉTAPE 4 — OPTIMISATION ACTUARIELLE
+    # ÉTAPE 4 — OPTIMISATION DE PROGRAMMES COMPLETS
     # ═══════════════════════════════════════════════════════════
+
+    def _programme_cible_defaut():
+        """Construit un programme cible depuis les tranches actuellement saisies."""
+        prog = []
+        for i, t in enumerate(tranches_input or []):
+            n_rec = int(t.get("nb_reconstitutions", 1) or 0)
+            tr1 = float(t.get("taux_reconstitution", 100.0) or 100.0)
+            tr2 = 100.0 if n_rec >= 2 else 0.0
+            prog.append({
+                "nom": t.get("nom", f"Tranche {i+1}"),
+                "type": t.get("type", "travaillante"),
+                "priorite": float(t.get("priorite", 2_000_000) or 2_000_000),
+                "portee": float(t.get("portee", 13_000_000) or 13_000_000),
+                "AAD": float(t.get("AAD", 0) or 0),
+                "AAL": float(t.get("AAL", 0) or 0),
+                "nb_reconstitutions": n_rec,
+                "taux_recon_1": tr1,
+                "taux_recon_2": tr2,
+                "brokage": float(t.get("brokage", 0.10) or 0.10),
+                "frais": float(t.get("frais", 0.05) or 0.05),
+                "marge": float(t.get("marge", 0.10) or 0.10),
+                "retrocession": float(t.get("retrocession", 0.0) or 0.0),
+                "k_securite": 0.20,
+                "seuil_stab": 0.0,
+            })
+        return prog
+
+    def _df_programme(prog):
+        rows = []
+        for t in prog:
+            rows.append({
+                "Nom": t.get("nom", ""),
+                "Type": t.get("type", "travaillante"),
+                "Priorité": float(t.get("priorite", 0) or 0),
+                "Portée": float(t.get("portee", 0) or 0),
+                "AAD": float(t.get("AAD", 0) or 0),
+                "AAL": float(t.get("AAL", 0) or 0),
+                "Reconst.": int(t.get("nb_reconstitutions", 0) or 0),
+                "Rec1 %": float(t.get("taux_recon_1", 100.0) or 100.0),
+                "Rec2 %": float(t.get("taux_recon_2", 0.0) or 0.0),
+                "Brokage": float(t.get("brokage", 0.10) or 0.10),
+                "Frais": float(t.get("frais", 0.05) or 0.05),
+                "Marge": float(t.get("marge", 0.10) or 0.10),
+                "Rétro": float(t.get("retrocession", 0.0) or 0.0),
+                "k sécurité": float(t.get("k_securite", 0.20) or 0.20),
+                "Seuil stab.": float(t.get("seuil_stab", 0.0) or 0.0),
+            })
+        return pd.DataFrame(rows)
+
+    def _programme_from_df(df):
+        prog = []
+        for i, row in df.iterrows():
+            n_rec = int(row.get("Reconst.", 0) or 0)
+            rec1 = float(row.get("Rec1 %", 100.0) or 100.0)
+            rec2 = float(row.get("Rec2 %", 0.0) or 0.0)
+            if n_rec <= 0:
+                rec1 = 0.0; rec2 = 0.0
+            elif n_rec == 1:
+                rec2 = 0.0
+            prog.append({
+                "nom": str(row.get("Nom", f"Tranche {i+1}")),
+                "type": str(row.get("Type", "travaillante")),
+                "priorite": max(float(row.get("Priorité", 0) or 0), 100_000.0),
+                "portee": max(float(row.get("Portée", 0) or 0), 100_000.0),
+                "AAD": max(float(row.get("AAD", 0) or 0), 0.0),
+                "AAL": max(float(row.get("AAL", 0) or 0), 0.0),
+                "nb_reconstitutions": max(min(n_rec, 4), 0),
+                "taux_recon_1": max(min(rec1, 100.0), 0.0),
+                "taux_recon_2": max(min(rec2, 100.0), 0.0),
+                "brokage": max(min(float(row.get("Brokage", 0.10) or 0.10), 0.40), 0.0),
+                "frais": max(min(float(row.get("Frais", 0.05) or 0.05), 0.30), 0.0),
+                "marge": max(min(float(row.get("Marge", 0.10) or 0.10), 0.40), 0.0),
+                "retrocession": max(min(float(row.get("Rétro", 0.0) or 0.0), 0.40), 0.0),
+                "k_securite": max(min(float(row.get("k sécurité", 0.20) or 0.20), 0.60), 0.01),
+                "seuil_stab": max(min(float(row.get("Seuil stab.", 0.0) or 0.0), 0.30), 0.0),
+            })
+        return prog
+
+    def _cond_for_prediction(t):
+        return {
+            "type": t.get("type", "travaillante"),
+            "priorite": float(t.get("priorite", 0) or 0),
+            "portee": float(t.get("portee", 0) or 0),
+            "AAD": float(t.get("AAD", 0) or 0) or None,
+            "AAL": float(t.get("AAL", 0) or 0) or None,
+            "nb_reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
+            "taux_recon_1": float(t.get("taux_recon_1", 100.0) or 100.0),
+            "taux_recon_2": float(t.get("taux_recon_2", 0.0) or 0.0),
+            "brokage": float(t.get("brokage", 0.10) or 0.10),
+            "frais": float(t.get("frais", 0.05) or 0.05),
+            "marge": float(t.get("marge", 0.10) or 0.10),
+            "retrocession": float(t.get("retrocession", 0.0) or 0.0),
+            "k_securite": float(t.get("k_securite", 0.20) or 0.20),
+            "seuil_stab": float(t.get("seuil_stab", 0.0) or 0.0),
+            "alpha": st.session_state.get("alpha_est", 1.5),
+            "lambda_": st.session_state.get("lambda_est", 5.0),
+            "seuil_modelisation": st.session_state.get("seuil_est", 1_600_000),
+        }
+
+    def _evaluer_programme_complet(labo, prog, nom_programme="Programme"):
+        rows = []
+        prime_totale = 0.0
+        taux_global = 0.0
+        protection = 0.0
+        for t in prog:
+            cond = _cond_for_prediction(t)
+            tau = labo.predire_taux(cond)
+            tau = float(tau or 0.0)
+            prime = gnpi * tau
+            prime_totale += prime
+            taux_global += tau
+            protection += float(t.get("portee", 0) or 0) * (1 + int(t.get("nb_reconstitutions", 0) or 0))
+            rows.append({
+                "Tranche": t.get("nom", ""),
+                "Type": t.get("type", ""),
+                "Priorité": float(t.get("priorite", 0) or 0),
+                "Portée": float(t.get("portee", 0) or 0),
+                "AAD": float(t.get("AAD", 0) or 0),
+                "AAL": float(t.get("AAL", 0) or 0),
+                "Reconst.": int(t.get("nb_reconstitutions", 0) or 0),
+                "Rec1": float(t.get("taux_recon_1", 0) or 0),
+                "Rec2": float(t.get("taux_recon_2", 0) or 0),
+                "Brokage": float(t.get("brokage", 0) or 0),
+                "Frais": float(t.get("frais", 0) or 0),
+                "Marge": float(t.get("marge", 0) or 0),
+                "Taux prédit": tau,
+                "Prime MAD": prime,
+            })
+        return {
+            "nom": nom_programme,
+            "programme": prog,
+            "rows": rows,
+            "prime_totale": prime_totale,
+            "taux_global": taux_global,
+            "protection": protection,
+            "protection_pct_gnpi": protection / max(gnpi, 1),
+        }
+
+    def _distance_programme(prog, cible):
+        dist = 0.0
+        n = max(len(cible), 1)
+        for t, c in zip(prog, cible):
+            d0 = max(float(c.get("priorite", 1) or 1), 1)
+            c0 = max(float(c.get("portee", 1) or 1), 1)
+            dist += abs(float(t.get("priorite", 0) or 0) - d0) / d0
+            dist += abs(float(t.get("portee", 0) or 0) - c0) / c0
+            dist += 0.35 * abs(float(t.get("marge", 0) or 0) - float(c.get("marge", 0) or 0)) / 0.10
+            dist += 0.20 * abs(int(t.get("nb_reconstitutions", 0) or 0) - int(c.get("nb_reconstitutions", 0) or 0))
+        return dist / n
+
+    def _hash_programme(prog):
+        vals = []
+        for t in prog:
+            vals.append((
+                t.get("type", ""),
+                round(float(t.get("priorite", 0) or 0) / 500_000) * 500_000,
+                round(float(t.get("portee", 0) or 0) / 500_000) * 500_000,
+                int(t.get("nb_reconstitutions", 0) or 0),
+                round(float(t.get("marge", 0) or 0), 3),
+            ))
+        return tuple(vals)
+
+    def _muter_programme_cible(prog, mode, rng, intensite=1.0):
+        new = []
+        for t in prog:
+            u = dict(t)
+            typ = u.get("type", "travaillante")
+            if mode == "cible":
+                pass
+            elif mode == "protection":
+                u["priorite"] = u["priorite"] * rng.uniform(0.75, 0.95)
+                u["portee"] = u["portee"] * rng.uniform(1.05, 1.30)
+                u["nb_reconstitutions"] = min(int(u.get("nb_reconstitutions", 1)) + rng.choice([0, 1]), 4)
+                u["marge"] = min(float(u.get("marge", 0.10)) + rng.uniform(0.00, 0.04), 0.25)
+            elif mode == "economique":
+                u["priorite"] = u["priorite"] * rng.uniform(1.05, 1.35)
+                u["portee"] = u["portee"] * rng.uniform(0.80, 1.00)
+                u["nb_reconstitutions"] = max(int(u.get("nb_reconstitutions", 1)) - rng.choice([0, 1]), 0)
+                u["marge"] = max(float(u.get("marge", 0.10)) - rng.uniform(0.00, 0.03), 0.03)
+            else:  # equilibre / aleatoire
+                u["priorite"] = u["priorite"] * rng.uniform(0.80, 1.25)
+                u["portee"] = u["portee"] * rng.uniform(0.85, 1.25)
+                u["nb_reconstitutions"] = int(np.clip(int(u.get("nb_reconstitutions", 1)) + rng.choice([-1, 0, 1]), 0, 4))
+                u["marge"] = float(np.clip(float(u.get("marge", 0.10)) + rng.uniform(-0.03, 0.04), 0.03, 0.25))
+            # Ajustements par type : ne pas transformer la nature de la tranche.
+            if typ in ["cat", "non_travaillante"]:
+                u["AAD"] = 0.0; u["AAL"] = 0.0
+            # Arrondis contractuels.
+            u["priorite"] = max(round(float(u["priorite"]) / 500_000) * 500_000, 500_000)
+            u["portee"] = max(round(float(u["portee"]) / 500_000) * 500_000, 500_000)
+            if float(u.get("AAD", 0) or 0) > 0:
+                u["AAD"] = round(float(u["AAD"]) / 100_000) * 100_000
+            if float(u.get("AAL", 0) or 0) > 0:
+                u["AAL"] = round(float(u["AAL"]) / 100_000) * 100_000
+            # Cohérence de programme : priorité suivante au moins au niveau de la fin précédente, si mêmes couches cat successives.
+            new.append(u)
+        for i in range(1, len(new)):
+            prev_end = float(new[i-1].get("priorite", 0) or 0) + float(new[i-1].get("portee", 0) or 0)
+            if new[i].get("type") != "travaillante" and new[i-1].get("type") != "travaillante":
+                if float(new[i].get("priorite", 0) or 0) < prev_end * 0.85:
+                    new[i]["priorite"] = round(prev_end / 500_000) * 500_000
+        return new
+
+    def _optimiser_programmes_complets(labo, cible_prog, objectif, budget_pct, n_solutions=3, n_candidats=2500):
+        rng = np.random.default_rng(42)
+        modes = ["cible", "protection", "economique", "equilibre"]
+        evaluations = []
+        seen = set()
+        for k in range(n_candidats):
+            mode = modes[k % len(modes)] if k < 60 else rng.choice(modes[1:])
+            prog = cible_prog if mode == "cible" else _muter_programme_cible(cible_prog, mode, rng)
+            hp = _hash_programme(prog)
+            if hp in seen:
+                continue
+            seen.add(hp)
+            ev = _evaluer_programme_complet(labo, prog, nom_programme="")
+            dist = _distance_programme(prog, cible_prog)
+            tau = ev["taux_global"]
+            prot = ev["protection_pct_gnpi"]
+            # Score : pas une hallucination ; uniquement ML + contraintes utilisateur.
+            budget_penalty = max(0.0, tau - budget_pct) / max(budget_pct, 1e-6)
+            if objectif == "Respecter le programme cible":
+                score = 2.20 * dist + 2.00 * budget_penalty - 0.15 * prot
+            elif objectif == "Maximiser la protection sous budget":
+                score = 2.50 * budget_penalty + 0.80 * dist - 1.20 * prot
+            elif objectif == "Minimiser le taux global":
+                score = 2.00 * tau + 0.70 * dist - 0.10 * prot
+            else:  # équilibre
+                score = 1.20 * tau + 1.00 * budget_penalty + 0.90 * dist - 0.50 * prot
+            ev.update({"distance_cible": dist, "score": float(score), "mode": mode})
+            evaluations.append(ev)
+        if not evaluations:
+            return {"erreur": "Aucun programme candidat évaluable."}
+
+        cible_eval = _evaluer_programme_complet(labo, cible_prog, nom_programme="Programme cible")
+        cible_eval.update({"distance_cible": 0.0, "score": None, "mode": "cible"})
+
+        candidates = sorted(evaluations, key=lambda x: x["score"])
+        best_score = candidates[0]["score"]
+        # Le programme cible est retenu explicitement s'il respecte le budget et est proche du meilleur score.
+        cible_score_ref = 1.20 * cible_eval["taux_global"] + max(0.0, cible_eval["taux_global"] - budget_pct) / max(budget_pct, 1e-6)
+        cible_deja_optimal = (cible_eval["taux_global"] <= budget_pct and cible_score_ref <= best_score * 1.15 + 1e-9)
+
+        solutions = []
+        if cible_deja_optimal:
+            cible_eval["nom"] = "Programme 1 — Cible retenue (déjà optimal)"
+            cible_eval["justification"] = (
+                "Le programme proposé respecte le budget et son score est très proche du meilleur candidat. "
+                "Il est donc retenu pour éviter une optimisation artificielle."
+            )
+            solutions.append(cible_eval)
+
+        labels = [
+            "Programme prudent — protection renforcée",
+            "Programme équilibré — compromis coût/protection",
+            "Programme économique — taux global réduit",
+            "Programme alternatif — proche du programme cible",
+            "Programme technique — meilleur score ML",
+        ]
+        for ev in candidates:
+            if len(solutions) >= max(n_solutions, 3):
+                break
+            # Diversité : éviter de retourner trois fois le même programme.
+            if any(abs(ev["taux_global"] - s["taux_global"]) < 0.0003 and abs(ev["protection_pct_gnpi"] - s["protection_pct_gnpi"]) < 0.01 for s in solutions):
+                continue
+            ev["nom"] = f"Programme {len(solutions)+1} — {labels[min(len(solutions), len(labels)-1)]}"
+            if ev["taux_global"] > budget_pct:
+                ev["justification"] = (
+                    "Programme proche de la cible mais au-dessus du budget : à négocier ou à ajuster. "
+                    "Il est affiché car il reste parmi les meilleurs candidats disponibles."
+                )
+            elif ev["mode"] == "protection":
+                ev["justification"] = "Priorités abaissées/portées renforcées pour améliorer la protection sous contrainte de budget."
+            elif ev["mode"] == "economique":
+                ev["justification"] = "Priorités relevées ou portées réduites afin de diminuer le taux global prédit."
+            else:
+                ev["justification"] = "Compromis coût/protection obtenu par recherche autour du programme cible fourni."
+            solutions.append(ev)
+
+        # Sécurité : toujours au moins 3, quitte à compléter par les meilleurs candidats restants.
+        for ev in candidates:
+            if len(solutions) >= max(n_solutions, 3):
+                break
+            ev["nom"] = f"Programme {len(solutions)+1} — Variante complémentaire"
+            ev["justification"] = "Variante complémentaire issue des candidats les mieux scorés."
+            solutions.append(ev)
+
+        return {
+            "status": "ok",
+            "objectif": objectif,
+            "budget_pct": budget_pct,
+            "programme_cible": cible_eval,
+            "cible_deja_optimal": bool(cible_deja_optimal),
+            "solutions": solutions[:max(n_solutions, 3)],
+            "n_candidats_evalues": len(evaluations),
+            "note": "Les taux sont prédits par le modèle ML entraîné sur le laboratoire ; aucune tranche n'est inventée hors du programme cible, seules les conditions numériques sont ajustées autour de celui-ci.",
+        }
+
     if "labo_df_ml" in st.session_state:
         with st.expander(
-            "Étape 4 — Optimisation actuarielle (Dichotomie + De Finetti/Borch)", expanded=True
+            "Étape 4 — Optimisation de programmes complets à partir de votre programme cible", expanded=True
         ):
             st.markdown(
                 """
-**Méthodes disponibles :**
-- **Dichotomie (De Wylder, 1979 / méthode actuarielle)** : τ est monotone décroissant en D → bisection sur [D_min, D_max], convergence en ~50 itérations vers D* tel que τ(D*) = τ_cible. Méthode recommandée par les traités actuariels (Daykin, Pentikäinen & Pesonen, 1994).
-- **Frontière De Finetti–Borch (1940/1969)** : minimise Var(perte retenue) pour un budget de prime donné. Borch (1969) prouve que le stop-loss (XL) est optimal pour ce critère. Retourne la courbe Pareto-efficiente et le programme optimal.
-- **Programme multi-tranches** : combine les résultats des deux méthodes sur l'ensemble des tranches pour proposer le programme global.
+Un **programme optimisé** doit rester un programme complet : plusieurs tranches, leurs conditions,
+leurs taux prédits, puis un taux global justifié. Ici, vous donnez le **programme cible souhaité** ;
+l'agent cherche au moins **3 programmes optimaux complets** autour de ce besoin. Si votre programme
+est déjà optimal, il est conservé comme solution n°1.
                 """
             )
 
-            methode_opt = st.radio(
-                "Méthode d'optimisation",
-                ["Dichotomie actuarielle", "Frontière De Finetti–Borch", "Programme multi-tranches complet"],
-                horizontal=True, key="labo_methode_opt"
+            if "labo_programme_cible_df" not in st.session_state:
+                st.session_state["labo_programme_cible_df"] = _df_programme(_programme_cible_defaut())
+
+            st.markdown("##### 1) Programme cible fourni par l'utilisateur")
+            df_prog_edit = st.data_editor(
+                st.session_state["labo_programme_cible_df"],
+                use_container_width=True,
+                height=260,
+                num_rows="dynamic",
+                key="labo_programme_cible_editor",
+                column_config={
+                    "Type": st.column_config.SelectboxColumn(options=["travaillante", "cat", "non_travaillante"]),
+                    "Priorité": st.column_config.NumberColumn(format="%,.0f", min_value=100_000, step=500_000),
+                    "Portée": st.column_config.NumberColumn(format="%,.0f", min_value=100_000, step=500_000),
+                    "AAD": st.column_config.NumberColumn(format="%,.0f", min_value=0, step=100_000),
+                    "AAL": st.column_config.NumberColumn(format="%,.0f", min_value=0, step=100_000),
+                    "Reconst.": st.column_config.NumberColumn(min_value=0, max_value=4, step=1),
+                    "Rec1 %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=25.0),
+                    "Rec2 %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=25.0),
+                    "Brokage": st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.40, step=0.01),
+                    "Frais": st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.30, step=0.01),
+                    "Marge": st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.40, step=0.01),
+                    "Rétro": st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.40, step=0.01),
+                    "k sécurité": st.column_config.NumberColumn(format="%.2f", min_value=0.01, max_value=0.60, step=0.01),
+                    "Seuil stab.": st.column_config.NumberColumn(format="%.2f", min_value=0.0, max_value=0.30, step=0.01),
+                }
             )
+            st.session_state["labo_programme_cible_df"] = df_prog_edit
 
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             with c1:
-                tranche_opt_idx = st.selectbox(
-                    "Tranche de référence",
-                    options=list(range(len(tranches_input))),
-                    format_func=lambda i: tranches_input[i]["nom"],
-                    key="labo_tranche_idx"
-                ) if tranches_input else 0
+                objectif_prog = st.selectbox(
+                    "Besoin d'optimisation",
+                    ["Équilibre coût/protection", "Respecter le programme cible", "Maximiser la protection sous budget", "Minimiser le taux global"],
+                    key="labo_objectif_programme"
+                )
             with c2:
-                taux_cible_opt = st.number_input(
-                    "Taux cible (%)", value=3.0, step=0.1, min_value=0.1,
-                    key="labo_taux_cible") / 100
+                budget_programme = st.number_input(
+                    "Budget max programme (% GNPI)", value=4.0, step=0.1, min_value=0.1,
+                    key="labo_budget_programme") / 100
             with c3:
-                budget_pct = st.number_input(
-                    "Budget prime max (% GNPI)", value=4.0, step=0.1, min_value=0.1,
-                    key="labo_budget_pct") / 100
+                nb_solutions = st.number_input(
+                    "Nombre de programmes", value=3, min_value=3, max_value=10, step=1,
+                    key="labo_nb_programmes")
+            with c4:
+                n_candidats = st.number_input(
+                    "Candidats explorés", value=2500, min_value=300, max_value=15000, step=500,
+                    key="labo_n_candidats_prog")
 
-            if st.button("Lancer l'optimisation", type="primary", key="btn_labo_opt2"):
-                labo = _ensure_labo_models(_make_labo(), target=st.session_state.get("labo_target", "taux_retenu"))
-
-                if methode_opt == "Dichotomie actuarielle":
-                    if not tranches_input:
-                        st.error("Aucune tranche définie.")
+            if st.button("Optimiser le programme complet", type="primary", key="btn_labo_opt_programmes"):
+                cible_prog = _programme_from_df(df_prog_edit)
+                if len(cible_prog) < 2:
+                    st.error("Un programme complet doit contenir au moins 2 tranches. Ajoutez vos tranches dans le tableau cible.")
+                else:
+                    labo = _ensure_labo_models(_make_labo(), target=st.session_state.get("labo_target", "taux_retenu"))
+                    if not _labo_model_ready(labo):
+                        st.error("Le modèle ML n'est pas disponible. Vérifiez l'étape 3 ou régénérez le dataset ML.")
                     else:
-                        t_base = tranches_input[tranche_opt_idx]
-                        with st.spinner(f"Dichotomie sur la priorité de '{t_base['nom']}'..."):
-                            res_dich = labo.optimiser_dichotomie(t_base, taux_cible_opt)
-                        st.session_state["labo_opt_res"] = ("dichotomie", res_dich, t_base)
-
-                elif methode_opt == "Frontière De Finetti–Borch":
-                    if not tranches_input:
-                        st.error("Aucune tranche définie.")
-                    else:
-                        t_base = tranches_input[tranche_opt_idx]
-                        with st.spinner(f"Calcul frontière efficiente De Finetti pour '{t_base['nom']}'..."):
-                            res_finetti = labo.frontiere_de_finetti(
-                                t_base, budget_prime_pct=budget_pct, n_points=50)
-                        st.session_state["labo_opt_res"] = ("finetti", res_finetti, t_base)
-
-                else:  # multi-tranches
-                    with st.spinner("Optimisation du programme complet (toutes tranches)..."):
-                        resultats_mt = []
-                        for i, t in enumerate(tranches_input):
-                            r_d = labo.optimiser_dichotomie(t, taux_cible_opt)
-                            r_f = labo.frontiere_de_finetti(t, budget_prime_pct=budget_pct, n_points=30)
-                            resultats_mt.append({"tranche":t,"dichotomie":r_d,"finetti":r_f})
-                    st.session_state["labo_opt_res"] = ("multi", resultats_mt, None)
-                st.rerun()
-
-            # ── Affichage des résultats d'optimisation ──
-            if "labo_opt_res" in st.session_state:
-                methode_r, res_r, t_r = st.session_state["labo_opt_res"]
-
-                if methode_r == "dichotomie":
-                    st.markdown(f"##### Résultat dichotomie — {t_r['nom']}")
-                    if res_r is None:
-                        st.error("Modèle non entraîné — lancez d'abord l'étape 3.")
-                    elif not res_r.get("converge", True) or "message" in res_r:
-                        msg = res_r.get("message","Cible hors plage atteignable.")
-                        tau_lo = res_r.get("tau_lo",0); tau_hi = res_r.get("tau_hi",0)
-                        st.warning(msg)
-                        st.info(
-                            f"Plage atteignable : [{min(tau_lo,tau_hi):.4%} — {max(tau_lo,tau_hi):.4%}]. "
-                            f"Ajustez le taux cible dans cet intervalle."
-                        )
-                    else:
-                        D_star = res_r["D_star"]; tau_star = res_r["tau_star"]
-                        nb = res_r.get("nb_iter",0)
-                        st.success(
-                            f"**D\\* = {D_star:,.0f} MAD** → τ\\* = {tau_star:.4%} "
-                            f"(convergé en {nb} itérations)"
-                        )
-                        tableau_resultats([{
-                            "Priorité optimale D*": f"{D_star:,.0f}",
-                            "Portée C":             f"{t_r['portee']:,.0f}",
-                            "Taux obtenu τ*":       f"{tau_star:.4%}",
-                            "Taux cible":           f"{taux_cible_opt:.4%}",
-                            "Écart":                f"{abs(tau_star-taux_cible_opt)*100:.4f} pts",
-                            "Itérations":           nb,
-                            "Prime estimée (MAD)":  f"{gnpi*tau_star:,.0f}",
-                        }])
-                        # Tracer la convergence
-                        iters = res_r.get("iterations",[])
-                        if len(iters) > 2:
-                            fig_d, ax_d = plt.subplots(figsize=(7,3))
-                            ax_d.plot([it["D"] for it in iters],
-                                      [it["tau"]*100 for it in iters],
-                                      "o-", color="#2d8a4e", ms=4)
-                            ax_d.axhline(taux_cible_opt*100, color="red",
-                                         ls="--", label=f"Cible {taux_cible_opt:.2%}")
-                            ax_d.set_xlabel("Priorité D (MAD)")
-                            ax_d.set_ylabel("τ technique (%)")
-                            ax_d.set_title("Convergence dichotomie")
-                            ax_d.legend(); ax_d.grid(alpha=0.2)
-                            st.pyplot(fig_d); plt.close()
-                        st.caption(
-                            "**Principe (De Wylder / Daykin–Pentikäinen–Pesonen)** : "
-                            "τ est monotone décroissant en D (une priorité plus haute → "
-                            "moins de sinistres touchent la tranche). "
-                            "La bisection converge en O(log((D_max−D_min)/ε)) ≈ 50 itérations."
-                        )
-
-                elif methode_r == "finetti":
-                    st.markdown(f"##### Frontière De Finetti–Borch — {t_r['nom']}")
-                    if not res_r or not res_r.get("frontier"):
-                        st.warning("Frontière vide. Vérifiez que le modèle ML est entraîné (étape 3).")
-                    else:
-                        frontier = res_r["frontier"]
-                        optimal  = res_r.get("optimal")
-                        fig_f, ax_f = plt.subplots(figsize=(7, 4))
-                        xs = [p["prime_pct"]*100 for p in frontier]
-                        ys = [p["var_retenue"]*1e4 for p in frontier]
-                        ax_f.plot(xs, ys, "o-", color="#2d8a4e", ms=5, label="Frontière efficiente")
-                        if optimal:
-                            ax_f.scatter([optimal["prime_pct"]*100],
-                                         [optimal.get("var_retenue",0)*1e4],
-                                         color="red", s=120, zorder=5, label="Programme optimal")
-                        ax_f.set_xlabel("Prime cédée (% GNPI)")
-                        ax_f.set_ylabel("Variance retenue (×10⁻⁴)")
-                        ax_f.set_title(
-                            "Frontière efficiente De Finetti–Borch\n"
-                            "min Var(retenu) s.c. E[cession] = budget"
-                        )
-                        ax_f.legend(); ax_f.grid(alpha=0.2)
-                        st.pyplot(fig_f); plt.close()
-
-                        if optimal:
-                            st.success(
-                                f"**Programme De Finetti optimal** : "
-                                f"D\\* = {optimal.get('D',0):,.0f} · "
-                                f"C = {optimal.get('C',0):,.0f} · "
-                                f"τ\\* = {optimal.get('tau_pred',0):.4%}"
+                        with st.spinner("Recherche de programmes complets optimaux autour du programme cible..."):
+                            res_prog = _optimiser_programmes_complets(
+                                labo, cible_prog, objectif_prog, budget_programme,
+                                n_solutions=int(nb_solutions), n_candidats=int(n_candidats)
                             )
-                            tableau_resultats([{
-                                "Priorité D*":     f"{optimal.get('D',0):,.0f}",
-                                "Portée C":        f"{optimal.get('C',0):,.0f}",
-                                "Taux prédit":     f"{optimal.get('tau_pred',0):.4%}",
-                                "Prime cédée":     f"{optimal.get('prime_pct',0):.4%}",
-                                "Var retenue":     f"{optimal.get('var_retenue',0):.6f}",
-                                "Score De Finetti":f"{optimal.get('score_finetti',0):.4f}",
-                                "Prime (MAD)":     f"{gnpi*optimal.get('tau_pred',0):,.0f}",
-                            }])
-                        st.caption(
-                            "**Borch (1969)** : pour une prime nette fixée, le stop-loss (XL) "
-                            "minimise la variance de la perte retenue. "
-                            "Le score De Finetti = Δvariance / prime mesure l'efficacité marginale "
-                            "de chaque euro de prime cédée."
-                        )
+                        st.session_state["labo_opt_res"] = ("programmes_complets", res_prog, None)
+                        st.rerun()
 
-                elif methode_r == "multi":
-                    st.markdown("##### Programme multi-tranches — Résultats consolidés")
-                    st.caption(
-                        "Un programme optimal est composé d'au moins 2 tranches. "
-                        "Résultats dichotomie + De Finetti par tranche, puis consolidation."
-                    )
-                    rows_mt = []
-                    prime_totale = 0.0
-                    for item in res_r:
-                        t = item["tranche"]
-                        rd = item.get("dichotomie") or {}
-                        rf = item.get("finetti") or {}
-                        opt_f = rf.get("optimal") or {}
-                        tau_d = rd.get("tau_star", 0) if rd.get("converge", False) else None
-                        tau_f = opt_f.get("tau_pred", 0)
-                        tau_retenu = tau_d or tau_f
-                        prime_totale += gnpi * (tau_retenu or 0)
-                        rows_mt.append({
-                            "Tranche":          t["nom"],
-                            "Type":             t["type"],
-                            "D* Dich.":         f"{rd.get('D_star',0):,.0f}" if rd.get("converge") else "—",
-                            "τ* Dich.":         f"{tau_d:.4%}" if tau_d else "—",
-                            "D* De Finetti":    f"{opt_f.get('D',0):,.0f}" if opt_f else "—",
-                            "τ* De Finetti":    f"{tau_f:.4%}" if tau_f else "—",
-                            "τ Retenu":         f"{tau_retenu:.4%}" if tau_retenu else "—",
-                            "Prime (MAD)":      f"{gnpi*(tau_retenu or 0):,.0f}",
-                        })
-                    tableau_resultats(rows_mt)
-                    st.metric("Prime totale programme", f"{prime_totale:,.0f} MAD",
-                              f"{prime_totale/gnpi:.4%} du GNPI")
-                    st.caption(
-                        "Le programme multi-tranches consolide la protection : "
-                        "T1 travaillante (max BC/Sim) + T2/T3 cat (max Sim/Mkt). "
-                        "La protection globale = somme des portées × (1 + reconstitutions)."
-                    )
+            if "labo_opt_res" in st.session_state:
+                methode_r, res_r, _ = st.session_state["labo_opt_res"]
+                if methode_r == "programmes_complets":
+                    if not res_r or res_r.get("erreur"):
+                        st.error(res_r.get("erreur", "Erreur optimisation programmes."))
+                    else:
+                        st.success(
+                            f"{len(res_r.get('solutions', []))} programmes complets proposés · "
+                            f"{res_r.get('n_candidats_evalues', 0):,} candidats évalués"
+                        )
+                        st.caption(res_r.get("note", ""))
+                        if res_r.get("cible_deja_optimal"):
+                            st.info("Le programme cible fourni est déjà jugé optimal au regard du budget et du score ML : il est conservé comme solution n°1.")
+
+                        synthese = []
+                        for sol in res_r.get("solutions", []):
+                            synthese.append({
+                                "Programme": sol.get("nom", ""),
+                                "Taux global": f"{sol.get('taux_global', 0):.4%}",
+                                "Prime totale": f"{sol.get('prime_totale', 0):,.0f} MAD",
+                                "Protection/GNPI": f"{sol.get('protection_pct_gnpi', 0):.2%}",
+                                "Distance cible": f"{sol.get('distance_cible', 0):.3f}",
+                                "Budget respecté": "✅" if sol.get("taux_global", 0) <= res_r.get("budget_pct", 0) else "⚠️",
+                                "Justification": sol.get("justification", ""),
+                            })
+                        tableau_resultats(synthese, "Synthèse des programmes optimaux")
+
+                        for idx_sol, sol in enumerate(res_r.get("solutions", []), start=1):
+                            with st.expander(sol.get("nom", f"Programme {idx_sol}"), expanded=(idx_sol == 1)):
+                                st.markdown(f"**Justification :** {sol.get('justification', '')}")
+                                rows_detail = []
+                                for r in sol.get("rows", []):
+                                    rows_detail.append({
+                                        "Tranche": r["Tranche"],
+                                        "Type": r["Type"],
+                                        "Priorité": f"{r['Priorité']:,.0f}",
+                                        "Portée": f"{r['Portée']:,.0f}",
+                                        "AAD": f"{r['AAD']:,.0f}",
+                                        "AAL": f"{r['AAL']:,.0f}",
+                                        "Reconst.": r["Reconst."],
+                                        "Rec1": f"{r['Rec1']:.0f}%",
+                                        "Rec2": f"{r['Rec2']:.0f}%",
+                                        "Brokage": f"{r['Brokage']:.1%}",
+                                        "Frais": f"{r['Frais']:.1%}",
+                                        "Marge": f"{r['Marge']:.1%}",
+                                        "Taux": f"{r['Taux prédit']:.4%}",
+                                        "Prime": f"{r['Prime MAD']:,.0f} MAD",
+                                    })
+                                tableau_resultats(rows_detail)
+                                st.markdown(
+                                    f"**Taux global : {sol.get('taux_global', 0):.4%}** · "
+                                    f"**Prime totale : {sol.get('prime_totale', 0):,.0f} MAD** · "
+                                    f"**Protection : {sol.get('protection_pct_gnpi', 0):.2%} du GNPI**"
+                                )
+
+                        try:
+                            # Export Excel multi-programmes.
+                            import io as _io_export
+                            with pd.ExcelWriter(_io_export.BytesIO(), engine="xlsxwriter") as writer:
+                                pd.DataFrame(synthese).to_excel(writer, index=False, sheet_name="Synthese")
+                                for i, sol in enumerate(res_r.get("solutions", []), start=1):
+                                    pd.DataFrame(sol.get("rows", [])).to_excel(writer, index=False, sheet_name=f"Programme_{i}")
+                                writer.book.close()
+                        except Exception:
+                            pass
+
 
     # ═══════════════════════════════════════════════════════════
     # ÉTAPE 5 — NSGA-II  (Deb, Pratap, Agarwal & Meyarivan, 2002)
