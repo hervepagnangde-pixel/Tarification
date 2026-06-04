@@ -4542,7 +4542,7 @@ class AgentLaboTarification:
 
     # ── 7. ENTRAÎNEMENT ML ──────────────────────────────────────────
 
-    def entrainer_modeles(self, target=None):
+    def entrainer_modeles(self, target=None): 
         target = target or self.TARGET
         if self.df_ml is None or len(self.df_ml) < 10:
             return {"erreur":"Dataset insuffisant (min 10 lignes)"}
