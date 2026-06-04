@@ -1365,25 +1365,80 @@ with st.sidebar:
 # ACCUEIL INTELLIGENT
 # ════════════════════════════════════════════
 
-# ── Bandeau accueil statique (0 token) ──
-etapes_faites     = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
-                      ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
-                      ("Market Curve","resultats_mkt")] if k in st.session_state]
-etapes_manquantes = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
-                      ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
-                      ("Market Curve","resultats_mkt")] if k not in st.session_state]
-etapes_html = " → ".join([f"<span style='color:#2d8a4e;font-weight:700'>{e}</span>" for e in etapes_faites]) if etapes_faites else "Aucune étape complétée"
-prochaine   = etapes_manquantes[0] if etapes_manquantes else "✅ Toutes les étapes complétées !"
-st.markdown(f"""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
-    border-radius:16px;padding:20px 28px;margin-bottom:16px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
-    <div style="font-size:17px;font-weight:700;color:white">🤖 Atlantic Re IA — Tarification XL Non-Proportionnelle</div>
-    <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:6px">
-        Workflow : <b style="color:white">Programme → Triangle → BC → Simulation → Market Curve → Rapport</b>
+# ── Bandeau accueil stratégique (0 token) ──
+capacites_suivi = [
+    ("Programme", "df_prog"),
+    ("Triangle & Chain Ladder", "df_liq"),
+    ("Burning Cost", "resultats_bc"),
+    ("Simulation TVE/Pareto", "resultats_sim"),
+    ("Market Curve", "resultats_mkt"),
+    ("Rapport final", "df_rapport"),
+    ("ML entraîné", "labo_modeles"),
+    ("Optimisation programmes", "programmes_optimises_complets"),
+    ("Mémoire métier", "memoire_metier"),
+    ("Audit critique", "agent_critique"),
+]
+
+modules_realises = [n for n, k in capacites_suivi if k in st.session_state and st.session_state.get(k) is not None]
+modules_restants = [n for n, k in capacites_suivi if not (k in st.session_state and st.session_state.get(k) is not None)]
+modules_html = " · ".join([f"<span style='color:#86efac;font-weight:700'>{e}</span>" for e in modules_realises]) if modules_realises else "<span style='color:#cbd5e1'>Aucun module encore exécuté</span>"
+prochaine = modules_restants[0] if modules_restants else "Tous les modules clés sont disponibles"
+
+st.markdown(f"""
+<div style="background:linear-gradient(135deg,#0b1220 0%,#111827 42%,#14532d 100%);
+    border-radius:18px;padding:22px 28px;margin-bottom:18px;
+    box-shadow:0 8px 28px rgba(0,0,0,0.28);border:1px solid rgba(134,239,172,0.25)">
+    <div style="display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:1;min-width:280px">
+            <div style="font-size:20px;font-weight:800;color:white;letter-spacing:-0.2px">
+                🤖 Atlantic Re IA — Agent actuariel XL non-proportionnel
+            </div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.74);margin-top:7px;line-height:1.7">
+                Tarification complète · IA agentique LLM/Python · ML supervisé · Optimisation de programmes · Audit critique · Reporting PDF
+            </div>
+        </div>
+        <div style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);
+            border-radius:12px;padding:10px 14px;min-width:210px;text-align:center">
+            <div style="font-size:11px;color:#cbd5e1;text-transform:uppercase;letter-spacing:0.6px">État du dossier</div>
+            <div style="font-size:16px;color:#86efac;font-weight:800;margin-top:3px">
+                {len(modules_realises)}/{len(capacites_suivi)} modules actifs
+            </div>
+        </div>
     </div>
-    <div style="font-size:12px;color:rgba(255,255,255,0.6);margin-top:4px">
-        ✅ Complétées : {etapes_html if etapes_faites else '<span style="color:#aaa">Aucune</span>'}
-        &nbsp;|&nbsp; ⏭️ Prochaine étape : <b style="color:#f59e0b">{prochaine}</b>
-    </div></div>""", unsafe_allow_html=True)
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-top:18px">
+        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #22c55e">
+            <div style="font-size:13px;color:white;font-weight:700">📊 Tarification XL</div>
+            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">BC, Simulation, Market Curve</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #3b82f6">
+            <div style="font-size:13px;color:white;font-weight:700">🧠 IA agentique</div>
+            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">LLM + outils + décisions</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #f59e0b">
+            <div style="font-size:13px;color:white;font-weight:700">⚙️ Optimisation</div>
+            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Programmes complets multi-tranches</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #a855f7">
+            <div style="font-size:13px;color:white;font-weight:700">🤖 Machine Learning</div>
+            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">RF, arbre, XGBoost, CatBoost</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #ef4444">
+            <div style="font-size:13px;color:white;font-weight:700">🔍 Audit critique</div>
+            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Contrôle, challenger, cohérence</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.07);border-radius:12px;padding:11px 13px;border-left:3px solid #14b8a6">
+            <div style="font-size:13px;color:white;font-weight:700">📄 Reporting</div>
+            <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Synthèse, justification, PDF</div>
+        </div>
+    </div>
+
+    <div style="font-size:12px;color:rgba(255,255,255,0.72);margin-top:14px;line-height:1.7">
+        ✅ Modules exécutés : {modules_html}<br>
+        ⏭️ Prochain module utile : <b style="color:#fbbf24">{prochaine}</b>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ── Analyse IA sur demande uniquement (évite les appels automatiques coûteux) ──
 if "accueil_ia_msg" in st.session_state:
