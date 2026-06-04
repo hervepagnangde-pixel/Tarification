@@ -1854,6 +1854,45 @@ def _labo_display_section():
         if getattr(labo, "df_ml", None) is not None:
             st.session_state["labo_df_ml"] = labo.df_ml
 
+    def _check_optional_ml_libs():
+        """Retourne l'état réel des bibliothèques optionnelles du laboratoire ML."""
+        status = {}
+        for lib, label in [("xgboost", "XGBoost"), ("catboost", "CatBoost")]:
+            try:
+                __import__(lib)
+                status[label] = {"installe": True, "message": "Installé"}
+            except Exception as e:
+                status[label] = {
+                    "installe": False,
+                    "message": f"Bibliothèque absente ou non importable : {e}",
+                }
+        return status
+
+    def _normaliser_metriques_labo(metriques):
+        """Garantit que les 4 modèles apparaissent toujours dans la comparaison ML."""
+        metriques = dict(metriques or {})
+        libs = _check_optional_ml_libs()
+        ordre = ["Arbre de decision", "Random Forest", "XGBoost", "CatBoost"]
+        normalise = {}
+        for nom in ordre:
+            if nom in metriques:
+                normalise[nom] = metriques[nom]
+                continue
+            if nom in ["XGBoost", "CatBoost"]:
+                info = libs.get(nom, {})
+                if info.get("installe"):
+                    msg = "Installé mais non entraîné dans cette session. Cliquez sur 'Entraîner les modèles'."
+                else:
+                    msg = info.get("message", "Bibliothèque non installée.")
+                normalise[nom] = {"MAE": None, "RMSE": None, "R2": None, "erreur": msg}
+            else:
+                normalise[nom] = {"MAE": None, "RMSE": None, "R2": None, "erreur": "Non entraîné"}
+        # Conserver d'éventuels autres modèles ajoutés plus tard
+        for nom, val in metriques.items():
+            if nom not in normalise:
+                normalise[nom] = val
+        return normalise
+
     def _ensure_labo_models(labo, target=None, silent=False):
         """
         Garantit qu'un modèle ML est disponible avant optimisation.
@@ -2042,14 +2081,29 @@ def _labo_display_section():
     # ÉTAPE 3 — ML
     # ═══════════════════════════════════════════════════════════
     if "labo_df_ml" in st.session_state:
-        with st.expander("Étape 3 — Entraînement ML (Arbre / RF / XGB / CatBoost)", expanded=True):
+        with st.expander("Étape 3 — Entraînement ML (Arbre / RF / XGBoost / CatBoost)", expanded=True):
             df_ml = st.session_state["labo_df_ml"]
             n_feat = len(AgentLaboTarification.FEATURES)
+            libs_ml = _check_optional_ml_libs()
             st.caption(
                 f"Dataset : {len(df_ml)} lignes · {n_feat} features "
                 f"(conditions contractuelles + seuil_stab + α/λ). "
                 f"Les taux calculés sont exclus des variables explicatives et restent uniquement des cibles."
             )
+            c_lib1, c_lib2, c_lib3, c_lib4 = st.columns(4)
+            c_lib1.success("Arbre : intégré")
+            c_lib2.success("Random Forest : intégré")
+            (c_lib3.success if libs_ml["XGBoost"]["installe"] else c_lib3.error)(
+                "XGBoost : " + ("installé" if libs_ml["XGBoost"]["installe"] else "à installer")
+            )
+            (c_lib4.success if libs_ml["CatBoost"]["installe"] else c_lib4.error)(
+                "CatBoost : " + ("installé" if libs_ml["CatBoost"]["installe"] else "à installer")
+            )
+            if not libs_ml["XGBoost"]["installe"] or not libs_ml["CatBoost"]["installe"]:
+                st.warning(
+                    "Pour afficher et exécuter XGBoost/CatBoost dans le laboratoire ML, ajoutez `xgboost` et `catboost` "
+                    "dans `requirements.txt`, puis redéployez l'application Streamlit."
+                )
             c1, c2 = st.columns([2,1])
             with c1:
                 target_choice = st.radio(
@@ -2070,16 +2124,23 @@ def _labo_display_section():
 
             if "labo_metriques" in st.session_state:
                 best = st.session_state.get("labo_best","")
+                metriques_labo = _normaliser_metriques_labo(st.session_state.get("labo_metriques", {}))
+                st.session_state["labo_metriques"] = metriques_labo
+                st.markdown("##### Comparaison des modèles du laboratoire")
                 tableau_resultats([{
                     "Modèle":     nom,
                     "MAE (pts)":  f"{v.get('MAE',0)*100:.4f}" if v.get("MAE") is not None else "—",
                     "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if v.get("RMSE") is not None else "—",
                     "R²":         f"{v.get('R2',0):.4f}" if v.get("R2") is not None else "—",
                     "N train":    v.get("n_train","—"),
+                    "N test":     v.get("n_test","—"),
                     "✓ Meilleur": "✅" if nom == best else "",
                     "Statut":     "✅ Exécuté" if v.get("MAE") is not None else v.get("erreur", "Indisponible"),
-                } for nom, v in st.session_state["labo_metriques"].items()])
+                } for nom, v in metriques_labo.items()])
+            else:
+                st.info("Aucun entraînement ML lancé dans le laboratoire. Cliquez sur **Entraîner les modèles** pour comparer Arbre, Random Forest, XGBoost et CatBoost.")
 
+            if "labo_metriques" in st.session_state:
                 imp_dict = st.session_state.get("labo_importance", {})
                 if imp_dict:
                     best_nom, imp = list(imp_dict.items())[0]
