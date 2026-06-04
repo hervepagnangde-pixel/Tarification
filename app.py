@@ -2113,8 +2113,180 @@ def _labo_display_section():
                         "La protection globale = somme des portées × (1 + reconstitutions)."
                     )
 
+    # ═══════════════════════════════════════════════════════════
+    # ÉTAPE 5 — NSGA-II  (Deb, Pratap, Agarwal & Meyarivan, 2002)
+    # ═══════════════════════════════════════════════════════════
+    if "labo_modeles" in st.session_state:
+        with st.expander(
+            "Étape 5 — NSGA-II : Optimisation multi-objectif (Front de Pareto)",
+            expanded=False
+        ):
+            st.markdown(
+                """
+**NSGA-II** (*Non-dominated Sorting Genetic Algorithm II*, Deb et al. 2002)  
+Algorithme évolutionnaire qui explore simultanément les **3 objectifs actuariels** :
 
-# TABS
+| Objectif | Sens | Signification |
+|---|---|---|
+| **O1** τ_technique | Minimiser | Coût du programme (prime/GNPI) |
+| **O2** Var(retenu) | Minimiser | Risque résiduel ≈ (τ_pur × k)² |
+| **O3** Protection | Maximiser | Portée × (1+Rec) / GNPI |
+
+**Opérateurs :** SBX crossover (η=20) + Mutation polynomiale (η=20) — Echchelh et al. (2019) confirme 98% de l'hypervolume Pareto en 20 générations pour des traités XL.
+                """
+            )
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                nsga_pop  = st.number_input("Taille population", value=80, step=20,
+                    min_value=20, max_value=200, key="nsga_pop")
+            with c2:
+                nsga_gen  = st.number_input("Générations", value=40, step=10,
+                    min_value=10, max_value=200, key="nsga_gen")
+            with c3:
+                nsga_eta_c = st.number_input("η croisement (SBX)", value=20, step=5,
+                    min_value=5, max_value=50, key="nsga_eta_c")
+            with c4:
+                nsga_multi = st.checkbox("Multi-tranches", value=True, key="nsga_multi",
+                    help="Optimise toutes les tranches simultanément (chromosome global)")
+
+            if st.button("Lancer NSGA-II", type="primary", key="btn_nsga2"):
+                labo = _restore_labo(_make_labo())
+                bar_nsga = st.progress(0, "Initialisation population...")
+                def _nsga_cb(gen, n):
+                    bar_nsga.progress(
+                        int(gen/n*100),
+                        f"Génération {gen}/{n} — convergence en cours..."
+                    )
+                with st.spinner("NSGA-II en cours..."):
+                    result = labo.optimiser_nsga2(
+                        pop_size    = int(nsga_pop),
+                        n_gen       = int(nsga_gen),
+                        eta_c       = int(nsga_eta_c),
+                        eta_m       = int(nsga_eta_c),
+                        multi_tranche = nsga_multi,
+                        progress_cb = _nsga_cb,
+                    )
+                bar_nsga.progress(100, "Terminé ✓")
+                st.session_state["nsga_result"] = result
+
+            if "nsga_result" in st.session_state:
+                result = st.session_state["nsga_result"]
+
+                if "erreur" in result:
+                    st.error(result["erreur"])
+                else:
+                    pareto = result["pareto"]
+                    logp   = result["log"]
+                    n_t    = result["n_tranches"]
+
+                    st.success(
+                        f"**{len(pareto)} solutions Pareto** trouvées en "
+                        f"{result['n_gen']} générations · "
+                        f"{result['pop_size']} individus · "
+                        f"{n_t} tranche(s)"
+                    )
+
+                    # ── Graphiques 3D Pareto ──
+                    col_a, col_b = st.columns(2)
+                    import matplotlib.pyplot as plt
+
+                    with col_a:
+                        # O1 vs O2
+                        fig1, ax1 = plt.subplots(figsize=(5, 4))
+                        o1 = [p["O1_tau"]*100 for p in pareto]
+                        o2 = [p["O2_var"]*1e4  for p in pareto]
+                        sc = ax1.scatter(o1, o2, c=o1, cmap="RdYlGn_r", s=60, edgecolors="k", lw=0.4)
+                        plt.colorbar(sc, ax=ax1, label="τ (%)")
+                        ax1.set_xlabel("O1 : τ_technique (%)")
+                        ax1.set_ylabel("O2 : Variance retenue (×10⁻⁴)")
+                        ax1.set_title("Front de Pareto — Coût vs Risque")
+                        ax1.grid(alpha=0.2)
+                        st.pyplot(fig1); plt.close()
+
+                    with col_b:
+                        # O1 vs O3
+                        fig2, ax2 = plt.subplots(figsize=(5, 4))
+                        o3 = [p["O3_prot"]*100 for p in pareto]
+                        sc2 = ax2.scatter(o1, o3, c=o3, cmap="Blues", s=60, edgecolors="k", lw=0.4)
+                        plt.colorbar(sc2, ax=ax2, label="Protection (%)")
+                        ax2.set_xlabel("O1 : τ_technique (%)")
+                        ax2.set_ylabel("O3 : Protection nette (% GNPI)")
+                        ax2.set_title("Front de Pareto — Coût vs Protection")
+                        ax2.grid(alpha=0.2)
+                        st.pyplot(fig2); plt.close()
+
+                    # ── Convergence ──
+                    if logp:
+                        fig3, axes = plt.subplots(1, 3, figsize=(12, 3))
+                        gens = [l["gen"] for l in logp]
+                        for ax3, key, label, color in zip(
+                            axes,
+                            ["tau_min", "var_min", "prot_max"],
+                            ["τ min (%)", "Var min (×10⁻⁴)", "Protection max (%)"],
+                            ["#e74c3c", "#3498db", "#2ecc71"]
+                        ):
+                            vals = [l[key] * (100 if "tau" in key or "prot" in key else 1e4)
+                                    for l in logp]
+                            ax3.plot(gens, vals, color=color, lw=2)
+                            ax3.set_xlabel("Génération")
+                            ax3.set_ylabel(label)
+                            ax3.set_title(label)
+                            ax3.grid(alpha=0.2)
+                        fig3.tight_layout()
+                        st.pyplot(fig3); plt.close()
+
+                    # ── Tableau du front de Pareto ──
+                    st.markdown("##### Solutions Pareto — détail par tranche")
+                    # Construire les colonnes dynamiquement selon n_tranches
+                    rows_p = []
+                    for sol in sorted(pareto, key=lambda p: p["O1_tau"]):
+                        row = {
+                            "τ total":  f"{sol['O1_tau']:.4%}",
+                            "Var":      f"{sol['O2_var']:.2e}",
+                            "Prot %":   f"{sol['O3_prot']*100:.1f}",
+                            "Prime (MAD)": f"{gnpi*sol['O1_tau']:,.0f}",
+                        }
+                        for ti in range(n_t):
+                            p = f"T{ti+1}"
+                            row[f"{p} D"]     = f"{sol.get(p+'_D',0):,.0f}"
+                            row[f"{p} C"]     = f"{sol.get(p+'_C',0):,.0f}"
+                            row[f"{p} Rec"]   = sol.get(p+"_rec", 0)
+                            row[f"{p} Marge"] = f"{sol.get(p+'_marge',0):.2%}"
+                        rows_p.append(row)
+                    if rows_p:
+                        tableau_resultats(rows_p[:30])
+
+                    # ── Solution compromis (TOPSIS simplifié) ──
+                    # Normalise les 3 objectifs et choisit le point le plus proche de l'idéal
+                    if len(pareto) >= 2:
+                        O = np.array([[p["O1_tau"], p["O2_var"], -p["O3_prot"]] for p in pareto])
+                        O_norm = (O - O.min(0)) / (O.max(0) - O.min(0) + 1e-12)
+                        ideal  = np.zeros(3)   # objectifs normalisés minimaux
+                        dists  = np.linalg.norm(O_norm - ideal, axis=1)
+                        best   = pareto[int(np.argmin(dists))]
+                        st.markdown("##### Solution compromis (TOPSIS — équilibre coût/risque/protection)")
+                        comp_rows = [{
+                            "τ total":     f"{best['O1_tau']:.4%}",
+                            "Var retenue": f"{best['O2_var']:.2e}",
+                            "Protection":  f"{best['O3_prot']*100:.1f}%",
+                            "Prime (MAD)": f"{gnpi*best['O1_tau']:,.0f}",
+                        }]
+                        for ti in range(n_t):
+                            p = f"T{ti+1}"
+                            comp_rows[0][f"{p} D*"]    = f"{best.get(p+'_D',0):,.0f}"
+                            comp_rows[0][f"{p} C"]     = f"{best.get(p+'_C',0):,.0f}"
+                            comp_rows[0][f"{p} AAD"]   = f"{best.get(p+'_aad',0):,.0f}"
+                            comp_rows[0][f"{p} Rec"]   = best.get(p+"_rec", 0)
+                            comp_rows[0][f"{p} Rec1%"] = best.get(p+"_tr1", 100)
+                            comp_rows[0][f"{p} k"]     = best.get(p+"_k", 0.20)
+                            comp_rows[0][f"{p} Stab"]  = f"{best.get(p+'_stab',0):.0%}"
+                            comp_rows[0][f"{p} Marge"] = f"{best.get(p+'_marge',0):.2%}"
+                        tableau_resultats(comp_rows)
+                        st.caption(
+                            "**TOPSIS** (Hwang & Yoon, 1981) : solution la plus proche du point "
+                            "idéal normalisé (τ=0, Var=0, Protection=max). "
+                            "Représente le meilleur compromis coût/risque/protection du front de Pareto."
+                        )
 # ════════════════════════════════════════════
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab_agent, tab_full, tab_hist, tab_admin = st.tabs([
@@ -4644,6 +4816,293 @@ class AgentLaboTarification:
                 "Prime":      f"{self.gnpi*pred:,.0f}",
             })
         return results, info
+
+    # ── 12. NSGA-II  ────────────────────────────────────────────────
+    # Deb, Pratap, Agarwal & Meyarivan (2002) — IEEE Trans. Evol. Comp.
+    # Appliqué à la réassurance XL : Echchelh et al. (2019)
+    # Chromosome (par tranche) : [D, C, aad_pct, nb_rec, tr1, k_sec, stab_idx, marge]
+    # Objectifs : O1=τ_min, O2=Var(retenu)_min, O3=Protection_max (→ -protection)
+
+    def optimiser_nsga2(self, pop_size=80, n_gen=50,
+                        eta_c=20, eta_m=20, multi_tranche=True,
+                        progress_cb=None):
+        """
+        NSGA-II pour l'optimisation multi-objectif du programme XL.
+        Retourne : front de Pareto, population finale, log par génération.
+        """
+        import random
+        random.seed(42)
+        np.random.seed(42)
+
+        model = self.modeles_entraines.get(self._best_model_name)
+        if model is None:
+            return {"erreur": "Modèle ML non entraîné (étape 3 requise)"}
+
+        # ── Bornes du problème ────────────────────────────────────────
+        tranches = self.tranches_base if multi_tranche else self.tranches_base[:1]
+        n_t      = len(tranches)
+
+        STAB_VALS = [0.00, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.20]
+        n_stab    = len(STAB_VALS)
+
+        # Bornes par tranche (8 variables chacune)
+        bounds = []
+        for t in tranches:
+            D0 = t["priorite"]; C0 = t["portee"]
+            bounds += [
+                (D0 * 0.40, D0 * 2.50),   # D
+                (C0 * 0.60, C0 * 2.00),   # C
+                (0.00, 0.20),              # aad_pct
+                (0, 3),                    # nb_rec (arrondi à l'entier)
+                (50.0, 100.0),             # taux_recon_1
+                (0.10, 0.30),              # k_securite
+                (0, n_stab - 1),           # stab_idx (discret)
+                (0.06, 0.15),              # marge
+            ]
+        n_var = len(bounds)  # 8 × n_tranches
+
+        # ── Évaluation des objectifs ─────────────────────────────────
+        def decode(x, t_idx):
+            """Décode les 8 variables d'une tranche en dict conditions."""
+            base = t_idx * 8
+            t    = tranches[t_idx]
+            D    = np.clip(x[base],   *bounds[base])
+            C    = np.clip(x[base+1], *bounds[base+1])
+            aad  = np.clip(x[base+2], *bounds[base+2])
+            n_rec= int(round(np.clip(x[base+3], 0, 3)))
+            tr1  = np.clip(x[base+4], 50, 100)
+            k    = np.clip(x[base+5], *bounds[base+5])
+            si   = int(round(np.clip(x[base+6], 0, n_stab-1)))
+            mg   = np.clip(x[base+7], *bounds[base+7])
+            return {
+                "type": t["type"], "priorite": D, "portee": C,
+                "AAD": C * aad if aad > 0 else None, "AAL": None,
+                "nb_reconstitutions": n_rec,
+                "taux_recon_1": tr1,
+                "taux_recon_2": 100.0 if n_rec >= 2 else 0.0,
+                "taux_recon_moy": tr1 if n_rec <= 1 else (tr1 + 100.0) / 2,
+                "brokage": t["brokage"], "frais": t["frais"],
+                "marge": mg, "retrocession": t["retrocession"],
+                "k_securite": k, "seuil_stab": STAB_VALS[si],
+                "alpha": self.alpha, "lambda_": self.lambda_,
+                "seuil_modelisation": self.seuil,
+            }
+
+        def evaluate(x):
+            """Retourne (O1_τ, O2_var, O3_-protection) pour un chromosome."""
+            tau_tot = 0.0; var_tot = 0.0; prot_tot = 0.0
+            for ti in range(n_t):
+                cond = decode(x, ti)
+                tau  = self.predire_taux(cond) or 0.0
+                tau_tot += tau
+                # Var approx : (τ_pur × k)^2 où τ_pur ≈ τ / (1 + k)
+                k   = cond["k_securite"]
+                tau_pur = tau / (1.0 + k) if (1 + k) > 0 else tau
+                var_tot += (tau_pur * k) ** 2
+                # Protection = portée × (1 + nb_rec) normalisée
+                prot_tot += cond["portee"] * (1 + cond["nb_reconstitutions"]) / max(self.gnpi, 1)
+            return np.array([tau_tot, var_tot, -prot_tot])
+
+        # ── Opérateurs génétiques ────────────────────────────────────
+        def sbx_crossover(p1, p2):
+            """SBX (Simulated Binary Crossover), Deb & Agrawal 1995."""
+            c1 = p1.copy(); c2 = p2.copy()
+            for i in range(n_var):
+                if random.random() > 0.5: continue
+                if abs(p1[i] - p2[i]) < 1e-14: continue
+                lo, hi = bounds[i]
+                u = random.random()
+                beta = (2*u)**(1/(eta_c+1)) if u < 0.5 else (1/(2-2*u))**(1/(eta_c+1))
+                c1[i] = 0.5*((1+beta)*p1[i] + (1-beta)*p2[i])
+                c2[i] = 0.5*((1-beta)*p1[i] + (1+beta)*p2[i])
+                c1[i] = np.clip(c1[i], lo, hi)
+                c2[i] = np.clip(c2[i], lo, hi)
+            return c1, c2
+
+        def poly_mutation(x):
+            """Polynomial mutation, Deb 1996."""
+            xm = x.copy()
+            for i in range(n_var):
+                if random.random() > 1.0/n_var: continue
+                lo, hi = bounds[i]; rng = hi - lo
+                if rng < 1e-14: continue
+                u = random.random()
+                if u < 0.5:
+                    delta = (2*u)**(1/(eta_m+1)) - 1.0
+                else:
+                    delta = 1.0 - (2-2*u)**(1/(eta_m+1))
+                xm[i] = np.clip(x[i] + delta * rng, lo, hi)
+            return xm
+
+        # ── Tri non-dominé ───────────────────────────────────────────
+        def non_dominated_sort(F):
+            """
+            Tri non-dominé rapide (Deb et al. 2002).
+            F : array (N, M) des valeurs d'objectifs.
+            Retourne liste de fronts (indices).
+            """
+            N = len(F)
+            n_dom  = np.zeros(N, dtype=int)   # nb solutions dominant p
+            S      = [[] for _ in range(N)]    # solutions dominées par p
+            rank   = np.zeros(N, dtype=int)
+            fronts = [[]]
+            for p in range(N):
+                for q in range(N):
+                    if p == q: continue
+                    if all(F[p] <= F[q]) and any(F[p] < F[q]):
+                        S[p].append(q)         # p domine q
+                    elif all(F[q] <= F[p]) and any(F[q] < F[p]):
+                        n_dom[p] += 1          # q domine p
+                if n_dom[p] == 0:
+                    rank[p] = 0
+                    fronts[0].append(p)
+            i = 0
+            while fronts[i]:
+                nxt = []
+                for p in fronts[i]:
+                    for q in S[p]:
+                        n_dom[q] -= 1
+                        if n_dom[q] == 0:
+                            rank[q] = i + 1
+                            nxt.append(q)
+                fronts.append(nxt)
+                i += 1
+            return fronts[:-1], rank
+
+        def crowding_distance(F, front):
+            """Distance de crowding pour un front."""
+            n  = len(front)
+            cd = np.zeros(n)
+            if n <= 2: return np.full(n, np.inf)
+            for m in range(F.shape[1]):
+                idx_sorted = np.argsort(F[front, m])
+                cd[idx_sorted[0]]  = np.inf
+                cd[idx_sorted[-1]] = np.inf
+                rng = F[front[idx_sorted[-1]], m] - F[front[idx_sorted[0]], m]
+                if rng < 1e-14: continue
+                for k in range(1, n-1):
+                    cd[idx_sorted[k]] += (F[front[idx_sorted[k+1]], m] -
+                                          F[front[idx_sorted[k-1]], m]) / rng
+            return cd
+
+        def tournament(pop, rank, cd, k=2):
+            """Sélection par tournoi binaire (rang + crowding)."""
+            candidates = random.sample(range(len(pop)), k)
+            best = candidates[0]
+            for c in candidates[1:]:
+                if (rank[c] < rank[best] or
+                   (rank[c] == rank[best] and cd[c] > cd[best])):
+                    best = c
+            return pop[best].copy()
+
+        def random_individual():
+            x = np.zeros(n_var)
+            for i, (lo, hi) in enumerate(bounds):
+                x[i] = random.uniform(lo, hi)
+            return x
+
+        # ── Boucle principale NSGA-II ────────────────────────────────
+        pop  = np.array([random_individual() for _ in range(pop_size)])
+        Fval = np.array([evaluate(x) for x in pop])
+
+        log_pareto = []  # évolution du front de Pareto
+
+        for gen in range(n_gen):
+            if progress_cb: progress_cb(gen, n_gen)
+
+            # Tri + crowding sur population courante
+            fronts, rank = non_dominated_sort(Fval)
+            cd = np.zeros(len(pop))
+            for front in fronts:
+                if not front: continue
+                cdf = crowding_distance(Fval, front)
+                for k2, idx in enumerate(front):
+                    cd[idx] = cdf[k2]
+
+            # Génération des enfants (taille pop_size)
+            offspring   = []
+            offspring_F = []
+            while len(offspring) < pop_size:
+                p1 = tournament(pop, rank, cd)
+                p2 = tournament(pop, rank, cd)
+                c1, c2 = sbx_crossover(p1, p2)
+                c1 = poly_mutation(c1)
+                c2 = poly_mutation(c2)
+                for c in [c1, c2]:
+                    if len(offspring) < pop_size:
+                        offspring.append(c)
+                        offspring_F.append(evaluate(c))
+
+            # R = P ∪ Q
+            R  = np.vstack([pop, offspring])
+            RF = np.vstack([Fval, np.array(offspring_F)])
+
+            # Tri non-dominé sur R, sélectionner les meilleurs pop_size
+            fronts_r, rank_r = non_dominated_sort(RF)
+            cd_r = np.zeros(len(R))
+            for front in fronts_r:
+                if not front: continue
+                cdf = crowding_distance(RF, front)
+                for k2, idx in enumerate(front):
+                    cd_r[idx] = cdf[k2]
+
+            next_indices = []
+            for front in fronts_r:
+                if len(next_indices) + len(front) <= pop_size:
+                    next_indices.extend(front)
+                else:
+                    remaining = pop_size - len(next_indices)
+                    sorted_f  = sorted(front, key=lambda i: -cd_r[i])
+                    next_indices.extend(sorted_f[:remaining])
+                    break
+
+            pop  = R[next_indices]
+            Fval = RF[next_indices]
+
+            # Log front de Pareto (rang 0)
+            fronts_new, _ = non_dominated_sort(Fval)
+            if fronts_new:
+                pf = fronts_new[0]
+                log_pareto.append({
+                    "gen": gen+1,
+                    "n_pareto": len(pf),
+                    "tau_min":  float(Fval[pf, 0].min()),
+                    "var_min":  float(Fval[pf, 1].min()),
+                    "prot_max": float(-Fval[pf, 2].max()),
+                })
+
+        if progress_cb: progress_cb(n_gen, n_gen)
+
+        # ── Extraction du front de Pareto final ──────────────────────
+        fronts_fin, rank_fin = non_dominated_sort(Fval)
+        pareto_idx = fronts_fin[0] if fronts_fin else []
+        pareto = []
+        for idx in pareto_idx:
+            x    = pop[idx]
+            objs = Fval[idx]
+            sol  = {"O1_tau": float(objs[0]),
+                    "O2_var": float(objs[1]),
+                    "O3_prot":float(-objs[2])}
+            for ti, t in enumerate(tranches):
+                cond = decode(x, ti)
+                sol[f"T{ti+1}_nom"]   = t["nom"]
+                sol[f"T{ti+1}_D"]     = round(cond["priorite"])
+                sol[f"T{ti+1}_C"]     = round(cond["portee"])
+                sol[f"T{ti+1}_aad"]   = round(cond["AAD"]) if cond["AAD"] else 0
+                sol[f"T{ti+1}_rec"]   = cond["nb_reconstitutions"]
+                sol[f"T{ti+1}_tr1"]   = round(cond["taux_recon_1"])
+                sol[f"T{ti+1}_k"]     = round(cond["k_securite"], 2)
+                sol[f"T{ti+1}_stab"]  = round(cond["seuil_stab"], 2)
+                sol[f"T{ti+1}_marge"] = round(cond["marge"], 3)
+            pareto.append(sol)
+
+        return {
+            "pareto":    pareto,
+            "log":       log_pareto,
+            "n_gen":     n_gen,
+            "pop_size":  pop_size,
+            "n_tranches":n_t,
+        }
 
 
 # ════════════════════════════════════════════
