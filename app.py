@@ -1749,14 +1749,23 @@ def _labo_display_section():
         return labo
 
     def _labo_model_ready(labo):
-        """Vérifie réellement qu'un modèle ML utilisable est chargé."""
+        """Vérifie réellement qu'un modèle ML utilisable est chargé.
+
+        Sécurité méthodologique : aucun taux calculé ne doit être utilisé
+        comme variable explicative. Les taux sont uniquement des variables cibles.
+        Si un ancien modèle en session a été entraîné avec des features de taux,
+        on force son réentraînement propre.
+        """
         best = getattr(labo, "_best_model_name", None)
+        features = list(getattr(labo, "_features_used", []) or [])
+        has_taux_feature = any("taux" in str(f).lower() for f in features)
         return bool(
             getattr(labo, "modeles_entraines", None)
             and best
             and labo.modeles_entraines.get(best) is not None
             and getattr(labo, "df_ml", None) is not None
             and not labo.df_ml.empty
+            and not has_taux_feature
         )
 
     def _persist_labo_ml(labo):
@@ -1962,8 +1971,8 @@ def _labo_display_section():
             n_feat = len(AgentLaboTarification.FEATURES)
             st.caption(
                 f"Dataset : {len(df_ml)} lignes · {n_feat} features "
-                f"(conditions + taux_recon + seuil_stab + α/λ) · "
-                f"Target : τ technique"
+                f"(conditions contractuelles + seuil_stab + α/λ). "
+                f"Les taux calculés sont exclus des variables explicatives et restent uniquement des cibles."
             )
             c1, c2 = st.columns([2,1])
             with c1:
@@ -4027,7 +4036,11 @@ class AgentML:
             return {"disponible":False,"message":"Target indisponible.","modeles":[],"meilleur_modele":None,"importance":[]}
 
         data=df.copy().replace([np.inf,-np.inf],np.nan)
-        y=pd.to_numeric(data[target],errors="coerce"); X=data.drop(columns=[target],errors="ignore")
+        y=pd.to_numeric(data[target],errors="coerce")
+        # Sécurité : les colonnes de taux ne sont jamais explicatives.
+        # Elles peuvent seulement servir de target lorsqu'elles sont explicitement choisies.
+        taux_cols = [c for c in data.columns if "taux" in str(c).lower() and c != target]
+        X=data.drop(columns=[target] + taux_cols,errors="ignore")
         keep=[c for c in X.columns if X[c].notna().mean()>=0.60]; X=X[keep]
         for c in X.columns:
             if X[c].dtype=="object": X[c]=X[c].astype(str).fillna("NA")
@@ -4610,11 +4623,19 @@ class AgentLaboTarification:
         except Exception as e:
             return {"erreur":f"scikit-learn manquant : {e}"}
 
-        feats = [f for f in self.FEATURES if f in self.df_ml.columns]
-        extra = [c for c in ["taux_pur_bc","taux_technique_bc","taux_pur_sim",
-                              "taux_technique_sim","taux_technique_mkt"]
-                 if c in self.df_ml.columns and c != target]
-        feats += extra
+        # Les taux calculés ne doivent jamais être utilisés comme variables explicatives.
+        # Ils sont réservés aux variables cibles : taux_retenu, taux_technique_bc,
+        # taux_technique_sim, taux_technique_mkt, etc.
+        taux_cols = {c for c in self.df_ml.columns if "taux" in str(c).lower()}
+        feats = [
+            f for f in self.FEATURES
+            if f in self.df_ml.columns
+            and f != target
+            and f not in taux_cols
+            and "taux" not in str(f).lower()
+        ]
+        if not feats:
+            return {"erreur":"Aucune variable explicative disponible après exclusion des taux."}
         X = self.df_ml[feats].fillna(0); y = self.df_ml[target]
         mask = (y > 0) & np.isfinite(y); X = X[mask]; y = y[mask]
         if len(X) < 10: return {"erreur":"Trop peu de scenarios valides"}
@@ -5211,7 +5232,7 @@ class AgentLaboTarification:
 
 
 # ════════════════════════════════════════════
-# AGENT PYTHON PUR — LOGIQUE ACTUARIELLE
+# AGENT PYTHON PUR — LOGIQUE ACTUARIELLE CODÉE
 # ════════════════════════════════════════════
 
 class AgentActuarielPython:
@@ -5893,7 +5914,7 @@ def _executer_market_curve(rol_min, rol_max, r2_min, tolerance):
     if not resultats_mkt: return {"erreur": "Aucun ajustement valide"}
     best = max(resultats_mkt, key=lambda x: x["score"])
     st.session_state["resultats_mkt"]  = resultats_mkt
-    st.session_state["taux_mkt_final"] = best["taux_tranches"] 
+    st.session_state["taux_mkt_final"] = best["taux_tranches"]
     return _json_safe({"status": "ok",
         "meilleur_ajustement": {k:v for k,v in best.items() if k!="taux_tranches"},
         "taux_par_tranche": best["taux_tranches"]})
@@ -6014,7 +6035,11 @@ class AgentML:
             return {"disponible":False,"message":"Target indisponible.","modeles":[],"meilleur_modele":None,"importance":[]}
 
         data=df.copy().replace([np.inf,-np.inf],np.nan)
-        y=pd.to_numeric(data[target],errors="coerce"); X=data.drop(columns=[target],errors="ignore")
+        y=pd.to_numeric(data[target],errors="coerce")
+        # Sécurité : les colonnes de taux ne sont jamais explicatives.
+        # Elles peuvent seulement servir de target lorsqu'elles sont explicitement choisies.
+        taux_cols = [c for c in data.columns if "taux" in str(c).lower() and c != target]
+        X=data.drop(columns=[target] + taux_cols,errors="ignore")
         keep=[c for c in X.columns if X[c].notna().mean()>=0.60]; X=X[keep]
         for c in X.columns:
             if X[c].dtype=="object": X[c]=X[c].astype(str).fillna("NA")
