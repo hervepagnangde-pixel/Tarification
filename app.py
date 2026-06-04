@@ -1655,6 +1655,242 @@ def section_analyse_distributions():
 # ════════════════════════════════════════════
 
 
+def _labo_display_section():
+    """Laboratoire de tarification ML — affiché dans tab_agent."""
+    import matplotlib.pyplot as plt
+
+    st.markdown("---")
+    st.markdown("#### Laboratoire de tarification ML")
+    st.caption(
+        "Génère automatiquement une grille de conditions, tarifie chaque scénario "
+        "(BC + Simulation), entraîne RF / DT / XGB et propose des programmes optimisés — "
+        "y compris des conditions non encore testées."
+    )
+
+    if "df_proj" not in st.session_state or "alpha_est" not in st.session_state:
+        st.info("Transformez d'abord le triangle.")
+        return
+
+    def _make_labo():
+        return AgentLaboTarification(
+            tranches_base      = tranches_input,
+            gnpi               = gnpi,
+            df_proj            = st.session_state["df_proj"],
+            coeffs             = st.session_state.get("coeffs", np.array([1.0])),
+            alpha              = st.session_state.get("alpha_est", 1.5),
+            lambda_            = st.session_state.get("lambda_est", 5.0),
+            seuil              = st.session_state.get("seuil_est", 1_600_000),
+            chargement_majeurs = st.session_state.get("chargement_majeurs", 0.0),
+            df_mkt             = st.session_state.get("df_mkt_clean"),
+        )
+
+    # ═ ÉTAPE 1 — GRILLE ═
+    with st.expander("Étape 1 — Grille de conditions (modifiable)", expanded=True):
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            n_max = st.slider("Scénarios max par tranche", 10, 60, 25, 5, key="labo_n_max")
+        with c2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            if st.button("Générer la grille", key="btn_labo_gen", use_container_width=True):
+                labo = _make_labo()
+                st.session_state["labo_grille"] = labo.generer_grille_auto(n_max_par_tranche=n_max)
+                st.rerun()
+
+        if "labo_grille" in st.session_state:
+            grille = st.session_state["labo_grille"]
+            st.caption(f"{len(grille)} scénarios — modifiez directement dans le tableau")
+            df_g = pd.DataFrame([{
+                "Tranche":    s["tranche_base"],
+                "Type":       s["type"],
+                "Priorite":   s["priorite"],
+                "Portee":     s["portee"],
+                "AAD":        s.get("AAD") or 0.0,
+                "AAL":        s.get("AAL") or 0.0,
+                "Reconst.":   s["nb_reconstitutions"],
+                "Marge":      s["marge"],
+                "Frais":      s["frais"],
+                "Brokage":    s["brokage"],
+                "Retro.":     s["retrocession"],
+                "k_securite": s["k_securite"],
+                "Alpha":      s["alpha"],
+                "Lambda":     s["lambda_"],
+            } for s in grille])
+
+            df_edited = st.data_editor(
+                df_g, use_container_width=True, height=280, key="labo_editor",
+                column_config={
+                    "Priorite":   st.column_config.NumberColumn(format="%,.0f"),
+                    "Portee":     st.column_config.NumberColumn(format="%,.0f"),
+                    "AAD":        st.column_config.NumberColumn(format="%,.0f"),
+                    "AAL":        st.column_config.NumberColumn(format="%,.0f"),
+                    "Marge":      st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.30, step=0.01),
+                    "k_securite": st.column_config.NumberColumn(format="%.2f", min_value=0.05, max_value=0.50, step=0.05),
+                    "Type":       st.column_config.SelectboxColumn(options=["travaillante","cat","non_travaillante"]),
+                }
+            )
+            # Merge edits
+            grille_modif = []
+            for i, row in df_edited.iterrows():
+                s = dict(grille[i]) if i < len(grille) else dict(grille[-1])
+                s.update({
+                    "tranche_base":       row["Tranche"],
+                    "type":               row["Type"],
+                    "priorite":           float(row["Priorite"]),
+                    "portee":             float(row["Portee"]),
+                    "AAD":                float(row["AAD"]) if row["AAD"] else None,
+                    "AAL":                float(row["AAL"]) if row["AAL"] else None,
+                    "nb_reconstitutions": int(row["Reconst."]),
+                    "marge":              float(row["Marge"]),
+                    "frais":              float(row["Frais"]),
+                    "brokage":            float(row["Brokage"]),
+                    "retrocession":       float(row["Retro."]),
+                    "k_securite":         float(row["k_securite"]),
+                    "alpha":              float(row["Alpha"]),
+                    "lambda_":            float(row["Lambda"]),
+                })
+                grille_modif.append(s)
+            st.session_state["labo_grille"] = grille_modif
+
+    # ═ ÉTAPE 2 — BATCH ═
+    if "labo_grille" in st.session_state:
+        with st.expander("Étape 2 — Tarification batch (BC + Simulation)", expanded=True):
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                n_sim_labo = st.number_input("Simulations par scénario", value=5000,
+                    step=1000, min_value=1000, key="labo_nsim")
+            with c2:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("Lancer le batch", type="primary",
+                             key="btn_labo_batch", use_container_width=True):
+                    labo = _make_labo()
+                    labo.grille = st.session_state["labo_grille"]
+                    bar = st.progress(0, "Démarrage...")
+                    def _cb(i, n): bar.progress(int(i/n*100), f"Scénario {i+1}/{n}...")
+                    res    = labo.executer_batch(n_sim=int(n_sim_labo), progress_cb=_cb)
+                    df_ml  = labo.construire_dataset()
+                    bar.progress(100, "Terminé.")
+                    st.session_state["labo_resultats"] = res
+                    st.session_state["labo_df_ml"]     = df_ml
+                    st.rerun()
+
+            if "labo_resultats" in st.session_state:
+                res = st.session_state["labo_resultats"]
+                st.success(f"{len(res)} scénarios tarifés")
+                df_show = pd.DataFrame([{
+                    "Tranche":   r["tranche_base"],
+                    "Type":      r["type"],
+                    "D":         f"{r['priorite']:,.0f}",
+                    "C":         f"{r['portee']:,.0f}",
+                    "AAD":       f"{(r.get('AAD') or 0):,.0f}",
+                    "Rec.":      r["nb_reconstitutions"],
+                    "k sec.":    f"{r.get('k_securite',0.20):.2f}",
+                    "tau BC":    f"{r.get('taux_technique_bc',0):.4%}",
+                    "tau Sim":   f"{r.get('taux_technique_sim',0):.4%}",
+                    "tau Retenu":f"{r.get('taux_retenu',0):.4%}",
+                    "Prime":     f"{r.get('prime_MAD',0):,.0f}",
+                    "Methode":   r.get("methode_retenue",""),
+                } for r in res])
+                st.dataframe(df_show, use_container_width=True, height=260)
+                try:
+                    import io as _io_labo
+                    buf = _io_labo.BytesIO()
+                    st.session_state["labo_df_ml"].to_excel(buf, index=False, engine="openpyxl")
+                    st.download_button("Telecharger le dataset ML (Excel)", data=buf.getvalue(),
+                        file_name="labo_dataset_ml.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="btn_dl_labo")
+                except: pass
+
+    # ═ ÉTAPE 3 — ML ═
+    if "labo_df_ml" in st.session_state:
+        with st.expander("Étape 3 — Entraînement ML (RF / DT / XGB)", expanded=True):
+            df_ml = st.session_state["labo_df_ml"]
+            st.caption(f"Dataset : {len(df_ml)} lignes | Features : conditions + params simulation | Target : taux")
+            target_choice = st.radio(
+                "Variable cible",
+                ["taux_retenu", "taux_technique_bc", "taux_technique_sim"],
+                horizontal=True, key="labo_target")
+
+            if st.button("Entrainer les modeles ML", type="primary", key="btn_labo_train"):
+                labo = _make_labo(); labo.df_ml = df_ml
+                with st.spinner("Entraînement RF / DT / XGB..."):
+                    metriques = labo.entrainer_modeles(target=target_choice)
+                st.session_state["labo_modeles"]    = labo.modeles_entraines
+                st.session_state["labo_metriques"]  = labo.metriques_ml
+                st.session_state["labo_importance"] = labo.importance_vars
+                st.session_state["labo_features"]   = labo._features_used
+                st.session_state["labo_best"]       = labo._best_model_name
+                st.rerun()
+
+            if "labo_metriques" in st.session_state:
+                best = st.session_state.get("labo_best","")
+                tableau_resultats([{
+                    "Modele":     nom,
+                    "MAE (pts)":  f"{v.get('MAE',0)*100:.4f}" if "MAE" in v else "—",
+                    "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if "RMSE" in v else "—",
+                    "R2":         f"{v.get('R2',0):.4f}" if "R2" in v else "—",
+                    "N train":    v.get("n_train","—"),
+                    "Meilleur":   "OK" if nom == best else "",
+                } for nom, v in st.session_state["labo_metriques"].items()])
+
+                imp_dict = st.session_state.get("labo_importance", {})
+                if imp_dict:
+                    best_nom, imp = list(imp_dict.items())[0]
+                    fig_imp, ax_imp = plt.subplots(figsize=(8, 4))
+                    imp.head(12).plot.barh(ax=ax_imp, color="#2d8a4e", edgecolor="white")
+                    ax_imp.set_xlabel("Importance"); ax_imp.set_title("Variables importantes — " + best_nom)
+                    ax_imp.invert_yaxis(); ax_imp.grid(alpha=0.2)
+                    ax_imp.spines[["top","right"]].set_visible(False)
+                    st.pyplot(fig_imp); plt.close()
+                    st.caption(
+                        "priorite/portee dominant = geometrie de la tranche determinante. "
+                        "k_securite/sigma_bc dominant = volatilite historique preponderante."
+                    )
+
+    # ═ ÉTAPE 4 — OPTIMISATION ML ═
+    if "labo_modeles" in st.session_state:
+        with st.expander("Étape 4 — Optimisation par ML (explorer au-dela de la grille)", expanded=True):
+            st.caption(
+                "Le modele predit le taux pour n'importe quelle combinaison, y compris "
+                "des conditions non testees lors du batch. Definissez une plage de taux cible."
+            )
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                type_opt = st.selectbox("Type de tranche",
+                    ["travaillante","cat","non_travaillante"], key="labo_opt_type")
+            with c2:
+                taux_min_opt = st.number_input("Taux cible min (%)", value=2.0,
+                    step=0.1, min_value=0.1, key="labo_opt_tmin") / 100
+            with c3:
+                taux_max_opt = st.number_input("Taux cible max (%)", value=4.0,
+                    step=0.1, min_value=0.1, key="labo_opt_tmax") / 100
+
+            if st.button("Trouver les programmes optimaux",
+                         type="primary", key="btn_labo_optim"):
+                labo = _make_labo()
+                labo.modeles_entraines = st.session_state["labo_modeles"]
+                labo._features_used   = st.session_state["labo_features"]
+                labo._best_model_name = st.session_state["labo_best"]
+                labo.df_ml            = st.session_state["labo_df_ml"]
+                with st.spinner("Exploration de 1 000 combinaisons..."):
+                    props = labo.optimiser_via_ml(type_opt, taux_min_opt, taux_max_opt)
+                st.session_state["labo_props"] = props
+
+            if st.session_state.get("labo_props") is not None:
+                props = st.session_state["labo_props"]
+                if props:
+                    st.success(f"{len(props)} programme(s) dans [{taux_min_opt:.2%} — {taux_max_opt:.2%}]")
+                    tableau_resultats(props)
+                    st.caption(
+                        "Propositions du modele ML — a valider par un calcul BC/Simulation complet."
+                    )
+                else:
+                    st.warning(
+                        "Aucun programme trouve dans cette plage. "
+                        "Elargissez les bornes ou relancez le batch avec plus de scenarios."
+                    )
+
+
 # TABS
 # ════════════════════════════════════════════
 
@@ -5864,241 +6100,6 @@ with tab_agent:
     # ── Laboratoire ML (toujours accessible si df_proj disponible) ──
     _labo_display_section()
 
-
-def _labo_display_section():
-    """Laboratoire de tarification ML — affiché dans tab_agent."""
-    import matplotlib.pyplot as plt
-
-    st.markdown("---")
-    st.markdown("#### Laboratoire de tarification ML")
-    st.caption(
-        "Génère automatiquement une grille de conditions, tarifie chaque scénario "
-        "(BC + Simulation), entraîne RF / DT / XGB et propose des programmes optimisés — "
-        "y compris des conditions non encore testées."
-    )
-
-    if "df_proj" not in st.session_state or "alpha_est" not in st.session_state:
-        st.info("Transformez d'abord le triangle.")
-        return
-
-    def _make_labo():
-        return AgentLaboTarification(
-            tranches_base      = tranches_input,
-            gnpi               = gnpi,
-            df_proj            = st.session_state["df_proj"],
-            coeffs             = st.session_state.get("coeffs", np.array([1.0])),
-            alpha              = st.session_state.get("alpha_est", 1.5),
-            lambda_            = st.session_state.get("lambda_est", 5.0),
-            seuil              = st.session_state.get("seuil_est", 1_600_000),
-            chargement_majeurs = st.session_state.get("chargement_majeurs", 0.0),
-            df_mkt             = st.session_state.get("df_mkt_clean"),
-        )
-
-    # ═ ÉTAPE 1 — GRILLE ═
-    with st.expander("Étape 1 — Grille de conditions (modifiable)", expanded=True):
-        c1, c2 = st.columns([3, 1])
-        with c1:
-            n_max = st.slider("Scénarios max par tranche", 10, 60, 25, 5, key="labo_n_max")
-        with c2:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            if st.button("Générer la grille", key="btn_labo_gen", use_container_width=True):
-                labo = _make_labo()
-                st.session_state["labo_grille"] = labo.generer_grille_auto(n_max_par_tranche=n_max)
-                st.rerun()
-
-        if "labo_grille" in st.session_state:
-            grille = st.session_state["labo_grille"]
-            st.caption(f"{len(grille)} scénarios — modifiez directement dans le tableau")
-            df_g = pd.DataFrame([{
-                "Tranche":    s["tranche_base"],
-                "Type":       s["type"],
-                "Priorite":   s["priorite"],
-                "Portee":     s["portee"],
-                "AAD":        s.get("AAD") or 0.0,
-                "AAL":        s.get("AAL") or 0.0,
-                "Reconst.":   s["nb_reconstitutions"],
-                "Marge":      s["marge"],
-                "Frais":      s["frais"],
-                "Brokage":    s["brokage"],
-                "Retro.":     s["retrocession"],
-                "k_securite": s["k_securite"],
-                "Alpha":      s["alpha"],
-                "Lambda":     s["lambda_"],
-            } for s in grille])
-
-            df_edited = st.data_editor(
-                df_g, use_container_width=True, height=280, key="labo_editor",
-                column_config={
-                    "Priorite":   st.column_config.NumberColumn(format="%,.0f"),
-                    "Portee":     st.column_config.NumberColumn(format="%,.0f"),
-                    "AAD":        st.column_config.NumberColumn(format="%,.0f"),
-                    "AAL":        st.column_config.NumberColumn(format="%,.0f"),
-                    "Marge":      st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.30, step=0.01),
-                    "k_securite": st.column_config.NumberColumn(format="%.2f", min_value=0.05, max_value=0.50, step=0.05),
-                    "Type":       st.column_config.SelectboxColumn(options=["travaillante","cat","non_travaillante"]),
-                }
-            )
-            # Merge edits
-            grille_modif = []
-            for i, row in df_edited.iterrows():
-                s = dict(grille[i]) if i < len(grille) else dict(grille[-1])
-                s.update({
-                    "tranche_base":       row["Tranche"],
-                    "type":               row["Type"],
-                    "priorite":           float(row["Priorite"]),
-                    "portee":             float(row["Portee"]),
-                    "AAD":                float(row["AAD"]) if row["AAD"] else None,
-                    "AAL":                float(row["AAL"]) if row["AAL"] else None,
-                    "nb_reconstitutions": int(row["Reconst."]),
-                    "marge":              float(row["Marge"]),
-                    "frais":              float(row["Frais"]),
-                    "brokage":            float(row["Brokage"]),
-                    "retrocession":       float(row["Retro."]),
-                    "k_securite":         float(row["k_securite"]),
-                    "alpha":              float(row["Alpha"]),
-                    "lambda_":            float(row["Lambda"]),
-                })
-                grille_modif.append(s)
-            st.session_state["labo_grille"] = grille_modif
-
-    # ═ ÉTAPE 2 — BATCH ═
-    if "labo_grille" in st.session_state:
-        with st.expander("Étape 2 — Tarification batch (BC + Simulation)", expanded=True):
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                n_sim_labo = st.number_input("Simulations par scénario", value=5000,
-                    step=1000, min_value=1000, key="labo_nsim")
-            with c2:
-                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-                if st.button("Lancer le batch", type="primary",
-                             key="btn_labo_batch", use_container_width=True):
-                    labo = _make_labo()
-                    labo.grille = st.session_state["labo_grille"]
-                    bar = st.progress(0, "Démarrage...")
-                    def _cb(i, n): bar.progress(int(i/n*100), f"Scénario {i+1}/{n}...")
-                    res    = labo.executer_batch(n_sim=int(n_sim_labo), progress_cb=_cb)
-                    df_ml  = labo.construire_dataset()
-                    bar.progress(100, "Terminé.")
-                    st.session_state["labo_resultats"] = res
-                    st.session_state["labo_df_ml"]     = df_ml
-                    st.rerun()
-
-            if "labo_resultats" in st.session_state:
-                res = st.session_state["labo_resultats"]
-                st.success(f"{len(res)} scénarios tarifés")
-                df_show = pd.DataFrame([{
-                    "Tranche":   r["tranche_base"],
-                    "Type":      r["type"],
-                    "D":         f"{r['priorite']:,.0f}",
-                    "C":         f"{r['portee']:,.0f}",
-                    "AAD":       f"{(r.get('AAD') or 0):,.0f}",
-                    "Rec.":      r["nb_reconstitutions"],
-                    "k sec.":    f"{r.get('k_securite',0.20):.2f}",
-                    "tau BC":    f"{r.get('taux_technique_bc',0):.4%}",
-                    "tau Sim":   f"{r.get('taux_technique_sim',0):.4%}",
-                    "tau Retenu":f"{r.get('taux_retenu',0):.4%}",
-                    "Prime":     f"{r.get('prime_MAD',0):,.0f}",
-                    "Methode":   r.get("methode_retenue",""),
-                } for r in res])
-                st.dataframe(df_show, use_container_width=True, height=260)
-                try:
-                    import io as _io_labo
-                    buf = _io_labo.BytesIO()
-                    st.session_state["labo_df_ml"].to_excel(buf, index=False, engine="openpyxl")
-                    st.download_button("Telecharger le dataset ML (Excel)", data=buf.getvalue(),
-                        file_name="labo_dataset_ml.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="btn_dl_labo")
-                except: pass
-
-    # ═ ÉTAPE 3 — ML ═
-    if "labo_df_ml" in st.session_state:
-        with st.expander("Étape 3 — Entraînement ML (RF / DT / XGB)", expanded=True):
-            df_ml = st.session_state["labo_df_ml"]
-            st.caption(f"Dataset : {len(df_ml)} lignes | Features : conditions + params simulation | Target : taux")
-            target_choice = st.radio(
-                "Variable cible",
-                ["taux_retenu", "taux_technique_bc", "taux_technique_sim"],
-                horizontal=True, key="labo_target")
-
-            if st.button("Entrainer les modeles ML", type="primary", key="btn_labo_train"):
-                labo = _make_labo(); labo.df_ml = df_ml
-                with st.spinner("Entraînement RF / DT / XGB..."):
-                    metriques = labo.entrainer_modeles(target=target_choice)
-                st.session_state["labo_modeles"]    = labo.modeles_entraines
-                st.session_state["labo_metriques"]  = labo.metriques_ml
-                st.session_state["labo_importance"] = labo.importance_vars
-                st.session_state["labo_features"]   = labo._features_used
-                st.session_state["labo_best"]       = labo._best_model_name
-                st.rerun()
-
-            if "labo_metriques" in st.session_state:
-                best = st.session_state.get("labo_best","")
-                tableau_resultats([{
-                    "Modele":     nom,
-                    "MAE (pts)":  f"{v.get('MAE',0)*100:.4f}" if "MAE" in v else "—",
-                    "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if "RMSE" in v else "—",
-                    "R2":         f"{v.get('R2',0):.4f}" if "R2" in v else "—",
-                    "N train":    v.get("n_train","—"),
-                    "Meilleur":   "OK" if nom == best else "",
-                } for nom, v in st.session_state["labo_metriques"].items()])
-
-                imp_dict = st.session_state.get("labo_importance", {})
-                if imp_dict:
-                    best_nom, imp = list(imp_dict.items())[0]
-                    fig_imp, ax_imp = plt.subplots(figsize=(8, 4))
-                    imp.head(12).plot.barh(ax=ax_imp, color="#2d8a4e", edgecolor="white")
-                    ax_imp.set_xlabel("Importance"); ax_imp.set_title("Variables importantes — " + best_nom)
-                    ax_imp.invert_yaxis(); ax_imp.grid(alpha=0.2)
-                    ax_imp.spines[["top","right"]].set_visible(False)
-                    st.pyplot(fig_imp); plt.close()
-                    st.caption(
-                        "priorite/portee dominant = geometrie de la tranche determinante. "
-                        "k_securite/sigma_bc dominant = volatilite historique preponderante."
-                    )
-
-    # ═ ÉTAPE 4 — OPTIMISATION ML ═
-    if "labo_modeles" in st.session_state:
-        with st.expander("Étape 4 — Optimisation par ML (explorer au-dela de la grille)", expanded=True):
-            st.caption(
-                "Le modele predit le taux pour n'importe quelle combinaison, y compris "
-                "des conditions non testees lors du batch. Definissez une plage de taux cible."
-            )
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                type_opt = st.selectbox("Type de tranche",
-                    ["travaillante","cat","non_travaillante"], key="labo_opt_type")
-            with c2:
-                taux_min_opt = st.number_input("Taux cible min (%)", value=2.0,
-                    step=0.1, min_value=0.1, key="labo_opt_tmin") / 100
-            with c3:
-                taux_max_opt = st.number_input("Taux cible max (%)", value=4.0,
-                    step=0.1, min_value=0.1, key="labo_opt_tmax") / 100
-
-            if st.button("Trouver les programmes optimaux",
-                         type="primary", key="btn_labo_optim"):
-                labo = _make_labo()
-                labo.modeles_entraines = st.session_state["labo_modeles"]
-                labo._features_used   = st.session_state["labo_features"]
-                labo._best_model_name = st.session_state["labo_best"]
-                labo.df_ml            = st.session_state["labo_df_ml"]
-                with st.spinner("Exploration de 1 000 combinaisons..."):
-                    props = labo.optimiser_via_ml(type_opt, taux_min_opt, taux_max_opt)
-                st.session_state["labo_props"] = props
-
-            if st.session_state.get("labo_props") is not None:
-                props = st.session_state["labo_props"]
-                if props:
-                    st.success(f"{len(props)} programme(s) dans [{taux_min_opt:.2%} — {taux_max_opt:.2%}]")
-                    tableau_resultats(props)
-                    st.caption(
-                        "Propositions du modele ML — a valider par un calcul BC/Simulation complet."
-                    )
-                else:
-                    st.warning(
-                        "Aucun programme trouve dans cette plage. "
-                        "Elargissez les bornes ou relancez le batch avec plus de scenarios."
-                    )
 
 with tab_full:
     section_header("Agent Complet LLM", "Fichiers bruts → Rapport final — Raisonnement LLM Claude (API requise)", "🚀")
