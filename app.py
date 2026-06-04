@@ -1692,6 +1692,56 @@ def _labo_display_section():
         if "labo_df_ml"    in st.session_state: labo.df_ml             = st.session_state["labo_df_ml"]
         return labo
 
+    def _labo_model_ready(labo):
+        """Vérifie réellement qu'un modèle ML utilisable est chargé."""
+        best = getattr(labo, "_best_model_name", None)
+        return bool(
+            getattr(labo, "modeles_entraines", None)
+            and best
+            and labo.modeles_entraines.get(best) is not None
+            and getattr(labo, "df_ml", None) is not None
+            and not labo.df_ml.empty
+        )
+
+    def _persist_labo_ml(labo):
+        """Centralise la sauvegarde de l'état ML dans Streamlit."""
+        st.session_state["labo_modeles"]    = labo.modeles_entraines
+        st.session_state["labo_metriques"]  = labo.metriques_ml
+        st.session_state["labo_importance"] = labo.importance_vars
+        st.session_state["labo_features"]   = labo._features_used
+        st.session_state["labo_best"]       = labo._best_model_name
+        if getattr(labo, "df_ml", None) is not None:
+            st.session_state["labo_df_ml"] = labo.df_ml
+
+    def _ensure_labo_models(labo, target=None, silent=False):
+        """
+        Garantit qu'un modèle ML est disponible avant optimisation.
+        Corrige le cas où l'utilisateur a déjà généré le dataset mais où les modèles
+        ne sont plus restaurés après un rerun / hot-reload Streamlit.
+        """
+        labo = _restore_labo(labo)
+        if _labo_model_ready(labo):
+            return labo
+
+        if getattr(labo, "df_ml", None) is None and "labo_df_ml" in st.session_state:
+            labo.df_ml = st.session_state["labo_df_ml"]
+
+        if getattr(labo, "df_ml", None) is None or labo.df_ml.empty:
+            st.error("Dataset ML introuvable. Générez d'abord le dataset ML.")
+            return labo
+
+        with st.spinner("Modèle ML non restauré : réentraînement automatique..."):
+            res_train = labo.entrainer_modeles(target=target or st.session_state.get("labo_target", "taux_retenu"))
+
+        if isinstance(res_train, dict) and res_train.get("erreur"):
+            st.error(res_train["erreur"])
+            return labo
+
+        _persist_labo_ml(labo)
+        if not silent:
+            st.info("Modèles ML restaurés automatiquement pour lancer l'optimisation.")
+        return labo
+
     # ═══════════════════════════════════════════════════════════
     # ÉTAPE 1 — GRILLE
     # ═══════════════════════════════════════════════════════════
@@ -1870,13 +1920,12 @@ def _labo_display_section():
                 if st.button("Entraîner les modèles", type="primary", key="btn_labo_train"):
                     labo = _make_labo(); labo.df_ml = df_ml
                     with st.spinner("Entraînement RF / DT / XGB..."):
-                        labo.entrainer_modeles(target=target_choice)
-                    st.session_state["labo_modeles"]    = labo.modeles_entraines
-                    st.session_state["labo_metriques"]  = labo.metriques_ml
-                    st.session_state["labo_importance"] = labo.importance_vars
-                    st.session_state["labo_features"]   = labo._features_used
-                    st.session_state["labo_best"]       = labo._best_model_name
-                    st.rerun()
+                        res_train = labo.entrainer_modeles(target=target_choice)
+                    if isinstance(res_train, dict) and res_train.get("erreur"):
+                        st.error(res_train["erreur"])
+                    else:
+                        _persist_labo_ml(labo)
+                        st.rerun()
 
             if "labo_metriques" in st.session_state:
                 best = st.session_state.get("labo_best","")
@@ -1909,7 +1958,7 @@ def _labo_display_section():
     # ═══════════════════════════════════════════════════════════
     # ÉTAPE 4 — OPTIMISATION ACTUARIELLE
     # ═══════════════════════════════════════════════════════════
-    if "labo_modeles" in st.session_state:
+    if "labo_df_ml" in st.session_state:
         with st.expander(
             "Étape 4 — Optimisation actuarielle (Dichotomie + De Finetti/Borch)", expanded=True
         ):
@@ -1946,7 +1995,7 @@ def _labo_display_section():
                     key="labo_budget_pct") / 100
 
             if st.button("Lancer l'optimisation", type="primary", key="btn_labo_opt2"):
-                labo = _restore_labo(_make_labo())
+                labo = _ensure_labo_models(_make_labo(), target=st.session_state.get("labo_target", "taux_retenu"))
 
                 if methode_opt == "Dichotomie actuarielle":
                     if not tranches_input:
@@ -2116,7 +2165,7 @@ def _labo_display_section():
     # ═══════════════════════════════════════════════════════════
     # ÉTAPE 5 — NSGA-II  (Deb, Pratap, Agarwal & Meyarivan, 2002)
     # ═══════════════════════════════════════════════════════════
-    if "labo_modeles" in st.session_state:
+    if "labo_df_ml" in st.session_state:
         with st.expander(
             "Étape 5 — NSGA-II : Optimisation multi-objectif (Front de Pareto)",
             expanded=False
@@ -2150,7 +2199,7 @@ Algorithme évolutionnaire qui explore simultanément les **3 objectifs actuarie
                     help="Optimise toutes les tranches simultanément (chromosome global)")
 
             if st.button("Lancer NSGA-II", type="primary", key="btn_nsga2"):
-                labo = _restore_labo(_make_labo())
+                labo = _ensure_labo_models(_make_labo(), target=st.session_state.get("labo_target", "taux_retenu"))
                 bar_nsga = st.progress(0, "Initialisation population...")
                 def _nsga_cb(gen, n):
                     bar_nsga.progress(
