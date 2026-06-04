@@ -3,9 +3,11 @@ anthropic
 pandas
 numpy
 matplotlib
-pillow
-openpyxl
-psycopg2-binary
+Pillow
 reportlab
 scipy
 scikit-learn
+openpyxl
+xgboost
+catboost
+psycopg2-binary
