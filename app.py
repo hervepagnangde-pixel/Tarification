@@ -657,12 +657,71 @@ def get_admin_password():
     try: return st.secrets["admin_password"]
     except: return "Admin@AtlanticRe2026"
 
+def get_users_details():
+    """
+    Retourne les utilisateurs sous forme normalisée.
+
+    Formats acceptés dans st.secrets :
+
+    1) Format simple historique :
+       [users]
+       "demo@atlanticre.ia" = "DEMO2026"
+
+    2) Format enrichi recommandé :
+       [users."demo@atlanticre.ia"]
+       code = "DEMO2026"
+       poste = "Actuaire tarificateur"
+       nom = "Utilisateur Démo"
+       statut = "Actif"
+    """
+    fallback = {
+        "demo@atlanticre.ia": {
+            "code": "DEMO2026",
+            "poste": "Utilisateur démo",
+            "nom": "Compte Démo",
+            "statut": "Actif",
+        }
+    }
+    try:
+        raw_users = dict(st.secrets.get("users", {}))
+    except Exception:
+        raw_users = {}
+
+    if not raw_users:
+        return fallback
+
+    details = {}
+    for email, value in raw_users.items():
+        email_norm = str(email).lower().strip()
+        if isinstance(value, dict):
+            v = dict(value)
+            code_val = str(v.get("code", v.get("password", v.get("cle", v.get("code_acces", ""))))).strip()
+            details[email_norm] = {
+                "code": code_val,
+                "poste": str(v.get("poste", v.get("role", "Non renseigné"))),
+                "nom": str(v.get("nom", v.get("name", ""))),
+                "statut": str(v.get("statut", "Actif")),
+            }
+        else:
+            details[email_norm] = {
+                "code": str(value).strip(),
+                "poste": "Non renseigné",
+                "nom": "",
+                "statut": "Actif",
+            }
+    return details
+
 def get_users():
-    try: return dict(st.secrets["users"])
-    except: return {"demo@atlanticre.ia": "DEMO2026"}
+    """Compatibilité avec l'ancien système : retourne {email: code}."""
+    return {email: info.get("code", "") for email, info in get_users_details().items()}
 
 def check_access(email, code):
-    return get_users().get(email.lower().strip()) == code.strip()
+    email_norm = email.lower().strip()
+    details = get_users_details().get(email_norm, {})
+    statut = str(details.get("statut", "Actif")).lower()
+    if statut in ["suspendu", "bloqué", "bloque", "inactif"]:
+        return False
+    return details.get("code", "") == code.strip()
 
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -687,8 +746,12 @@ if not st.session_state["authenticated"]:
         code  = st.text_input("🔑 Code d'accès", type="password", placeholder="CODE123", key="login_code")
         if st.button("Se connecter", type="primary", use_container_width=True):
             if check_access(email, code):
+                email_norm = email.lower().strip()
+                user_info = get_users_details().get(email_norm, {})
                 st.session_state["authenticated"] = True
-                st.session_state["user_email"]    = email
+                st.session_state["user_email"]    = email_norm
+                st.session_state["user_poste"]    = user_info.get("poste", "")
+                st.session_state["user_nom"]      = user_info.get("nom", "")
                 st.rerun()
             else:
                 st.error("❌ Email ou code d'accès incorrect")
@@ -1298,29 +1361,47 @@ def claude_stream(api_key, prompt, max_tokens=2000, session_key="", use_opus=Fal
 # NOTIFICATION EMAIL — Alerte consultation agent
 # ════════════════════════════════════════════
 
-def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.com"):
+def _normaliser_destinataires_email(destinataire):
+    """Accepte une chaîne séparée par virgule/point-virgule ou une liste d'emails."""
+    if destinataire is None:
+        return []
+    if isinstance(destinataire, (list, tuple, set)):
+        items = list(destinataire)
+    else:
+        items = str(destinataire).replace(";", ",").split(",")
+    emails = []
+    for e in items:
+        e = str(e).strip()
+        if e and "@" in e and "." in e.split("@")[-1]:
+            emails.append(e)
+    return emails
+
+def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.com",
+                                pieces_jointes=None):
     """
     Envoie via Gmail SMTP.
-    IMPORTANT : Pour Gmail, il faut un App Password (16 caractères), PAS le mot de passe ordinaire.
-    → Google Account → Sécurité → Validation en 2 étapes → Mots de passe des applications
-    → Générer → Copier les 16 caractères → coller dans SMTP_PASS des Secrets
+
+    destinataire : email unique, liste d'emails, ou chaîne "a@x.com, b@y.com".
+    pieces_jointes : liste de dictionnaires :
+        {"filename": "rapport.pdf", "data": bytes, "mime_type": "application/pdf"}
     """
+    destinataires = _normaliser_destinataires_email(destinataire)
+    if not destinataires:
+        return False, "Aucun destinataire valide."
+
     # Lire les secrets avec différentes méthodes (robustesse)
     smtp_user = ""
     smtp_pass = ""
     try:
-        # Méthode 1 : accès direct par clé (niveau racine)
         smtp_user = st.secrets["SMTP_USER"]
         smtp_pass = st.secrets["SMTP_PASS"]
     except (KeyError, Exception):
         try:
-            # Méthode 2 : via .get() (niveau racine)
             smtp_user = st.secrets.get("SMTP_USER", "")
             smtp_pass = st.secrets.get("SMTP_PASS", "")
         except Exception:
             pass
-    # Méthode 3 : si les clés sont dans une section (ex: [roles] en TOML)
-    # En TOML, tout ce qui suit [roles] est dans st.secrets["roles"]
+
     if not smtp_user or not smtp_pass:
         for section in ["roles", "smtp", "email", "config"]:
             try:
@@ -1335,32 +1416,26 @@ def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.
 
     if not smtp_user or not smtp_pass:
         return False, (
-            "SMTP non configuré. "
-            "Vérifiez que SMTP_USER et SMTP_PASS sont bien dans les Secrets Streamlit "
-            "(sans section, au niveau racine du fichier secrets.toml)."
+            "SMTP non configuré. Ajoutez SMTP_USER et SMTP_PASS dans les Secrets Streamlit. "
+            "Pour Gmail, SMTP_PASS doit être un App Password de 16 caractères."
         )
-
-    # Vérification : le mot de passe Gmail ordinaire ne fonctionne pas — App Password requis
-    # Un App Password Google fait exactement 16 caractères sans espaces
-    pass_clean = smtp_pass.replace(" ", "")
-    is_app_password = len(pass_clean) == 16 and pass_clean.isalnum()
-    if not is_app_password and "@" in smtp_user and "gmail" in smtp_user.lower():
-        # Essayer quand même mais avertir si erreur
-        pass
 
     import smtplib
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
+    from email.mime.base import MIMEBase
+    from email import encoders
 
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = f"[Atlantic Re IA] {sujet}"
     msg["From"]    = smtp_user
-    msg["To"]      = destinataire
+    msg["To"]      = ", ".join(destinataires)
 
+    alt = MIMEMultipart("alternative")
     html_body = f"""
     <html><body style="font-family:Arial,sans-serif;color:#0d2b3e">
-    <div style="border-top:4px solid #00b5a5;padding:20px;max-width:600px">
-      <h2 style="color:#0d2b3e">&#x1F916; Atlantic Re IA &#x2014; Notification</h2>
+    <div style="border-top:4px solid #00b5a5;padding:20px;max-width:680px">
+      <h2 style="color:#0d2b3e">&#x1F916; Atlantic Re IA</h2>
       <div style="background:#f2f8f7;padding:16px;border-left:4px solid #00b5a5">
         {corps}
       </div>
@@ -1368,41 +1443,92 @@ def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.
         Atlantic Re IA &middot; Réassurance Non-Proportionnelle &middot; Maroc
       </p>
     </div></body></html>"""
-    msg.attach(MIMEText(html_body, "html"))
+    alt.attach(MIMEText(html_body, "html"))
+    msg.attach(alt)
+
+    for pj in (pieces_jointes or []):
+        try:
+            data = pj.get("data", b"")
+            filename = pj.get("filename", "piece_jointe")
+            mime_type = pj.get("mime_type", "application/octet-stream")
+            maintype, subtype = mime_type.split("/", 1) if "/" in mime_type else ("application", "octet-stream")
+            part = MIMEBase(maintype, subtype)
+            part.set_payload(data)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+            msg.attach(part)
+        except Exception:
+            continue
 
     # Essai 1 : SSL port 465
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
             server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, destinataire, msg.as_string())
-        return True, "Email envoyé (SSL 465)"
+            server.sendmail(smtp_user, destinataires, msg.as_string())
+        return True, f"Email envoyé à {len(destinataires)} destinataire(s) (SSL 465)"
     except smtplib.SMTPAuthenticationError:
-        hint = (
-            "Authentification Gmail échouée. "
-            "SOLUTION : créez un App Password Gmail (16 caractères) :\n"
-            "myaccount.google.com → Sécurité → Validation 2 étapes → "
-            "Mots de passe des applications → Créer → Copier les 16 caractères → "
-            "Coller dans SMTP_PASS des Secrets Streamlit (sans espaces)."
+        return False, (
+            "Authentification Gmail échouée. Créez un App Password Gmail : "
+            "myaccount.google.com → Sécurité → Validation 2 étapes → Mots de passe des applications."
         )
-        return False, hint
     except Exception as e1:
         # Essai 2 : STARTTLS port 587
         try:
-            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
                 server.ehlo(); server.starttls(); server.ehlo()
                 server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, destinataire, msg.as_string())
-            return True, "Email envoyé (STARTTLS 587)"
+                server.sendmail(smtp_user, destinataires, msg.as_string())
+            return True, f"Email envoyé à {len(destinataires)} destinataire(s) (STARTTLS 587)"
         except smtplib.SMTPAuthenticationError:
-            hint = (
-                "Authentification Gmail échouée (port 587). "
-                "SOLUTION : App Password Gmail requis. "
-                "Allez sur : myaccount.google.com → Sécurité → "
-                "Validation 2 étapes → Mots de passe des applications"
-            )
-            return False, hint
+            return False, "Authentification Gmail échouée (port 587). App Password Gmail requis."
         except Exception as e2:
             return False, f"Erreur SMTP (SSL: {e1} | TLS: {e2})"
+
+
+def generer_pdf_rapport_courant(gnpi_val, tranches, prime_totale_val, annee=2026):
+    """Génère le PDF du rapport courant depuis session_state."""
+    return generer_pdf_rapport(
+        user_email=st.session_state.get("user_email",""),
+        gnpi_val=gnpi_val,
+        tranches=tranches,
+        resultats_bc=st.session_state.get("resultats_bc",[]),
+        resultats_sim=st.session_state.get("resultats_sim",[]),
+        taux_mkt_final=st.session_state.get("taux_mkt_final",[]),
+        df_rapport=st.session_state.get("df_rapport"),
+        prime_totale=prime_totale_val,
+        analyse_claude=st.session_state.get("reco_finale",""),
+        annee=annee
+    )
+
+def envoyer_rapport_pdf_email(destinataires, gnpi_val, tranches, prime_totale_val,
+                              message_html="", annee=2026):
+    """Génère et envoie le rapport PDF courant à n'importe quel destinataire valide."""
+    pdf_bytes = generer_pdf_rapport_courant(gnpi_val, tranches, prime_totale_val, annee=annee)
+    nom_fichier = f"atlantic_re_rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    taux_global = prime_totale_val / gnpi_val if gnpi_val else 0
+    corps = f"""
+    <p>Bonjour,</p>
+    <p>Veuillez trouver ci-joint le rapport de tarification généré par <b>Atlantic Re IA</b>.</p>
+    <ul>
+      <li><b>Utilisateur :</b> {st.session_state.get("user_email","")}</li>
+      <li><b>GNPI :</b> {gnpi_val:,.0f} MAD</li>
+      <li><b>Prime totale :</b> {prime_totale_val:,.0f} MAD</li>
+      <li><b>Taux global :</b> {taux_global:.4%}</li>
+      <li><b>Date :</b> {datetime.now().strftime('%d/%m/%Y à %H:%M')}</li>
+    </ul>
+    {message_html if message_html else ""}
+    <p>Cordialement,<br>Atlantic Re IA</p>
+    """
+    return envoyer_notification_email(
+        "Rapport de tarification XL",
+        corps,
+        destinataire=destinataires,
+        pieces_jointes=[{
+            "filename": nom_fichier,
+            "data": pdf_bytes,
+            "mime_type": "application/pdf",
+        }]
+    )
 
 
 def notifier_consultation(user_email, module, details=""):
@@ -4924,23 +5050,18 @@ with tab6:
         with c2: card("Taux global",  f"{prime_totale/gnpi:.4%}", couleur="#1a1a1a",  icone="📊")
         with c3: card("Tranches",     str(len(tranches_input)),   couleur="#2d8a4e",  icone="📋")
 
-        # ── EXPORT PDF + EXCEL ──
-        st.markdown("### 📥 Exports")
-        col_pdf, col_xls, col_name = st.columns([1, 1, 2])
+        # ── EXPORT PDF + EXCEL + EMAIL ──
+        st.markdown("### 📥 Exports et envoi du rapport")
+        col_pdf, col_xls, col_email, col_name = st.columns([1, 1, 1.4, 1.6])
+
         with col_pdf:
             if st.button("📄 Télécharger PDF", type="primary", use_container_width=True):
                 try:
                     with st.spinner("Génération PDF..."):
-                        pdf_bytes = generer_pdf_rapport(
-                            user_email=st.session_state.get("user_email",""),
+                        pdf_bytes = generer_pdf_rapport_courant(
                             gnpi_val=gnpi,
                             tranches=tranches_input,
-                            resultats_bc=st.session_state.get("resultats_bc",[]),
-                            resultats_sim=st.session_state.get("resultats_sim",[]),
-                            taux_mkt_final=st.session_state.get("taux_mkt_final",[]),
-                            df_rapport=st.session_state.get("df_rapport"),
-                            prime_totale=prime_totale,
-                            analyse_claude=st.session_state.get("reco_finale",""),
+                            prime_totale_val=prime_totale,
                             annee=2026
                         )
                     st.download_button(
@@ -4953,6 +5074,7 @@ with tab6:
                     st.success("✅ PDF prêt !")
                 except Exception as e_pdf:
                     st.error(f"Erreur PDF : {e_pdf}")
+
         with col_xls:
             if st.button("📊 Télécharger Excel", use_container_width=True):
                 try:
@@ -4977,6 +5099,42 @@ with tab6:
                     st.success("✅ Excel prêt !")
                 except Exception as e_xls:
                     st.error(f"Erreur Excel : {e_xls}")
+
+        with col_email:
+            st.markdown("**📧 Envoyer le rapport PDF**")
+            destinataires_rapport = st.text_input(
+                "Destinataire(s)",
+                placeholder="ex: client@compagnie.com, manager@reassureur.com",
+                key="rapport_email_destinataires"
+            )
+            message_rapport = st.text_area(
+                "Message court (optionnel)",
+                placeholder="Ex: Bonjour, veuillez trouver ci-joint le rapport de tarification.",
+                height=76,
+                key="rapport_email_message"
+            )
+            if st.button("📨 Envoyer le PDF par email", use_container_width=True, key="btn_envoyer_rapport_email"):
+                emails_valides = _normaliser_destinataires_email(destinataires_rapport)
+                if not emails_valides:
+                    st.error("Veuillez renseigner au moins une adresse email valide.")
+                else:
+                    try:
+                        with st.spinner("Génération et envoi du rapport..."):
+                            ok, msg = envoyer_rapport_pdf_email(
+                                destinataires=emails_valides,
+                                gnpi_val=gnpi,
+                                tranches=tranches_input,
+                                prime_totale_val=prime_totale,
+                                message_html=f"<p>{message_rapport}</p>" if message_rapport.strip() else "",
+                                annee=2026
+                            )
+                        if ok:
+                            st.success(f"✅ Rapport envoyé : {msg}")
+                        else:
+                            st.error(f"❌ Envoi impossible : {msg}")
+                    except Exception as e_mail:
+                        st.error(f"Erreur envoi email : {e_mail}")
+
         with col_name:
             nom_session_input = st.text_input("💾 Nommer cette session",
                 placeholder="Ex: Atlantic Re 2026 — Version finale",
@@ -5746,11 +5904,19 @@ class AgentLaboTarification:
         except Exception as e:
             return {"erreur":f"scikit-learn manquant : {e}"}
 
-        feats = [f for f in self.FEATURES if f in self.df_ml.columns]
-        extra = [c for c in ["taux_pur_bc","taux_technique_bc","taux_pur_sim",
-                              "taux_technique_sim","taux_technique_mkt"]
-                 if c in self.df_ml.columns and c != target]
-        feats += extra
+        # Les taux calculés ne doivent jamais être utilisés comme variables explicatives.
+        # Ils sont réservés aux variables cibles : taux_retenu, taux_technique_bc,
+        # taux_technique_sim, taux_technique_mkt, etc.
+        taux_cols = {c for c in self.df_ml.columns if "taux" in str(c).lower()}
+        feats = [
+            f for f in self.FEATURES
+            if f in self.df_ml.columns
+            and f != target
+            and f not in taux_cols
+            and "taux" not in str(f).lower()
+        ]
+        if not feats:
+            return {"erreur":"Aucune variable explicative disponible après exclusion des taux."}
         X = self.df_ml[feats].fillna(0); y = self.df_ml[target]
         mask = (y > 0) & np.isfinite(y); X = X[mask]; y = y[mask]
         if len(X) < 10: return {"erreur":"Trop peu de scenarios valides"}
@@ -5761,11 +5927,19 @@ class AgentLaboTarification:
             "Random Forest":     RandomForestRegressor(n_estimators=300,max_depth=10,
                                      min_samples_leaf=2,random_state=42,n_jobs=-1),
         }
+        modeles_indisponibles = {}
         try:
             from xgboost import XGBRegressor
             models["XGBoost"] = XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
                 subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=42)
-        except: pass
+        except Exception as e:
+            modeles_indisponibles["XGBoost"] = {"erreur": f"Indisponible ou non importable : {e}"}
+        try:
+            from catboost import CatBoostRegressor
+            models["CatBoost"] = CatBoostRegressor(iterations=350,depth=5,learning_rate=0.05,
+                loss_function="RMSE",random_seed=42,verbose=False)
+        except Exception as e:
+            modeles_indisponibles["CatBoost"] = {"erreur": f"Indisponible ou non importable : {e}"}
 
         resultats = {}; best_name = None; best_mae = None
         for nom, model in models.items():
@@ -5775,10 +5949,11 @@ class AgentLaboTarification:
                 rmse = float(np.sqrt(mean_squared_error(y_te, pred)))
                 r2   = float(r2_score(y_te, pred))
                 resultats[nom] = {"MAE":mae,"RMSE":rmse,"R2":r2,
-                                  "n_train":len(X_tr),"n_test":len(X_te)}
+                                  "n_train":len(X_tr),"n_test":len(X_te),"statut":"OK"}
                 self.modeles_entraines[nom] = model
                 if best_mae is None or mae < best_mae: best_mae=mae; best_name=nom
             except Exception as e: resultats[nom] = {"erreur":str(e)}
+        resultats.update(modeles_indisponibles)
 
         self.metriques_ml = resultats
         self._features_used  = feats
@@ -9106,10 +9281,11 @@ Répondre de façon concise et structurée (max 300 mots)."""
 <p><b>Modules complétés :</b> BC, Simulation, Market Curve, Rapport Final</p>
 """
         icone = {"info":"ℹ️","alerte":"⚠️","rapport_final":"📋"}.get(niveau,"📊")
+        dest_agent = st.session_state.get("rapport_email_destinataires") or user_email or "hervepagnangde@gmail.com"
         ok, msg = envoyer_notification_email(
             f"{icone} {sujet}",
             contenu,
-            "hervepagnangde@gmail.com")
+            dest_agent)
         return {"status": "ok" if ok else "non_configure",
                 "message": msg if ok else f"Email non envoyé ({msg}) — configurez SMTP_USER/SMTP_PASS dans Secrets Streamlit"}
 
@@ -9623,27 +9799,115 @@ with tab_hist:
 
 with tab_admin:
     st.header("🔐 Interface Administrateur")
+
+    if st.button("ℹ️ À propos de l’outil", use_container_width=True, key="admin_about_btn"):
+        st.session_state["show_about_tool"] = not st.session_state.get("show_about_tool", False)
+
+    if st.session_state.get("show_about_tool", False):
+        with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
+            st.markdown('''
+### Atlantic Re IA — Assistant actuariel de tarification
+
+**Atlantic Re IA** est un assistant actuariel conçu pour accompagner la tarification des programmes de réassurance non-proportionnelle, notamment en automobile.
+
+L’outil centralise les principales méthodes utilisées dans l’étude d’un programme de réassurance :
+
+- **Burning Cost** avec As-If, stabilisation, Chain Ladder et règles de prudence ;
+- **Simulation fréquence/sévérité** avec calibration Pareto / Poisson ;
+- **Market Curve** par ajustement log-log ;
+- **Comparaison des méthodes** et sélection du taux final ;
+- **Optimisation de programme** selon différentes perspectives ;
+- **Agent LLM Claude** pour l’analyse, la justification et la recommandation ;
+- **Rapport PDF professionnel** avec synthèse, taux retenus et recommandations.
+
+L’IA ne remplace pas l’actuaire : elle propose, explique et contrôle. La décision finale reste sous responsabilité humaine.
+            ''')
+
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
+
     if admin_pwd == get_admin_password():
         st.success("✅ Accès accordé")
-        users = get_users()
+
+        users_details = get_users_details()
+
         st.markdown("#### 👥 Utilisateurs autorisés")
-        st.dataframe(pd.DataFrame([{"Email": e, "Code": c, "Statut": "Actif"}
-                                    for e, c in users.items()]), use_container_width=True)
+        df_users = pd.DataFrame([
+            {
+                "Email": email,
+                "Nom": info.get("nom", ""),
+                "Poste": info.get("poste", "Non renseigné"),
+                "Code": info.get("code", ""),
+                "Statut": info.get("statut", "Actif"),
+            }
+            for email, info in users_details.items()
+        ])
+        st.dataframe(df_users, use_container_width=True, hide_index=True)
+
         st.divider()
-        st.markdown("#### ⚙️ Gérer les utilisateurs")
-        st.info("Allez sur Streamlit Cloud -> Settings -> Secrets et ajoutez :\nadmin_password = 'VotreMDP'\n[users]\n'email@ex.com' = 'CODE'")
-        st.divider()
-        st.markdown("#### 🎲 Générateur de code")
-        col1, col2 = st.columns(2)
-        with col1:
-            email_new = st.text_input("Email du nouvel utilisateur", key="new_email")
-        with col2:
-            if st.button("Générer un code"):
+        st.markdown("#### ⚙️ Ajouter ou modifier un utilisateur")
+        st.info(
+            "Pour enregistrer définitivement un utilisateur, copiez le bloc généré dans "
+            "Streamlit Cloud → Settings → Secrets. Le format enrichi permet maintenant de renseigner le poste."
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            email_new = st.text_input("Email", placeholder="prenom.nom@entreprise.com", key="admin_new_email")
+            nom_new = st.text_input("Nom complet", placeholder="Ex: Hervé NONGPANGA", key="admin_new_nom")
+        with c2:
+            poste_new = st.text_input("Poste", placeholder="Ex: Actuaire tarificateur", key="admin_new_poste")
+            statut_new = st.selectbox("Statut", ["Actif", "Suspendu", "Lecture seule"], key="admin_new_statut")
+
+        col_code1, col_code2 = st.columns([1, 1])
+        with col_code1:
+            code_custom = st.text_input("Code d’accès manuel (optionnel)", key="admin_code_custom")
+        with col_code2:
+            if st.button("🎲 Générer un code", use_container_width=True, key="admin_generate_code"):
                 st.session_state["generated_code"] = secrets_lib.token_hex(4).upper()
-        if "generated_code" in st.session_state:
-            st.success(f"Code généré : **{st.session_state['generated_code']}**")
-            if email_new:
-                st.code(f'"{email_new}" = "{st.session_state["generated_code"]}"')
+
+        code_final = code_custom.strip() or st.session_state.get("generated_code", "")
+
+        if code_final:
+            st.success(f"Code actif : **{code_final}**")
+
+        if email_new and code_final:
+            email_clean = email_new.lower().strip()
+            st.markdown("##### Bloc Secrets à copier")
+            secrets_block = f'''[users."{email_clean}"]
+code = "{code_final}"
+nom = "{nom_new.strip()}"
+poste = "{poste_new.strip()}"
+statut = "{statut_new}"'''
+            st.code(secrets_block, language="toml")
+
+            st.caption("Ancien format encore compatible, mais sans poste :")
+            legacy_block = f'''[users]
+"{email_clean}" = "{code_final}"'''
+            st.code(legacy_block, language="toml")
+
+        st.divider()
+        st.markdown("#### 🧾 Exemple complet de configuration Secrets")
+        with st.expander("Voir un exemple", expanded=False):
+            st.code('''admin_password = "VotreMotDePasseAdmin"
+
+[users."actuaire@atlanticre.ia"]
+code = "ACT2026"
+nom = "Actuaire Senior"
+poste = "Actuaire tarificateur"
+statut = "Actif"
+
+[users."manager@atlanticre.ia"]
+code = "MNG2026"
+nom = "Manager Technique"
+poste = "Responsable Réassurance"
+statut = "Actif"''', language="toml")
+
+        st.divider()
+        st.markdown("#### 🧩 Informations session")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Utilisateur connecté", st.session_state.get("user_email", "—"))
+        c2.metric("Poste", st.session_state.get("user_poste", "—") or "—")
+        c3.metric("Sessions chargées", len(db_list_sessions(st.session_state.get("user_email", ""))) if st.session_state.get("user_email") else 0)
+
     elif admin_pwd:
         st.error("❌ Mot de passe incorrect")
