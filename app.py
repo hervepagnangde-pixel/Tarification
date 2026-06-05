@@ -9809,7 +9809,7 @@ with tab_hist:
                                           key="hist_del_select")
                 if st.button("🗑️ Confirmer la suppression", key="hist_del_btn"):
                     try:
-                        sid_del = del_options[del_choix]
+                        sid_del = del_options[del_choix] 
                         db_delete_session(sid_del)
                         if st.session_state.get("db_session_id") == sid_del:
                             st.session_state.pop("db_session_id", None)
