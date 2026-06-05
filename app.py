@@ -3581,6 +3581,467 @@ with tab2:
             with st.expander("Projections"):
                 st.dataframe(st.session_state["df_proj"].head(20), use_container_width=True)
 
+    # ═══════════════════════════════════════════════════════════════════
+    # MODÈLE ACTUARIEL COMPLET — Méthode QBE Re (étapes A→I)
+    # Basé sur : "Modélisation sinistres corporels — Excédent de Sinistres"
+    # Auteur original : QBE Re / EGS — Adapté Atlantic Re IA
+    # ═══════════════════════════════════════════════════════════════════
+    if "df_proj" in st.session_state:
+        st.markdown("---")
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,#0d2b3e,#1e3a52);
+            padding:18px 24px;border-bottom:3px solid #00b5a5;margin-bottom:16px">
+          <div style="font-size:16px;font-weight:800;color:white;font-family:Montserrat,sans-serif">
+            🎓 Modèle Actuariel Complet — Méthode QBE Re (Étapes A→I)
+          </div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px">
+            Modélisation sinistres corporels longs · Triangle IBNR+IBNER · Cadences · Prime pure
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown("""
+        <div style="background:#e8f7f4;border-left:4px solid #00b5a5;padding:12px 16px;margin-bottom:16px;font-size:13px">
+        <b>Référence méthodologique :</b> "Modélisation des sinistres corporels pour la tarification d'un traité de
+        Réassurance Automobile en Excédent de Sinistres" — QBE Re<br>
+        <b>Séquence :</b> A. Analyse → B. Revalorisation → C. Seuils → D. IBNR+IBNER →
+        E. Exposition → F. Fréquence → G. Sévérité → H. Cadences → I. Prime pure
+        </div>""", unsafe_allow_html=True)
+
+        df_proj    = st.session_state["df_proj"]
+        df_liq_m   = st.session_state.get("df_liq", pd.DataFrame())
+
+        # ── D. IBNR — Nombre de sinistres IBNR par Chain Ladder ──────────────
+        with st.expander("D.1 — IBNR : Nombre de sinistres non encore déclarés (Chain Ladder sur effectifs)", expanded=False):
+            st.caption("D.1 — Estimation du nombre de sinistres survenus mais non déclarés (IBNR count) par Chain Ladder sur les effectifs annuels")
+            if not df_liq_m.empty and "annee_surv" in df_liq_m.columns:
+                # Compter les sinistres distincts par (annee_surv, dev)
+                counts = (df_liq_m.drop_duplicates(subset=["sinistre_id","dev"])
+                          .groupby(["annee_surv","dev"])["sinistre_id"].count()
+                          .reset_index(columns=["annee_surv","dev","nb"]) if False
+                          else df_liq_m.drop_duplicates(["sinistre_id","dev"])
+                               .groupby(["annee_surv","dev"]).size().reset_index(name="nb"))
+                annees_s = sorted(counts["annee_surv"].unique())
+                devs_s   = sorted(counts["dev"].unique())
+
+                # Triangle des effectifs
+                tri_counts = pd.DataFrame(index=annees_s, columns=devs_s, dtype=float)
+                for _, row in counts.iterrows():
+                    tri_counts.loc[row["annee_surv"], row["dev"]] = row["nb"]
+
+                # Facteurs Chain Ladder sur effectifs cumulés
+                tri_cum = tri_counts.cumsum(axis=1)
+                facteurs_n = {}
+                for k in range(len(devs_s)-1):
+                    d1, d2 = devs_s[k], devs_s[k+1]
+                    num = tri_cum[d2].dropna(); den = tri_cum[d1].dropna()
+                    common = num.index.intersection(den.index)
+                    if len(common) >= 2 and den[common].sum() > 0:
+                        facteurs_n[f"{d1}→{d2}"] = float(num[common].sum() / den[common].sum())
+                    else:
+                        facteurs_n[f"{d1}→{d2}"] = 1.0
+
+                st.markdown("**Facteurs de développement sur effectifs (Chain Ladder count)**")
+                tableau_resultats([{"Développement": k, "Facteur": f"{v:.4f}"}
+                                   for k, v in facteurs_n.items()])
+
+                # Projection IBNR
+                ibnr_rows = []
+                for ann in annees_s:
+                    dev_max = df_liq_m[df_liq_m["annee_surv"]==ann]["dev"].max() if not df_liq_m.empty else max(devs_s)
+                    nb_obs  = df_liq_m[(df_liq_m["annee_surv"]==ann)]["sinistre_id"].nunique()
+                    nb_ult  = float(nb_obs)
+                    for k in devs_s:
+                        if k > dev_max and f"{dev_max}→{k}" in facteurs_n:
+                            nb_ult *= facteurs_n.get(f"{dev_max}→{k}", 1.0)
+                            dev_max = k
+                        elif k > dev_max:
+                            for fk, fv in facteurs_n.items():
+                                if int(fk.split("→")[0]) == dev_max:
+                                    nb_ult *= fv; dev_max = int(fk.split("→")[1]); break
+                    ibnr_rows.append({
+                        "Année surv.": ann,
+                        "N observé":   nb_obs,
+                        "N ultime (proj.)": round(nb_ult, 1),
+                        "IBNR count": round(max(nb_ult - nb_obs, 0), 1),
+                    })
+
+                if ibnr_rows:
+                    tableau_resultats(ibnr_rows, "Estimation IBNR (effectifs)")
+                    total_ibnr = sum(r["IBNR count"] for r in ibnr_rows)
+                    st.metric("Total IBNR (sinistres non déclarés estimés)", f"{total_ibnr:.1f}")
+                    st.session_state["ibnr_count_total"] = total_ibnr
+                    st.caption(
+                        "Ces sinistres IBNR seront échantillonnés depuis la distribution de sévérité "
+                        "observée lors du calcul de la prime pure (étape I)."
+                    )
+
+        # ── D.2 IBNER — Développement par sinistre ───────────────────────────
+        with st.expander("D.2 — IBNER : Développement des montants par sinistre (Chain Ladder sur montants)", expanded=False):
+            st.caption("D.2 — Sinistres IBNER : survenus mais sous-réservés. Chain Ladder sur les montants cumulés par sinistre.")
+            df_p = df_proj.copy()
+
+            # Facteurs Chain Ladder sur montants : déjà calculés via df_facteurs (f_moyens)
+            f_moyens = st.session_state.get("f_moyens", {})
+            if f_moyens:
+                st.markdown("**Facteurs IBNER (identiques aux facteurs CL du triangle des montants)**")
+                tableau_resultats([{
+                    "Développement": f"{k}→{k+1}",
+                    "Facteur IBNER": f"{v:.4f}",
+                    "Interprétation": (
+                        "Sous-réservage" if v > 1.05 else
+                        "Sur-réservage"  if v < 0.95 else
+                        "Estimation correcte"
+                    )
+                } for k, v in f_moyens.items()])
+
+            # Sinistres en situation ultime
+            if not df_p.empty and "dev_max" in df_p.columns:
+                dist_devmax = df_p.groupby("dev_max")["sinistre_id"].count().reset_index()
+                dist_devmax.columns = ["Dev max observé", "Nb sinistres"]
+                st.markdown("**Distribution des sinistres par développement maximum observé**")
+                tableau_resultats(dist_devmax.to_dict("records"))
+
+                avg_ibner = df_p["Sprime_ultime"].mean() if "Sprime_ultime" in df_p.columns else 0
+                avg_sk    = df_p["Sk_ultime"].mean()     if "Sk_ultime"    in df_p.columns else 0
+                ratio_ibner = avg_ibner / avg_sk if avg_sk > 0 else 1.0
+                st.info(
+                    f"Ratio IBNER moyen : Sprime_ultime / Sk_ultime = {ratio_ibner:.4f}  "
+                    f"({'Sous-réservage moyen' if ratio_ibner > 1.02 else 'Sur-réservage moyen' if ratio_ibner < 0.98 else 'Estimation correcte'})"
+                )
+                st.caption(
+                    "Méthode QBE Re : chaque sinistre est projeté individuellement à l'ultime (sinistre par sinistre). "
+                    "Le ratio IBNER quantifie la tendance systématique de la cédante à sous/sur-estimer ses réserves."
+                )
+
+        # ── E. Exposition ─────────────────────────────────────────────────────
+        with st.expander("E — Exposition au risque : Nombre de véhicules-années", expanded=False):
+            st.caption("E — La meilleure mesure d'exposition est le nombre de véhicules-années, corrigé vers l'année de cotation.")
+            st.markdown("""
+            <div style="background:#f2f8f7;border-left:3px solid #00b5a5;padding:12px 16px;font-size:12px">
+            <b>Méthode QBE Re :</b> Le GNPI est utilisé comme proxy de l'exposition ici (corrigé par l'inflation tarifaire).
+            Si le nombre de véhicules-années est disponible, il est préféré.
+            Correction = GNPI_ann / GNPI_cotation × N_véhicules_cotation.
+            </div>""", unsafe_allow_html=True)
+            col_e1, col_e2 = st.columns(2)
+            with col_e1:
+                gnpi_annot = st.number_input("GNPI année de cotation (MAD)", value=float(gnpi),
+                    step=1_000_000.0, key="gnpi_expo_annot")
+            with col_e2:
+                nb_vehicules = st.number_input("Nb véhicules-années (si connu)", value=0, step=1000, key="nb_veh")
+
+            if not df_liq_m.empty and "annee_surv" in df_liq_m.columns and "I_reg" in df_liq_m.columns:
+                annees_expo = sorted(df_liq_m["annee_surv"].unique())
+                # Reconstruction de l'exposition relative via GNPI indexé
+                df_gnpis_df = st.session_state.get("df_gnpis_df", pd.DataFrame())
+                rows_expo = []
+                for ann in annees_expo:
+                    try:
+                        gnpi_col = df_gnpis_df.columns[1] if not df_gnpis_df.empty else None
+                        gnpi_ann = float(df_gnpis_df.set_index(df_gnpis_df.columns[0]).loc[ann, gnpi_col]) if gnpi_col else gnpi_annot
+                    except: gnpi_ann = gnpi_annot
+                    I_ann = df_liq_m[df_liq_m["annee_surv"]==ann]["I_surv"].mean() if "I_surv" in df_liq_m.columns else 1.0
+                    I_cot = st.session_state.get("I_cotation", 1.0)
+                    expo_corrigee = gnpi_ann * (I_cot / max(I_ann, 1e-6))
+                    rows_expo.append({
+                        "Année": ann,
+                        "GNPI observé (MAD)": f"{gnpi_ann:,.0f}",
+                        "GNPI corrigé cotation": f"{expo_corrigee:,.0f}",
+                        "Ratio exposition": f"{expo_corrigee/gnpi_annot:.4f}",
+                    })
+                if rows_expo:
+                    tableau_resultats(rows_expo, "Exposition annuelle corrigée vers l'année de cotation")
+                    st.session_state["expo_rows"] = rows_expo
+
+        # ── F. Modélisation fréquence ─────────────────────────────────────────
+        with st.expander("F — Fréquence : Loi de Poisson par année de développement", expanded=False):
+            st.caption("F — Estimation du lambda Poisson par année, tenant compte de l'exposition. Une loi de Poisson par année de développement.")
+            df_p = df_proj.copy()
+            if not df_p.empty and "annee_surv" in df_p.columns:
+                Amin = float(st.session_state.get("seuil_est", 0)) * 0.5   # seuil 50% priorité = seuil données
+                lambda_est = float(st.session_state.get("lambda_est", 5.0))
+
+                annees_f = sorted(df_p["annee_surv"].unique())
+                rows_freq = []
+                for ann in annees_f:
+                    nb = df_p[df_p["annee_surv"]==ann]["sinistre_id"].nunique()
+                    rows_freq.append({
+                        "Année surv.": ann,
+                        "N sinistres > Amin": nb,
+                        "λ Poisson estimé": f"{nb:.3f}",
+                    })
+                tableau_resultats(rows_freq)
+                lambdas = [r["N sinistres > Amin"] for r in rows_freq]
+                lambda_moyen = float(np.mean(lambdas)) if lambdas else lambda_est
+                st.metric("λ moyen (fréquence annuelle sinistres > Amin)", f"{lambda_moyen:.4f}")
+                st.caption(
+                    f"λ = {lambda_moyen:.4f} sinistres/an au-dessus du seuil Amin ≈ {Amin:,.0f} MAD. "
+                    "Une loi de Poisson(λ) est ajustée pour chaque année de développement. "
+                    "Méthode QBE Re : Σ_k P(N_k=n) × cadence(k) permet la décomposition temporelle."
+                )
+
+                import matplotlib.pyplot as plt
+                fig_f, ax_f = plt.subplots(figsize=(8, 3))
+                ax_f.bar(annees_f, lambdas, color="#00b5a5", alpha=0.8, edgecolor="#0d2b3e")
+                ax_f.axhline(lambda_moyen, color="#ff6b35", ls="--", lw=2, label=f"λ moyen = {lambda_moyen:.2f}")
+                ax_f.set_xlabel("Année de survenance")
+                ax_f.set_ylabel("N sinistres > Amin")
+                ax_f.set_title("Fréquence annuelle — distribution Poisson")
+                ax_f.legend(); ax_f.grid(alpha=0.2)
+                st.pyplot(fig_f); plt.close()
+
+        # ── G. Modélisation sévérité ──────────────────────────────────────────
+        with st.expander("G — Sévérité : Distribution Pareto / Empirique / Marché", expanded=False):
+            st.caption("G — Ajustement de la distribution de sévérité sur les sinistres en situation ultime (après IBNER).")
+            df_p = df_proj.copy()
+            if "Sprime_ultime" in df_p.columns:
+                seuil_mod = float(st.session_state.get("seuil_est", 0))
+                alpha_est = float(st.session_state.get("alpha_est", 1.5))
+                X_all     = df_p["Sprime_ultime"].values; X_all = X_all[X_all > 0]
+
+                st.markdown("**G.1 — Distribution empirique vs Pareto**")
+                import matplotlib.pyplot as plt
+                from scipy import stats as _sp
+
+                X_above = X_all[X_all >= seuil_mod]
+                n_above = len(X_above)
+
+                # Pareto MLE
+                alpha_hat = n_above / np.sum(np.log(X_above / seuil_mod))
+                x_range   = np.linspace(seuil_mod, np.percentile(X_all, 98), 200)
+                cdf_emp   = np.array([np.mean(X_above <= x) for x in x_range])
+                cdf_par   = 1 - (seuil_mod / x_range) ** alpha_hat
+
+                fig_g, (ax_g1, ax_g2) = plt.subplots(1, 2, figsize=(12, 4))
+                # CDF
+                ax_g1.plot(x_range, cdf_emp, "k-", lw=2, label="Empirique")
+                ax_g1.plot(x_range, cdf_par, "--", color="#00b5a5", lw=2,
+                           label=f"Pareto(α={alpha_hat:.3f})")
+                ax_g1.set_xlabel("Montant sinistre (MAD)"); ax_g1.set_ylabel("F(x)")
+                ax_g1.set_title("CDF Sévérité au-dessus du seuil")
+                ax_g1.legend(); ax_g1.grid(alpha=0.2)
+                # QQ-Plot
+                log_x = np.log(np.sort(X_above)/seuil_mod); n_q = len(log_x)
+                th_q  = -np.log(1 - np.arange(1,n_q+1)/(n_q+1))
+                ax_g2.scatter(th_q, log_x, color="#0d2b3e", s=15, alpha=0.6)
+                mn_q = min(th_q.min(), log_x.min()); mx_q = max(th_q.max(), log_x.max())
+                ax_g2.plot([mn_q,mx_q],[mn_q,mx_q],"--", color="#ff6b35", lw=1.5)
+                ax_g2.set_xlabel("Quantiles Exp(1)"); ax_g2.set_ylabel("log(X/seuil)")
+                ax_g2.set_title("QQ-Plot Pareto"); ax_g2.grid(alpha=0.2)
+                st.pyplot(fig_g); plt.close()
+
+                # Formule analytique E[f(X)] pour Pareto
+                st.markdown("**G.2 — Calcul analytique E[f(X)] = E[min(C, max(0, X-P))] par Pareto**")
+                st.latex(r"""
+E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
+\cdot \left[1 - \left(\frac{P}{P+C}\right)^{\alpha-1}\right]
+- C \cdot \left(\frac{x_m}{P+C}\right)^\alpha
+""")
+                st.caption("Formule exacte pour X ~ Pareto(α, x_m) — Daykin-Pentikäinen-Pesonen (1994), Section 5.3")
+
+                for t in tranches_input:
+                    D = t["priorite"]; C = t["portee"]
+                    if alpha_hat > 1:
+                        p_above_D = (seuil_mod / D) ** alpha_hat if D > seuil_mod else 1.0
+                        p_above_DC= (seuil_mod / (D+C)) ** alpha_hat
+                        e_fx = (p_above_D * D / (alpha_hat-1) *
+                                (1 - (D/(D+C))**(alpha_hat-1)) - C * p_above_DC)
+                        e_fx = max(e_fx, 0)
+                    else:
+                        e_fx = 0.0
+                    lambda_m = float(st.session_state.get("lambda_est", 5.0))
+                    prime_pure_pareto = lambda_m * e_fx
+                    tableau_resultats([{
+                        "Tranche": t["nom"],
+                        "D (priorité)": f"{D:,.0f}",
+                        "C (portée)": f"{C:,.0f}",
+                        "P(X>D)": f"{(seuil_mod/D)**alpha_hat:.4%}" if D>seuil_mod else "100%",
+                        "E[f(X)] Pareto": f"{e_fx:,.0f} MAD",
+                        "Prime pure (λ×E[f])": f"{prime_pure_pareto:,.0f} MAD",
+                        "Taux Pareto": f"{prime_pure_pareto/gnpi:.4%}",
+                    }])
+                st.session_state["alpha_pareto_g"] = alpha_hat
+
+        # ── H. Cadences de règlement ──────────────────────────────────────────
+        with st.expander("H — Cadences de règlement et de réservation", expanded=False):
+            st.caption("H — Estimation de la cadence de règlement (proportion payée par développement k) et de réservation (tendance sous/sur-estimation).")
+            st.markdown("""
+            <div style="background:#f2f8f7;border-left:3px solid #00b5a5;padding:12px 16px;font-size:12px">
+            <b>Méthode QBE Re :</b><br>
+            • <b>Cadence règlement</b> = Triangle des paiements non développés / Sinistres en situation ultime<br>
+            • <b>Cadence réservation</b> = Déduite des coefficients IBNER (tendance sous-estimation)<br>
+            • Ces cadences sont appliquées à l'étape I pour pondérer les sinistres par probabilité de paiement.
+            </div>""", unsafe_allow_html=True)
+
+            df_liq_h = st.session_state.get("df_liq", pd.DataFrame())
+            df_proj_h = df_proj.copy()
+
+            if not df_liq_h.empty and "dev" in df_liq_h.columns and not df_proj_h.empty:
+                # Construire la cadence : par développement k, proportion des sinistres payés
+                devs_h = sorted(df_liq_h["dev"].unique())
+                rows_cadence = []
+                total_ult_mad = df_proj_h["Sprime_ultime"].sum() if "Sprime_ultime" in df_proj_h.columns else 1.0
+
+                cumul_paye = 0.0
+                for dev in devs_h:
+                    # Paiements du développement k (incréments)
+                    if "inc_asif" in df_liq_h.columns:
+                        paye_k = df_liq_h[df_liq_h["dev"]==dev]["inc_asif"].sum()
+                    elif "increment" in df_liq_h.columns:
+                        paye_k = df_liq_h[df_liq_h["dev"]==dev]["increment"].sum()
+                    else:
+                        paye_k = 0.0
+                    cumul_paye += paye_k
+                    cadence_k = cumul_paye / max(total_ult_mad, 1.0)
+                    rows_cadence.append({
+                        "Développement k": dev,
+                        "Paiements As-If (MAD)": f"{paye_k:,.0f}",
+                        "Cumul paiements": f"{cumul_paye:,.0f}",
+                        "Cadence (% ultime)": f"{cadence_k:.2%}",
+                        "En attente": f"{1-cadence_k:.2%}",
+                    })
+                cadence_list = [r["Cadence (% ultime)"] for r in rows_cadence]
+                tableau_resultats(rows_cadence, "Cadences de règlement par développement")
+                st.session_state["cadence_rows"] = rows_cadence
+
+                import matplotlib.pyplot as plt
+                fig_h, ax_h = plt.subplots(figsize=(8, 3))
+                dev_vals = [r["Développement k"] for r in rows_cadence]
+                cad_vals = [float(r["Cadence (% ultime)"].replace("%",""))/100 for r in rows_cadence]
+                ax_h.plot(dev_vals, cad_vals, "o-", color="#00b5a5", lw=2, ms=8)
+                ax_h.fill_between(dev_vals, cad_vals, alpha=0.15, color="#00b5a5")
+                ax_h.set_xlabel("Développement"); ax_h.set_ylabel("Proportion cumulée payée")
+                ax_h.set_title("Cadence de règlement cumulée (% du montant ultime)")
+                ax_h.yaxis.set_major_formatter(plt.FuncFormatter(lambda y,_: f"{y:.0%}"))
+                ax_h.grid(alpha=0.2)
+                st.pyplot(fig_h); plt.close()
+
+                st.markdown("**Cadence de réservation (coefficients IBNER)**")
+                f_moyens_h = st.session_state.get("f_moyens", {})
+                if f_moyens_h:
+                    reserv_rows = []
+                    for k, fv in f_moyens_h.items():
+                        reserv_rows.append({
+                            "Dev": f"{k}→{k+1}",
+                            "Facteur IBNER": f"{fv:.4f}",
+                            "Sous-réservage": f"{(fv-1)*100:+.1f}%",
+                            "Diagnostic": "Sous-réservage" if fv > 1.02 else
+                                          "Sur-réservage"  if fv < 0.98 else
+                                          "Estimation correcte"
+                        })
+                    tableau_resultats(reserv_rows)
+
+        # ── I. Prime pure complète ────────────────────────────────────────────
+        with st.expander("I — Prime pure (sinistralité annuelle attendue) — Formule QBE Re", expanded=True):
+            st.caption("I — Application du programme de réassurance sur chaque sinistre, pondéré par la cadence de règlement.")
+            st.markdown("""
+            <div style="background:#f2f8f7;border-left:3px solid #00b5a5;padding:12px 16px;font-size:12px">
+            <b>Formule QBE Re :</b><br>
+            <code>SR(k) = Exposition × Σ_i [cadence(k,i) × min(C, max(0, X_i_ultime − P))]</code><br>
+            <code>Prime pure = SR(k→ultime) / GNPI</code><br>
+            <b>Inclut :</b> sinistres observés + IBNR estimés (échantillonnés depuis la distribution sévérité)
+            </div>""", unsafe_allow_html=True)
+
+            df_proj_i = df_proj.copy()
+            if "Sprime_ultime" in df_proj_i.columns and tranches_input:
+                ibnr_n = float(st.session_state.get("ibnr_count_total", 0))
+                alpha_i = float(st.session_state.get("alpha_pareto_g",
+                                st.session_state.get("alpha_est", 1.5)))
+                seuil_i = float(st.session_state.get("seuil_est", 1_600_000))
+
+                # Ajouter les sinistres IBNR simulés
+                if ibnr_n > 0 and alpha_i > 1:
+                    np.random.seed(42)
+                    n_ibnr_int = int(round(ibnr_n))
+                    u_ibnr = np.random.uniform(size=n_ibnr_int)
+                    x_ibnr = seuil_i * (u_ibnr ** (-1.0/alpha_i))  # Pareto
+                    # Année de survenance : extrapolation linéaire
+                    ann_max = df_proj_i["annee_surv"].max()
+                    df_ibnr = pd.DataFrame({
+                        "sinistre_id":    [f"IBNR_{j}" for j in range(n_ibnr_int)],
+                        "annee_surv":     [ann_max + 1] * n_ibnr_int,
+                        "dev_max":        [0] * n_ibnr_int,
+                        "Sprime_ultime":  x_ibnr,
+                        "Sk_ultime":      x_ibnr,
+                        "coeff_stab":     [1.0] * n_ibnr_int,
+                    })
+                    df_complet = pd.concat([df_proj_i, df_ibnr], ignore_index=True)
+                    st.info(f"Ajout de {n_ibnr_int} sinistres IBNR simulés (Pareto α={alpha_i:.3f})")
+                else:
+                    df_complet = df_proj_i.copy()
+
+                # Calcul par tranche
+                rows_prime_pure = []
+                for t in tranches_input:
+                    D = t["priorite"]; C = t["portee"]
+                    n_rec = t["nb_reconstitutions"]
+                    aal = t.get("AAL"); aad = t.get("AAD")
+                    cap = (n_rec + 1) * C
+
+                    # Sinistralité par sinistre
+                    def f_xl(x):
+                        return min(max(x - D, 0), C) * t.get("coeff_stab", 1.0)
+                    df_complet["f_xi"] = df_complet["Sprime_ultime"].apply(
+                        lambda x: min(max(x - D, 0), C))
+
+                    # Agrégation annuelle
+                    charges_ann = df_complet.groupby("annee_surv")["f_xi"].sum()
+                    charges_finales = []
+                    for ann, ch in charges_ann.items():
+                        if aad: ch = max(ch - aad, 0)
+                        if aal: ch = min(ch, aal)
+                        charges_finales.append(min(ch, cap))
+
+                    n_ann = len(charges_finales)
+                    if n_ann == 0:
+                        rows_prime_pure.append({"Tranche":t["nom"],"τ pure QBE":"—","Prime (MAD)":"—"})
+                        continue
+                    charge_moy = np.mean(charges_finales)
+                    sigma       = np.std([c for c in charges_finales if c > 0]) if any(c>0 for c in charges_finales) else 0.0
+                    tau_pur     = charge_moy / gnpi
+                    tau_risque  = tau_pur + 0.20 * (sigma / gnpi)  # R1
+                    denom       = max(1 - t["brokage"] - t["frais"] - t["marge"] - t.get("retrocession",0), 0.01)
+                    tau_tech    = tau_risque / denom
+                    prime       = gnpi * tau_tech
+
+                    rows_prime_pure.append({
+                        "Tranche":          t["nom"],
+                        "Type":             t["type"],
+                        "N sinistres (obs+IBNR)": len(df_complet),
+                        "Charge annuelle moy.":  f"{charge_moy:,.0f}",
+                        "σ annuelle":            f"{sigma:,.0f}",
+                        "τ pur QBE":             f"{tau_pur:.4%}",
+                        "τ risque (R1)":         f"{tau_risque:.4%}",
+                        "τ technique":           f"{tau_tech:.4%}",
+                        "Prime pure (MAD)":      f"{prime:,.0f}",
+                    })
+
+                tableau_resultats(rows_prime_pure, "Prime pure — Méthode QBE Re complète (IBNR inclus)")
+
+                prime_totale_qbe = sum(
+                    gnpi * float(r["τ technique"].replace("%",""))/100
+                    for r in rows_prime_pure
+                    if r.get("τ technique","—") != "—"
+                )
+                col_q1, col_q2, col_q3 = st.columns(3)
+                with col_q1: card("Prime totale QBE", f"{prime_totale_qbe:,.0f} MAD", icone="🎓")
+                with col_q2: card("Taux global QBE",  f"{prime_totale_qbe/gnpi:.4%}", couleur="#0d2b3e", icone="📊")
+                with col_q3: card("Sinistres IBNR", f"{int(round(ibnr_n))}", couleur="#00b5a5", icone="📋")
+
+                st.markdown("""
+                <div style="background:#e8f7f4;border-left:4px solid #00b5a5;padding:12px 16px;font-size:12px;margin-top:12px">
+                <b>Pour obtenir la prime de réassurance finale (chargée) :</b><br>
+                τ_final = τ_technique + GSM (Grands Sinistres Matériels) + Frais fixes gestion + Courtage + Rémunération capital<br>
+                <i>Source : QBE Re — Conclusion de la présentation</i>
+                </div>""", unsafe_allow_html=True)
+
+                st.caption("""
+                **Références bibliographiques :**
+                Daykin, Pentikäinen & Pesonen (1994) — *Practical Risk Theory for Actuaries*
+                | Finger (2006) — *Property-Casualty Insurance Pricing* (CAS)
+                | Pickands (1975), Balkema & de Haan (1974) — *GPD pour les excédances*
+                | QBE Re EGS — *Modélisation sinistres corporels RC Auto*
+                """)
+
 # ════════════════════════════════════════════
 # TAB 3 — BURNING COST
 # ════════════════════════════════════════════
