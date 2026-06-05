@@ -1309,16 +1309,29 @@ def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.
     smtp_user = ""
     smtp_pass = ""
     try:
-        # Méthode 1 : accès direct par clé
+        # Méthode 1 : accès direct par clé (niveau racine)
         smtp_user = st.secrets["SMTP_USER"]
         smtp_pass = st.secrets["SMTP_PASS"]
     except (KeyError, Exception):
         try:
-            # Méthode 2 : via .get()
+            # Méthode 2 : via .get() (niveau racine)
             smtp_user = st.secrets.get("SMTP_USER", "")
             smtp_pass = st.secrets.get("SMTP_PASS", "")
         except Exception:
             pass
+    # Méthode 3 : si les clés sont dans une section (ex: [roles] en TOML)
+    # En TOML, tout ce qui suit [roles] est dans st.secrets["roles"]
+    if not smtp_user or not smtp_pass:
+        for section in ["roles", "smtp", "email", "config"]:
+            try:
+                sec = st.secrets.get(section, {})
+                if hasattr(sec, "get"):
+                    u = sec.get("SMTP_USER","") or sec.get("smtp_user","")
+                    p = sec.get("SMTP_PASS","") or sec.get("smtp_pass","")
+                    if u and p:
+                        smtp_user = u; smtp_pass = p; break
+            except Exception:
+                pass
 
     if not smtp_user or not smtp_pass:
         return False, (
