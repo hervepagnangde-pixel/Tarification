@@ -1531,6 +1531,21 @@ def envoyer_rapport_pdf_email(destinataires, gnpi_val, tranches, prime_totale_va
     )
 
 
+def get_destinataires_notifications_agent():
+    """Retourne les destinataires configurés dans l'application pour les notifications IA."""
+    candidats = [
+        st.session_state.get("email_notifications_agent", ""),
+        st.session_state.get("notif_destinataires", ""),
+        st.session_state.get("rapport_email_destinataires", ""),
+        st.session_state.get("user_email", ""),
+    ]
+    for candidat in candidats:
+        emails = _normaliser_destinataires_email(candidat)
+        if emails:
+            return emails
+    return []
+
+
 def notifier_consultation(user_email, module, details=""):
     """Notifie automatiquement lors d'une consultation de l'agent."""
     sujet = f"Consultation par {user_email} — {module}"
@@ -1541,7 +1556,10 @@ def notifier_consultation(user_email, module, details=""):
     <p><b>Date/Heure :</b> {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}</p>
     {f'<p><b>Détails :</b> {details}</p>' if details else ''}
     """
-    ok, msg = envoyer_notification_email(sujet, corps)
+    destinataires = get_destinataires_notifications_agent()
+    if not destinataires:
+        return False
+    ok, msg = envoyer_notification_email(sujet, corps, destinataire=destinataires)
     return ok
 
 
@@ -1986,6 +2004,17 @@ with st.sidebar:
     if api_key:
         st.caption("⚡ Haiku pour analyses | 🔬 Opus pour agents autonomes uniquement")
     gnpi    = st.number_input("💰 GNPI (MAD)", value=183_000_000, step=1_000_000)
+
+    st.divider()
+    st.markdown("### 📧 Notifications IA")
+    st.text_input(
+        "Destinataire(s)",
+        value=st.session_state.get("email_notifications_agent", st.session_state.get("user_email", "")),
+        key="email_notifications_agent",
+        help="Email unique ou plusieurs emails séparés par virgule ou point-virgule. Le SMTP_USER reste seulement l'expéditeur."
+    )
+    st.caption("Ces emails recevront les messages automatiques envoyés par l'IA.")
+
     st.divider()
     st.markdown("### 📊 Statut des étapes")
     for nom, key in [("Programme","df_prog"),("Données","df_liq"),
@@ -8580,21 +8609,38 @@ with tab_agent:
 
     # ── Notification email manuelle ──
     st.markdown("---")
-    c_notif1, c_notif2 = st.columns([3, 1])
+    st.markdown("### 📧 Notification email")
+    c_notif0, c_notif1, c_notif2 = st.columns([2, 3, 1])
+    with c_notif0:
+        notif_dest = st.text_input(
+            "Destinataire(s)",
+            value=st.session_state.get("email_notifications_agent", st.session_state.get("user_email", "")),
+            key="notif_destinataires",
+            placeholder="ex: equipe@atlanticre.ma, manager@atlanticre.ma"
+        )
     with c_notif1:
-        notif_msg = st.text_input("Message à envoyer à hervepagnangde@gmail.com", key="notif_msg",
-            placeholder="Ex: Session terminée — taux global 3.24%, prime 5.9M MAD")
+        notif_msg = st.text_input(
+            "Message",
+            key="notif_msg",
+            placeholder="Ex: Session terminée — taux global 3.24%, prime 5.9M MAD"
+        )
     with c_notif2:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if st.button("📧 Envoyer notification", key="btn_notif", use_container_width=True):
-            if notif_msg.strip():
-                user = st.session_state.get("user_email","Agent")
+        if st.button("📧 Envoyer", key="btn_notif", use_container_width=True):
+            emails_notif = _normaliser_destinataires_email(notif_dest)
+            if not emails_notif:
+                st.warning("⚠️ Renseignez au moins un destinataire valide.")
+            elif not notif_msg.strip():
+                st.warning("⚠️ Renseignez un message à envoyer.")
+            else:
+                user = st.session_state.get("user_email", "Agent")
                 ok, msg = envoyer_notification_email(
                     f"Message de {user} — Atlantic Re IA",
                     f"<p><b>De :</b> {user}</p><p><b>Message :</b> {notif_msg}</p>",
-                    "hervepagnangde@gmail.com")
-                if ok: st.success("✅ Email envoyé")
-                else:   st.warning(f"⚠️ {msg}")
+                    destinataire=emails_notif
+                )
+                if ok: st.success(f"✅ Email envoyé à {len(emails_notif)} destinataire(s)")
+                else:  st.warning(f"⚠️ {msg}")
 
 
 with tab_full:
@@ -9305,11 +9351,11 @@ Répondre de façon concise et structurée (max 300 mots)."""
 <p><b>Modules complétés :</b> BC, Simulation, Market Curve, Rapport Final</p>
 """
         icone = {"info":"ℹ️","alerte":"⚠️","rapport_final":"📋"}.get(niveau,"📊")
-        dest_agent = st.session_state.get("rapport_email_destinataires") or user_email or "hervepagnangde@gmail.com"
+        dest_agent = get_destinataires_notifications_agent() or _normaliser_destinataires_email(user_email)
         ok, msg = envoyer_notification_email(
             f"{icone} {sujet}",
             contenu,
-            dest_agent)
+            destinataire=dest_agent)
         return {"status": "ok" if ok else "non_configure",
                 "message": msg if ok else f"Email non envoyé ({msg}) — configurez SMTP_USER/SMTP_PASS dans Secrets Streamlit"}
 
