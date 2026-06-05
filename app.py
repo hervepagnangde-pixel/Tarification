@@ -1300,40 +1300,96 @@ def claude_stream(api_key, prompt, max_tokens=2000, session_key="", use_opus=Fal
 
 def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.com"):
     """
-    Envoie une notification email via SMTP Gmail.
-    Configurez SMTP_USER et SMTP_PASS dans les Secrets Streamlit.
+    Envoie via Gmail SMTP.
+    IMPORTANT : Pour Gmail, il faut un App Password (16 caractères), PAS le mot de passe ordinaire.
+    → Google Account → Sécurité → Validation en 2 étapes → Mots de passe des applications
+    → Générer → Copier les 16 caractères → coller dans SMTP_PASS des Secrets
     """
+    # Lire les secrets avec différentes méthodes (robustesse)
+    smtp_user = ""
+    smtp_pass = ""
     try:
-        smtp_user = st.secrets.get("SMTP_USER", "")
-        smtp_pass = st.secrets.get("SMTP_PASS", "")
-        if not smtp_user or not smtp_pass:
-            return False, "SMTP non configuré (ajoutez SMTP_USER et SMTP_PASS dans Secrets)"
-        import smtplib
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[Atlantic Re IA] {sujet}"
-        msg["From"]    = smtp_user
-        msg["To"]      = destinataire
-        html_body = f"""
-        <html><body style="font-family:Arial,sans-serif;color:#0d2b3e">
-        <div style="border-top:4px solid #00b5a5;padding:20px;max-width:600px">
-          <h2 style="color:#0d2b3e">🤖 Atlantic Re IA — Notification</h2>
-          <div style="background:#f2f8f7;padding:16px;border-left:4px solid #00b5a5">
-            {corps}
-          </div>
-          <p style="color:#5a7a8a;font-size:12px;margin-top:20px">
-            Atlantic Re IA · Réassurance Non-Proportionnelle · Maroc<br>
-            <a href="https://atlantic-re-ia.streamlit.app" style="color:#00b5a5">Accéder à l'outil</a>
-          </p>
-        </div></body></html>"""
-        msg.attach(MIMEText(html_body, "html"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        # Méthode 1 : accès direct par clé
+        smtp_user = st.secrets["SMTP_USER"]
+        smtp_pass = st.secrets["SMTP_PASS"]
+    except (KeyError, Exception):
+        try:
+            # Méthode 2 : via .get()
+            smtp_user = st.secrets.get("SMTP_USER", "")
+            smtp_pass = st.secrets.get("SMTP_PASS", "")
+        except Exception:
+            pass
+
+    if not smtp_user or not smtp_pass:
+        return False, (
+            "SMTP non configuré. "
+            "Vérifiez que SMTP_USER et SMTP_PASS sont bien dans les Secrets Streamlit "
+            "(sans section, au niveau racine du fichier secrets.toml)."
+        )
+
+    # Vérification : le mot de passe Gmail ordinaire ne fonctionne pas — App Password requis
+    # Un App Password Google fait exactement 16 caractères sans espaces
+    pass_clean = smtp_pass.replace(" ", "")
+    is_app_password = len(pass_clean) == 16 and pass_clean.isalnum()
+    if not is_app_password and "@" in smtp_user and "gmail" in smtp_user.lower():
+        # Essayer quand même mais avertir si erreur
+        pass
+
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"[Atlantic Re IA] {sujet}"
+    msg["From"]    = smtp_user
+    msg["To"]      = destinataire
+
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#0d2b3e">
+    <div style="border-top:4px solid #00b5a5;padding:20px;max-width:600px">
+      <h2 style="color:#0d2b3e">&#x1F916; Atlantic Re IA &#x2014; Notification</h2>
+      <div style="background:#f2f8f7;padding:16px;border-left:4px solid #00b5a5">
+        {corps}
+      </div>
+      <p style="color:#5a7a8a;font-size:12px;margin-top:20px">
+        Atlantic Re IA &middot; Réassurance Non-Proportionnelle &middot; Maroc
+      </p>
+    </div></body></html>"""
+    msg.attach(MIMEText(html_body, "html"))
+
+    # Essai 1 : SSL port 465
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
             server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, destinataire, msg.as_string())
-        return True, "Email envoyé"
-    except Exception as e:
-        return False, str(e)
+        return True, "Email envoyé (SSL 465)"
+    except smtplib.SMTPAuthenticationError:
+        hint = (
+            "Authentification Gmail échouée. "
+            "SOLUTION : créez un App Password Gmail (16 caractères) :\n"
+            "myaccount.google.com → Sécurité → Validation 2 étapes → "
+            "Mots de passe des applications → Créer → Copier les 16 caractères → "
+            "Coller dans SMTP_PASS des Secrets Streamlit (sans espaces)."
+        )
+        return False, hint
+    except Exception as e1:
+        # Essai 2 : STARTTLS port 587
+        try:
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
+                server.ehlo(); server.starttls(); server.ehlo()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, destinataire, msg.as_string())
+            return True, "Email envoyé (STARTTLS 587)"
+        except smtplib.SMTPAuthenticationError:
+            hint = (
+                "Authentification Gmail échouée (port 587). "
+                "SOLUTION : App Password Gmail requis. "
+                "Allez sur : myaccount.google.com → Sécurité → "
+                "Validation 2 étapes → Mots de passe des applications"
+            )
+            return False, hint
+        except Exception as e2:
+            return False, f"Erreur SMTP (SSL: {e1} | TLS: {e2})"
 
 
 def notifier_consultation(user_email, module, details=""):
@@ -1505,51 +1561,79 @@ df$coeff    <- df$Sk / pmax(df$Sprime_k, 1e-6)
 
 
 def afficher_integration_r():
-    """Interface d'intégration R Studio."""
+    """Interface d'intégration R Studio — scripts téléchargeables."""
+    import io as _io_r
+
     st.markdown("---")
     st.markdown("#### 🔬 Intégration R — Scripts de tarification")
-    st.caption("Scripts R correspondant aux méthodes implémentées dans Atlantic Re IA · Compatible RStudio · Package evir")
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d2b3e,#1e3a52);
+        padding:12px 18px;border-left:4px solid #00b5a5;margin-bottom:12px;font-size:12px;color:white">
+      <b style="color:#00b5a5">Note :</b> Streamlit Cloud ne supporte pas R nativement.
+      Téléchargez les scripts et exécutez-les dans votre <b>RStudio local</b>.<br>
+      Packages requis : <code>evir</code>, <code>fitdistrplus</code>, <code>MASS</code>
+    </div>""", unsafe_allow_html=True)
 
-    col_script, col_run = st.columns([2, 1])
+    col_script, col_dl = st.columns([2, 1])
     with col_script:
-        script_choisi = st.selectbox("Script R", list(SCRIPTS_R_TARIFICATION.keys()), key="r_script_select")
-    with col_run:
+        script_choisi = st.selectbox(
+            "Script R à afficher / télécharger",
+            list(SCRIPTS_R_TARIFICATION.keys()),
+            key="r_script_select")
+    with col_dl:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if st.button("📋 Copier dans le presse-papier", key="btn_copy_r", use_container_width=True):
-            st.info("Copiez le code ci-dessous dans RStudio")
+        nom_fichier = script_choisi.lower().replace(" ","_").replace("/","_").replace("(","").replace(")","") + ".R"
+        st.download_button(
+            "⬇️ Télécharger le script .R",
+            data=SCRIPTS_R_TARIFICATION[script_choisi].encode("utf-8"),
+            file_name=nom_fichier,
+            mime="text/plain",
+            key="btn_dl_r_script",
+            use_container_width=True,
+            help="Ouvrez ce fichier dans RStudio"
+        )
 
     st.code(SCRIPTS_R_TARIFICATION[script_choisi], language="r")
 
-    st.markdown("##### Exécuter du code R personnalisé")
-    r_custom = st.text_area("Votre code R", height=120, key="r_custom_code",
-        placeholder="# Collez votre code R ici\n# Le résultat sera affiché ci-dessous")
+    # Script personnalisé avec téléchargement
+    st.markdown("##### Script R personnalisé")
+    st.caption("Écrivez votre code R, puis téléchargez-le pour l'exécuter dans RStudio local.")
+    r_custom = st.text_area(
+        "Votre code R",
+        height=140,
+        key="r_custom_code",
+        placeholder="# Écrivez votre code R ici\n# Ex: utiliser les paramètres alpha/lambda de la session\n\nalpha <- 1.45\nlambda <- 3.2\nseuil  <- 1600000\n\n# Simulation Pareto / Poisson\nset.seed(42)\nN <- rpois(10000, lambda)\n# ..."
+    )
+    if r_custom.strip():
+        st.download_button(
+            "⬇️ Télécharger mon_script.R",
+            data=r_custom.encode("utf-8"),
+            file_name="mon_script_tarification.R",
+            mime="text/plain",
+            key="btn_dl_r_custom",
+            use_container_width=False,
+        )
 
-    if st.button("▶ Exécuter R (subprocess)", key="btn_run_r"):
-        import subprocess, tempfile, os
-        if r_custom.strip():
-            with tempfile.NamedTemporaryFile(suffix=".R", mode="w", delete=False, encoding="utf-8") as f:
-                f.write(r_custom); fname = f.name
-            try:
-                result = subprocess.run(
-                    ["Rscript", "--vanilla", fname],
-                    capture_output=True, text=True, timeout=30)
-                if result.returncode == 0:
-                    st.code(result.stdout or "(aucun output)", language="text")
-                else:
-                    err = result.stderr
-                    if "not found" in err.lower() or "command" in err.lower():
-                        st.warning("R n'est pas installé sur ce serveur. Copiez le code dans votre RStudio local.")
-                    else:
-                        st.error(f"Erreur R :\n{err}")
-            except FileNotFoundError:
-                st.warning("R/Rscript non disponible sur Streamlit Cloud. Utilisez RStudio localement.")
-            except Exception as e:
-                st.error(str(e))
-            finally:
-                try: os.unlink(fname)
-                except: pass
-        else:
-            st.warning("Entrez du code R à exécuter.")
+    # Paramètres courants de la session pour R
+    if "alpha_est" in st.session_state:
+        st.markdown("**Paramètres actuels de la session (à copier dans R) :**")
+        params_r = f"""# ── Paramètres Atlantic Re IA — session courante ─────────────
+alpha  <- {st.session_state.get('alpha_est',  1.5):.6f}  # Indice Pareto
+lambda <- {st.session_state.get('lambda_est', 5.0):.6f}  # Fréquence Poisson
+seuil  <- {st.session_state.get('seuil_est',  1_600_000):.0f}     # Seuil modélisation (MAD)
+gnpi   <- {gnpi:.0f}                                # GNPI (MAD)
+Pm     <- {st.session_state.get('Pm_proxy',   0):.0f}     # Pm proxy P99.5 (MAD)
+# Tranches
+{"".join([f"D_T{i+1} <- {t['priorite']:.0f}  # Priorité {t['nom']}\nL_T{i+1} <- {t['portee']:.0f}  # Portée {t['nom']}\n" for i,t in enumerate(tranches_input)])}
+"""
+        st.code(params_r, language="r")
+        st.download_button(
+            "⬇️ Télécharger parametres_session.R",
+            data=params_r.encode("utf-8"),
+            file_name="parametres_session_atlanticre.R",
+            mime="text/plain",
+            key="btn_dl_params_r",
+        )
 
 
 def guide_prompt(etape, exemples_contexte, exemples_instructions, exemples_input, exemples_output):
@@ -1853,6 +1937,53 @@ with st.sidebar:
             st.rerun()
         except Exception as _e:
             st.error(f"Erreur DB : {_e}")
+
+    # ── Test email SMTP ──────────────────────────────────────
+    st.markdown("### 📧 Email SMTP")
+    _smtp_user_diag = ""
+    _smtp_pass_diag = ""
+    try:
+        _smtp_user_diag = st.secrets["SMTP_USER"]
+        _smtp_pass_diag = st.secrets["SMTP_PASS"]
+    except: pass
+
+    if _smtp_user_diag:
+        _masked_pass = _smtp_pass_diag[:2] + "****" + _smtp_pass_diag[-2:] if len(_smtp_pass_diag) > 4 else "****"
+        _is_app_pwd  = len(_smtp_pass_diag.replace(" ","")) == 16 and _smtp_pass_diag.replace(" ","").isalnum()
+        st.caption(f"SMTP_USER : {_smtp_user_diag}")
+        st.caption(f"SMTP_PASS : {_masked_pass}")
+        if _is_app_pwd:
+            st.success("✅ App Password détecté (16 caractères)")
+        else:
+            st.warning(
+                f"⚠️ SMTP_PASS ({len(_smtp_pass_diag)} car.) semble être le mot de passe ordinaire. "
+                "Gmail exige un **App Password** (16 caractères alphanumériques)."
+            )
+            st.markdown("""
+            **Comment créer un App Password Gmail :**
+            1. [myaccount.google.com](https://myaccount.google.com) → **Sécurité**
+            2. **Validation en 2 étapes** (doit être activée)
+            3. → **Mots de passe des applications**
+            4. Créer → Nom : "Atlantic Re IA" → **Générer**
+            5. Copier les **16 caractères** (ex: `abcd efgh ijkl mnop`)
+            6. Dans Secrets Streamlit : `SMTP_PASS = "abcdefghijklmnop"` (sans espaces)
+            """)
+    else:
+        st.caption("SMTP_USER non trouvé dans les Secrets")
+
+    if st.button("📧 Tester l'envoi email", key="btn_test_smtp", use_container_width=True):
+        with st.spinner("Envoi en cours..."):
+            ok, msg_smtp = envoyer_notification_email(
+                "Test Atlantic Re IA",
+                "<p>Test de configuration email depuis Atlantic Re IA.</p>"
+                f"<p>Utilisateur : {st.session_state.get('user_email','')}</p>",
+                "hervepagnangde@gmail.com"
+            )
+        if ok:
+            st.success(f"✅ {msg_smtp}")
+        else:
+            st.error(f"❌ {msg_smtp}")
+
     st.markdown("### 🌍 Contexte global")
     instructions_globales = st.text_area("Contexte portefeuille",
         placeholder="Ex: Portefeuille automobile Maroc, forte croissance 2023...",
