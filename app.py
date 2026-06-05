@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import anthropic
 import pandas as pd
 import numpy as np
@@ -658,62 +657,9 @@ def get_admin_password():
     try: return st.secrets["admin_password"]
     except: return "Admin@AtlanticRe2026"
 
-def get_users_details():
-    """
-    Retourne les utilisateurs sous forme normalisée.
-
-    Formats acceptés dans st.secrets :
-
-    1) Format simple historique :
-       [users]
-       "demo@atlanticre.ia" = "DEMO2026"
-
-    2) Format enrichi recommandé :
-       [users."demo@atlanticre.ia"]
-       code = "DEMO2026"
-       poste = "Actuaire tarificateur"
-       nom = "Utilisateur Démo"
-    """
-    fallback = {
-        "demo@atlanticre.ia": {
-            "code": "DEMO2026",
-            "poste": "Utilisateur démo",
-            "nom": "Compte Démo",
-            "statut": "Actif",
-        }
-    }
-    try:
-        raw_users = dict(st.secrets.get("users", {}))
-    except Exception:
-        raw_users = {}
-
-    if not raw_users:
-        return fallback
-
-    details = {}
-    for email, value in raw_users.items():
-        email_norm = str(email).lower().strip()
-        if isinstance(value, dict):
-            v = dict(value)
-            code_val = str(v.get("code", v.get("password", v.get("cle", v.get("code_acces", ""))))).strip()
-            details[email_norm] = {
-                "code": code_val,
-                "poste": str(v.get("poste", v.get("role", "Non renseigné"))),
-                "nom": str(v.get("nom", v.get("name", ""))),
-                "statut": str(v.get("statut", "Actif")),
-            }
-        else:
-            details[email_norm] = {
-                "code": str(value).strip(),
-                "poste": "Non renseigné",
-                "nom": "",
-                "statut": "Actif",
-            }
-    return details
-
 def get_users():
-    """Compatibilité avec l'ancien système : retourne {email: code}."""
-    return {email: info.get("code", "") for email, info in get_users_details().items()}
+    try: return dict(st.secrets["users"])
+    except: return {"demo@atlanticre.ia": "DEMO2026"}
 
 def check_access(email, code):
     return get_users().get(email.lower().strip()) == code.strip()
@@ -741,11 +687,8 @@ if not st.session_state["authenticated"]:
         code  = st.text_input("🔑 Code d'accès", type="password", placeholder="CODE123", key="login_code")
         if st.button("Se connecter", type="primary", use_container_width=True):
             if check_access(email, code):
-                email_norm = email.lower().strip()
                 st.session_state["authenticated"] = True
-                st.session_state["user_email"]    = email_norm
-                st.session_state["user_poste"]    = get_users_details().get(email_norm, {}).get("poste", "")
-                st.session_state["user_nom"]      = get_users_details().get(email_norm, {}).get("nom", "")
+                st.session_state["user_email"]    = email
                 st.rerun()
             else:
                 st.error("❌ Email ou code d'accès incorrect")
@@ -832,92 +775,292 @@ if st.session_state["page"] == "landing":
     st.stop()
 
 # ════════════════════════════════════════════
-# APP CONFIG CSS
+# APP CONFIG CSS — Design Atlantic Re (inspiré Orange BF)
 # ════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-* { font-family: 'Inter', sans-serif; }
-.stApp { background-color: #f4f6f4; }
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #f1f1f1; }
-::-webkit-scrollbar-thumb { background: #2d8a4e; border-radius: 3px; }
-h1 { color: #1a1a1a; font-weight: 700; letter-spacing: -0.5px; }
-h2 { color: #1a1a1a; border-bottom: 3px solid #2d8a4e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; }
-h3 { color: #2d8a4e; font-weight: 600; }
-.stButton > button { background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%); color: white; border: none; border-radius: 8px; padding: 10px 24px; font-weight: 600; font-size: 14px; transition: all 0.25s ease; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-.stButton > button:hover { background: linear-gradient(135deg, #2d8a4e 0%, #25a85e 100%); transform: translateY(-2px); box-shadow: 0 6px 16px rgba(45,138,78,0.35); }
-.stButton > button[kind="primary"] { background: linear-gradient(135deg, #2d8a4e 0%, #25a85e 100%); }
-.stButton > button[kind="primary"]:hover { background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%); }
-.stTabs [data-baseweb="tab-list"] { background: #1a1a1a; border-radius: 12px; padding: 6px; gap: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
-.stTabs [data-baseweb="tab"] { color: #888; font-weight: 500; font-size: 13px; border-radius: 8px; padding: 8px 16px; transition: all 0.2s ease; }
-.stTabs [data-baseweb="tab"]:hover { color: white; background: rgba(255,255,255,0.1); }
-.stTabs [aria-selected="true"] { background: linear-gradient(135deg, #2d8a4e, #25a85e) !important; color: white !important; border-radius: 8px; box-shadow: 0 2px 8px rgba(45,138,78,0.4); }
-[data-testid="stSidebar"] { background: linear-gradient(180deg, #1a1a1a 0%, #2a2a2a 100%); border-right: 1px solid #2d8a4e; }
-[data-testid="stSidebar"] * { color: #e0e0e0 !important; }
-[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color: #2d8a4e !important; border-bottom: 1px solid #333 !important; }
-[data-testid="stSidebar"] .stTextInput input, [data-testid="stSidebar"] .stNumberInput input { background: #2a2a2a; border: 1px solid #444; color: white !important; border-radius: 6px; }
-[data-testid="stMetric"] { background: white; border-radius: 12px; padding: 16px 20px; border: 1px solid #e8e8e8; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #2d8a4e; transition: transform 0.2s ease; }
-[data-testid="stMetric"]:hover { transform: translateY(-2px); }
-[data-testid="stMetricLabel"] { color: #666 !important; font-size: 13px !important; font-weight: 500 !important; }
-[data-testid="stMetricValue"] { color: #1a1a1a !important; font-weight: 700 !important; }
-[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.08); border: 1px solid #e8e8e8; }
-.stTextInput input, .stNumberInput input, .stTextArea textarea { border: 1.5px solid #e0e0e0; border-radius: 8px; padding: 10px 14px; font-size: 14px; transition: all 0.2s ease; background: white; }
-.stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus { border-color: #2d8a4e; box-shadow: 0 0 0 3px rgba(45,138,78,0.15); outline: none; }
-.stSelectbox > div > div { border: 1.5px solid #e0e0e0; border-radius: 8px; }
-.stSelectbox > div > div:hover { border-color: #2d8a4e; }
-.streamlit-expanderHeader { background: white; border-radius: 10px; border: 1px solid #e8e8e8; font-weight: 500; color: #1a1a1a; padding: 12px 16px; transition: all 0.2s ease; }
-.streamlit-expanderHeader:hover { border-color: #2d8a4e; color: #2d8a4e; }
-.streamlit-expanderContent { border: 1px solid #e8e8e8; border-top: none; border-radius: 0 0 10px 10px; background: #fafafa; padding: 16px; }
-hr { border: none; border-top: 2px solid #e8e8e8; margin: 20px 0; }
-.stProgress > div > div { background: linear-gradient(90deg, #2d8a4e, #25a85e); border-radius: 4px; }
-.stProgress > div { background: #e8e8e8; border-radius: 4px; }
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ── Variables de couleur Atlantic Re ── */
+:root {
+  --ar-primary:   #0d2b3e;
+  --ar-teal:      #00b5a5;
+  --ar-green:     #1a7a5a;
+  --ar-green2:    #00c896;
+  --ar-black:     #080d14;
+  --ar-dark:      #111820;
+  --ar-mid:       #1e3a52;
+  --ar-light:     #e8f7f4;
+  --ar-offwhite:  #f2f8f7;
+  --ar-text:      #0a1628;
+  --ar-muted:     #5a7a8a;
+  --ar-border:    #d0e8e2;
+  --ar-shadow:    rgba(0,181,165,0.18);
+  --ar-orange:    #ff6b35;
+}
+
+/* ── Base ── */
+* { font-family: 'Inter', 'Montserrat', sans-serif; box-sizing: border-box; }
+.stApp { background: var(--ar-offwhite) !important; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--ar-light); }
+::-webkit-scrollbar-thumb { background: var(--ar-teal); border-radius: 10px; }
+
+/* ── Titres ── */
+h1 { color: var(--ar-primary); font-family: 'Montserrat', sans-serif; font-weight: 800;
+     letter-spacing: -0.5px; }
+h2 { color: var(--ar-primary); font-weight: 700;
+     border-bottom: 3px solid var(--ar-teal); padding-bottom: 12px; margin-bottom: 20px; }
+h3 { color: var(--ar-green); font-weight: 600; }
+
+/* ── Boutons — style Orange BF large ── */
+.stButton > button {
+  background: linear-gradient(135deg, var(--ar-primary) 0%, var(--ar-mid) 100%);
+  color: white; border: none; border-radius: 4px; padding: 12px 28px;
+  font-weight: 700; font-size: 14px; font-family: 'Montserrat', sans-serif;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  transition: all 0.3s ease; box-shadow: 0 4px 16px rgba(13,43,62,0.3);
+  min-height: 44px;
+}
+.stButton > button:hover {
+  background: linear-gradient(135deg, var(--ar-teal) 0%, var(--ar-green2) 100%);
+  transform: translateY(-3px); box-shadow: 0 8px 24px var(--ar-shadow);
+}
+.stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, var(--ar-teal) 0%, var(--ar-green) 100%);
+  box-shadow: 0 4px 16px var(--ar-shadow);
+}
+.stButton > button[kind="primary"]:hover {
+  background: linear-gradient(135deg, var(--ar-primary) 0%, var(--ar-mid) 100%);
+  box-shadow: 0 8px 24px rgba(13,43,62,0.4);
+}
+.stButton > button[kind="secondary"] {
+  background: transparent; color: var(--ar-teal);
+  border: 2px solid var(--ar-teal); border-radius: 4px;
+}
+.stButton > button[kind="secondary"]:hover {
+  background: var(--ar-teal); color: white;
+}
+
+/* ── Onglets — style barre navigation Orange BF ── */
+.stTabs [data-baseweb="tab-list"] {
+  background: var(--ar-black);
+  border-radius: 0; padding: 0 8px; gap: 2px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  border-bottom: 3px solid var(--ar-teal);
+}
+.stTabs [data-baseweb="tab"] {
+  color: #9ab5c5; font-weight: 600; font-size: 12px;
+  font-family: 'Montserrat', sans-serif;
+  border-radius: 0; padding: 14px 18px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  transition: all 0.25s ease; border-bottom: 3px solid transparent;
+  margin-bottom: -3px;
+}
+.stTabs [data-baseweb="tab"]:hover {
+  color: var(--ar-teal); background: rgba(0,181,165,0.08);
+}
+.stTabs [aria-selected="true"] {
+  background: transparent !important; color: var(--ar-teal) !important;
+  border-bottom: 3px solid var(--ar-teal) !important;
+  box-shadow: none !important;
+}
+
+/* ── Sidebar — panel latéral sombre ── */
+[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, var(--ar-black) 0%, var(--ar-primary) 100%) !important;
+  border-right: none;
+  box-shadow: 4px 0 24px rgba(0,0,0,0.3);
+}
+[data-testid="stSidebar"] * { color: #c8dce6 !important; }
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+  color: var(--ar-teal) !important; border-bottom: 1px solid #1e3a52 !important;
+  font-family: 'Montserrat', sans-serif !important; letter-spacing: 0.5px;
+}
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stNumberInput input {
+  background: #0d2040; border: 1px solid #1e4060; color: white !important;
+  border-radius: 4px;
+}
+[data-testid="stSidebar"] .stButton > button {
+  background: linear-gradient(135deg, var(--ar-teal), var(--ar-green)) !important;
+  border-radius: 4px; font-size: 12px; padding: 8px 16px;
+}
+[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div {
+  background: #0d2040 !important; border-color: #1e4060 !important;
+}
+
+/* ── Métriques — cartes chiffrées ── */
+[data-testid="stMetric"] {
+  background: white; border-radius: 0;
+  padding: 20px 24px; border: none;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  border-top: 4px solid var(--ar-teal);
+  border-left: none;
+  transition: all 0.3s ease;
+  position: relative; overflow: hidden;
+}
+[data-testid="stMetric"]::before {
+  content: ''; position: absolute; top:0; right:0;
+  width: 60px; height: 100%;
+  background: linear-gradient(135deg, transparent, rgba(0,181,165,0.06));
+}
+[data-testid="stMetric"]:hover {
+  transform: translateY(-4px); box-shadow: 0 12px 30px var(--ar-shadow);
+  border-top-color: var(--ar-green2);
+}
+[data-testid="stMetricLabel"] {
+  color: var(--ar-muted) !important; font-size: 11px !important;
+  font-weight: 700 !important; text-transform: uppercase; letter-spacing: 1px;
+}
+[data-testid="stMetricValue"] {
+  color: var(--ar-primary) !important; font-weight: 800 !important;
+  font-family: 'Montserrat', sans-serif !important; font-size: 24px !important;
+}
+
+/* ── DataFrames ── */
+[data-testid="stDataFrame"] {
+  border-radius: 0; overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: none;
+  border-top: 3px solid var(--ar-teal);
+}
+
+/* ── Inputs ── */
+.stTextInput input, .stNumberInput input, .stTextArea textarea {
+  border: 1.5px solid var(--ar-border); border-radius: 4px;
+  padding: 12px 16px; font-size: 14px;
+  transition: all 0.2s ease; background: white; color: var(--ar-text);
+}
+.stTextInput input:focus, .stNumberInput input:focus, .stTextArea textarea:focus {
+  border-color: var(--ar-teal); box-shadow: 0 0 0 3px rgba(0,181,165,0.12); outline: none;
+}
+.stSelectbox > div > div { border: 1.5px solid var(--ar-border); border-radius: 4px; }
+.stSelectbox > div > div:hover { border-color: var(--ar-teal); }
+
+/* ── Expanders ── */
+.streamlit-expanderHeader {
+  background: white; border-radius: 0;
+  border: none; border-left: 4px solid var(--ar-teal);
+  font-weight: 600; color: var(--ar-primary); padding: 14px 18px;
+  transition: all 0.2s ease; font-family: 'Montserrat', sans-serif;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+.streamlit-expanderHeader:hover {
+  border-left-color: var(--ar-green2); color: var(--ar-teal);
+  background: var(--ar-light);
+}
+.streamlit-expanderContent {
+  border: none; border-left: 4px solid var(--ar-light);
+  background: white; padding: 16px 20px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+}
+
+/* ── Progress bars ── */
+.stProgress > div > div {
+  background: linear-gradient(90deg, var(--ar-teal), var(--ar-green2));
+  border-radius: 0;
+}
+.stProgress > div { background: var(--ar-light); border-radius: 0; }
+
+/* ── Séparateurs ── */
+hr { border: none; border-top: 1px solid var(--ar-border); margin: 24px 0; }
+
+/* ── Success / Warning / Error — style Orange BF ── */
+.stSuccess, div[data-baseweb="notification"][kind="positive"] {
+  background: linear-gradient(135deg, #00c896, #1a7a5a) !important;
+  color: white !important; border-radius: 4px; border: none !important;
+  font-weight: 600;
+}
+.stWarning { border-left: 4px solid var(--ar-orange) !important; }
+.stError   { border-left: 4px solid #e74c3c !important; }
+
+/* ── Checkboxes et radios ── */
+.stCheckbox label { color: var(--ar-text) !important; font-weight: 500; }
+.stRadio label { color: var(--ar-text) !important; }
+
+/* ── Sliders ── */
+.stSlider div[data-baseweb="slider"] div[role="slider"] {
+  background: var(--ar-teal) !important;
+}
+
+/* ── Header app top bar ── */
+header[data-testid="stHeader"] {
+  background: var(--ar-black) !important;
+  border-bottom: 3px solid var(--ar-teal) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
 
-def card(titre, valeur, couleur="#2d8a4e", icone="📊"):
-    st.markdown(f"""<div style="background:white;border-radius:12px;padding:20px 24px;border:1px solid #e8e8e8;
-        border-left:5px solid {couleur};box-shadow:0 2px 8px rgba(0,0,0,0.06);margin-bottom:12px;">
-        <div style="font-size:12px;color:#888;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">{icone} {titre}</div>
-        <div style="font-size:24px;font-weight:700;color:#1a1a1a">{valeur}</div></div>""", unsafe_allow_html=True)
+def card(titre, valeur, couleur="#00b5a5", icone="📊", sous_titre=""):
+    """Carte chiffrée style Orange BF / Atlantic Re."""
+    st.markdown(f"""
+    <div style="background:white;border-top:4px solid {couleur};
+        padding:20px 24px;box-shadow:0 4px 20px rgba(0,0,0,0.08);
+        margin-bottom:12px;position:relative;overflow:hidden;transition:all 0.3s ease"
+        onmouseover="this.style.boxShadow='0 8px 32px rgba(0,181,165,0.2)';this.style.transform='translateY(-3px)'"
+        onmouseout="this.style.boxShadow='0 4px 20px rgba(0,0,0,0.08)';this.style.transform='translateY(0)'">
+      <div style="position:absolute;top:0;right:0;width:80px;height:100%;
+          background:linear-gradient(135deg,transparent,rgba(0,181,165,0.05))"></div>
+      <div style="font-size:11px;color:#5a7a8a;font-weight:700;text-transform:uppercase;
+          letter-spacing:1px;margin-bottom:8px">{icone} {titre}</div>
+      <div style="font-size:26px;font-weight:800;color:#0d2b3e;
+          font-family:'Montserrat',sans-serif;line-height:1.1">{valeur}</div>
+      {f'<div style="font-size:11px;color:#5a7a8a;margin-top:4px">{sous_titre}</div>' if sous_titre else ''}
+    </div>""", unsafe_allow_html=True)
 
 
-def section_header(titre, sous_titre="", icone=""):
-    st.markdown(f"""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d2d2d 100%);border-radius:12px;
-        padding:20px 24px;margin-bottom:20px;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
-        <div style="font-size:20px;font-weight:700;color:white">{icone} {titre}</div>
-        {f'<div style="font-size:13px;color:#aaa;margin-top:4px">{sous_titre}</div>' if sous_titre else ''}
-        </div>""", unsafe_allow_html=True)
+def section_header(titre, sous_titre="", icone="", couleur="#0d2b3e"):
+    """En-tête de section style Orange BF — bande pleine largeur."""
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,{couleur} 0%,#1e3a52 60%,#004d40 100%);
+        padding:24px 32px;margin-bottom:24px;
+        box-shadow:0 6px 24px rgba(0,0,0,0.2);
+        border-bottom:4px solid #00b5a5;position:relative;overflow:hidden">
+      <div style="position:absolute;right:20px;top:50%;transform:translateY(-50%);
+          opacity:0.08;font-size:80px">{icone}</div>
+      <div style="font-size:22px;font-weight:800;color:white;
+          font-family:'Montserrat',sans-serif;letter-spacing:-0.3px">{icone} {titre}</div>
+      {f'<div style="font-size:13px;color:rgba(255,255,255,0.75);margin-top:6px;font-weight:400">{sous_titre}</div>' if sous_titre else ''}
+    </div>""", unsafe_allow_html=True)
 
 
 def tableau_resultats(donnees, titre=""):
+    """Tableau de données style Atlantic Re / Orange BF."""
     if not donnees: return
     if titre:
-        st.markdown(f"<h4 style='color:#1a1a1a;margin-bottom:12px'>{titre}</h4>", unsafe_allow_html=True)
+        st.markdown(f"""<div style="font-size:15px;font-weight:700;color:#0d2b3e;
+            margin-bottom:12px;padding-bottom:8px;
+            border-bottom:2px solid #00b5a5;font-family:'Montserrat',sans-serif">
+            {titre}</div>""", unsafe_allow_html=True)
     colonnes = list(donnees[0].keys())
-    html = """<div style="overflow-x:auto;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
-    <table style="width:100%;border-collapse:collapse;font-size:13px;">
-    <thead><tr style="background:linear-gradient(135deg,#1a1a1a,#2d2d2d)">"""
+    html = """<div style="overflow-x:auto;box-shadow:0 4px 20px rgba(0,0,0,0.08);border-top:3px solid #00b5a5">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;background:white">
+    <thead><tr style="background:linear-gradient(135deg,#0d2b3e,#1e3a52)">"""
     for col in colonnes:
-        html += f'<th style="padding:12px 16px;text-align:left;color:white;font-weight:600">{col}</th>'
+        html += f'<th style="padding:13px 18px;text-align:left;color:#00b5a5;font-weight:700;font-family:Montserrat,sans-serif;font-size:11px;text-transform:uppercase;letter-spacing:0.8px;white-space:nowrap">{col}</th>'
     html += "</tr></thead><tbody>"
     for i, row in enumerate(donnees):
-        bg = "white" if i % 2 == 0 else "#f9fafb"
-        html += f'<tr style="background:{bg}" onmouseover="this.style.background=\'#f0fff4\'" onmouseout="this.style.background=\'{bg}\'">'
+        bg = "white" if i % 2 == 0 else "#f2f8f7"
+        html += f'<tr style="background:{bg};transition:background 0.15s" onmouseover="this.style.background=\'#e4f7f2\'" onmouseout="this.style.background=\'{bg}\'">'
         for col in colonnes:
             val = row.get(col, "")
-            color = "#1a1a1a"
+            color = "#0a1628"
+            fw = "500"
             if "%" in str(val) and any(c.isdigit() for c in str(val)):
                 try:
-                    num = float(str(val).replace("%",""))
-                    if num > 5: color = "#ef4444"
-                    elif num > 2: color = "#f59e0b"
-                    else: color = "#2d8a4e"
+                    num = float(str(val).replace("%","").replace(",",".").strip())
+                    if num > 5:   color = "#c0392b"; fw = "700"
+                    elif num > 2: color = "#e67e22"; fw = "600"
+                    elif num > 0: color = "#1a7a5a"; fw = "600"
                 except: pass
-            if "✅" in str(val): color = "#2d8a4e"
-            if "⚠️" in str(val): color = "#f59e0b"
-            html += f'<td style="padding:11px 16px;border-bottom:1px solid #f0f0f0;color:{color};font-weight:500">{val}</td>'
+            if "✅" in str(val): color = "#1a7a5a"; fw = "700"
+            if "⚠️" in str(val): color = "#e67e22"; fw = "600"
+            if "🚨" in str(val) or "❌" in str(val): color = "#c0392b"; fw = "700"
+            html += f'<td style="padding:12px 18px;border-bottom:1px solid #e8f7f4;color:{color};font-weight:{fw};font-size:13px">{val}</td>'
         html += "</tr>"
     html += "</tbody></table></div>"
     st.markdown(html, unsafe_allow_html=True)
@@ -967,57 +1110,97 @@ def prompt_inputs(key_prefix, placeholder_contexte="", placeholder_instructions=
 def build_prompt(role, task, data, contexte="", instructions="",
                  input_data="", output_instructions="",
                  contexte_global="", exemples="", contraintes=""):
+    """
+    Prompt engineering avancé pour tarification réassurance non-proportionnelle.
+    Intègre : chain-of-thought, few-shot, contraintes actuarielles, cadre réglementaire.
+    """
     prompt = f"""
-════════════════════════════════════════════
-RÔLE
-════════════════════════════════════════════
+╔══════════════════════════════════════════════════════════════╗
+║  ATLANTIC RE IA — AGENT ACTUARIEL EXPERT                     ║
+║  Réassurance Non-Proportionnelle XL · Automobile · Maroc    ║
+╚══════════════════════════════════════════════════════════════╝
+
+═══ IDENTITÉ & RÔLE ══════════════════════════════════════════
 {role}
 
-════════════════════════════════════════════
-RÈGLES ABSOLUES
-════════════════════════════════════════════
-1. ANTI-HALLUCINATION : Ne jamais inventer. Si incertain → "Information insuffisante."
-2. TRIANGLE INTERDIT : Ne JAMAIS générer, afficher ou simuler un triangle de développement dans tes réponses texte. Les données réelles sont visibles dans l'onglet 🔥 Burning Cost → expander "Triangle individuel". Dis simplement : "Consultez le triangle réel dans l'onglet BC."
-2. RAISONNEMENT : [Observation] → [Analyse] → [Conclusion] avec chiffres.
-3. CONTRAINTES MÉTIER :
-{contraintes if contraintes else "   - Taux techniques positifs et < 50%\n   - Ecart BC/Sim > 25% signalé\n   - BC=0 tranche cat NORMAL"}
-4. VÉRIFICATION : chiffres présents ? cohérence ? hiérarchie taux_pur < taux_risque < taux_tech ?
-5. EXEMPLES :
-{exemples if exemples else '   BON : "Taux BC 2.94%, simulation 3.98%, ecart 35% -> retenir simulation."\n   MAUVAIS : "Le taux est acceptable."'}
+Niveau d'expertise requis : Senior (15+ ans réassurance non-prop, marchés émergents, automobile).
 
-════════════════════════════════════════════
-CONTEXTE GLOBAL
-════════════════════════════════════════════
-{contexte_global if contexte_global else "Non fourni."}
+═══ CADRE RÉGLEMENTAIRE & NORMES ACTUARIELLES ═══════════════
+• Standards IAA (International Actuarial Association)
+• Normes IAIS pour la réassurance non-proportionnelle
+• Réglementation DAPS Maroc (Circulaire n°AS/17)
+• Principes ASTIN/CAS pour la tarification sinistre-à-sinistre
+• Solvency II — Pilier 1 pour la modélisation du risque
+• Standards IFoA (Institute & Faculty of Actuaries) — Actuarial Profession Standards
 
-════════════════════════════════════════════
-CONTEXTE SPECIFIQUE
-════════════════════════════════════════════
-{contexte if contexte else "Aucun."}
+═══ RÈGLES ABSOLUES — ANTI-HALLUCINATION ════════════════════
+1. VÉRIFICATION SYSTÉMATIQUE : Tout chiffre doit être tracé à sa source dans les données.
+2. TRIANGLE INTERDIT : Ne JAMAIS reconstituer ou afficher un triangle dans le texte.
+   → Référencer : "Consultez le triangle réel dans l'onglet BC."
+3. RAISONNEMENT CHAÎNÉ (Chain-of-Thought) :
+   [Observation factuelle] → [Hypothèse testée] → [Calcul explicite] → [Conclusion chiffrée]
+4. INCERTITUDE OBLIGATOIRE : Si données insuffisantes → "Données insuffisantes pour conclure."
+   Ne jamais extrapoler au-delà des données observées sans le signaler.
+5. HIÉRARCHIE ACTUARIELLE INVARIABLE :
+   τ_pur ≤ τ_risque ≤ τ_technique (toujours, sinon anomalie à signaler)
+6. SOURCES PRIMAIRES : Préférer la littérature actuarielle (CAS, ASTIN, Daykin-Pentikäinen-Pesonen).
 
-════════════════════════════════════════════
-TACHE
-════════════════════════════════════════════
+═══ CONTRAINTES MÉTIER SPÉCIFIQUES ═════════════════════════
+{contraintes if contraintes else """• Taux technique positif et < 50% (anomalie si ≥ 50%)
+• BC=0 pour tranche cat avec < 3 années non-nulles : NORMAL (règle R2)
+• Écart BC/Sim > 25% → signaler et justifier ; > 50% → anomalie critique
+• Market curve : tranches cat UNIQUEMENT (R4) — R² minimum acceptable : 0.45
+• Chargement sécurité : τ_risque = τ_pur + σ_hist × 20% (règle R1, CAS standard)
+• Reconstitutions : cap = (n_rec + 1) × portée
+• As-If sur incréments (pas sur cumulatifs) — méthode Finger (2006)
+• Stabilisation : déclenché si I_règlement/I_survenance ≥ 1 + seuil
+• Sinistres majeurs : fit GPD sur excédances (méthode EVT/Pickands-Balkema-de Haan)"""}
+
+═══ CONTEXTE GLOBAL PORTEFEUILLE ════════════════════════════
+{contexte_global if contexte_global else "Portefeuille automobile Maroc, réassurance non-proportionnelle, marché en développement."}
+
+═══ CONTEXTE SPÉCIFIQUE ═════════════════════════════════════
+{contexte if contexte else "Non fourni."}
+
+═══ TÂCHE ═══════════════════════════════════════════════════
 {task}
 
-════════════════════════════════════════════
-DONNEES
-════════════════════════════════════════════
+═══ DONNÉES D'ANALYSE ═══════════════════════════════════════
 {data}
-{("DONNEES SUPPLEMENTAIRES :\n" + input_data) if input_data else ""}
+{("DONNÉES SUPPLÉMENTAIRES FOURNIES :\n" + input_data) if input_data else ""}
 
-════════════════════════════════════════════
-INSTRUCTIONS SPECIFIQUES
-════════════════════════════════════════════
-{instructions if instructions else "Suivre la tache telle que decrite."}
+═══ INSTRUCTIONS DE PRÉCISION ═══════════════════════════════
+{instructions if instructions else "Appliquer les règles actuarielles et produire une analyse structurée."}
 
-════════════════════════════════════════════
-FORMAT DE SORTIE
-════════════════════════════════════════════
-{output_instructions if output_instructions else "1. SYNTHESE (2-3 phrases)\n2. ANALYSE PAR TRANCHE\n3. POINTS D'ATTENTION\n4. CONCLUSION"}
+═══ EXEMPLES FEW-SHOT (référence qualité) ═══════════════════
+{exemples if exemples else """
+EXEMPLE BON :
+"Taux BC T1 = 2.94% (8 années non-nulles / 10, σ=1.82%), Simulation = 3.98% (α=1.45, λ=3.2).
+Écart = 35% > 25% → règle de prudence : retenir la simulation. τ_technique = 3.98% × (1-0.00) / (1-0.10-0.05-0.10) = 5.24%.
+Point d'attention : l'écart élevé suggère une sous-estimation du BC due à des sinistres extrêmes non capturés."
 
-La precision prime sur l'exhaustivite.
-════════════════════════════════════════════
+EXEMPLE MAUVAIS (à éviter) :
+"Le taux est raisonnable. Il faut vérifier les données."
+→ Aucun chiffre, aucune méthode, aucune décision actionnelle.
+
+EXEMPLE STRUCTURE ANALYSE :
+T1 Travaillante (13M xs 2M) :
+  • BC : τ_pur=2.18%, σ=1.45%, τ_risque=2.47%, Rec=8.2%, τ_tech=1.94% [8 ans non-nuls ✅]
+  • Sim : τ_pur=3.12%, τ_risque=3.44%, τ_tech=4.59% [α=1.45, λ=3.2]
+  • Écart BC/Sim = 43% > 25% → retenir Simulation → τ_retenu = 4.59%
+  • Prime T1 = 183M × 4.59% = 8,40M MAD"""}
+
+═══ FORMAT DE SORTIE REQUIS ════════════════════════════════
+{output_instructions if output_instructions else """
+1. SYNTHÈSE EXÉCUTIVE (3-5 lignes, chiffres obligatoires)
+2. ANALYSE PAR TRANCHE (structure : BC → Sim → Marché → Retenu → Prime)
+3. POINTS D'ATTENTION (anomalies, incertitudes, conditions à surveiller)
+4. RECOMMANDATIONS (actionnelles, quantifiées, hiérarchisées)
+5. CONCLUSION ACTUARIELLE (verdict clair : ACCEPTER / NÉGOCIER / RÉVISER)"""}
+
+La précision quantitative prime sur l'exhaustivité qualitative.
+Chaque affirmation doit être étayée par un calcul explicite.
+╔══════════════════════════════════════════════════════════════╗
 """
     return prompt.strip()
 
@@ -1053,6 +1236,264 @@ def claude_stream(api_key, prompt, max_tokens=2000, session_key="", use_opus=Fal
     if session_key:
         st.session_state[session_key] = full_text
     return full_text
+
+
+# ════════════════════════════════════════════
+# NOTIFICATION EMAIL — Alerte consultation agent
+# ════════════════════════════════════════════
+
+def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.com"):
+    """
+    Envoie une notification email via SMTP Gmail.
+    Configurez SMTP_USER et SMTP_PASS dans les Secrets Streamlit.
+    """
+    try:
+        smtp_user = st.secrets.get("SMTP_USER", "")
+        smtp_pass = st.secrets.get("SMTP_PASS", "")
+        if not smtp_user or not smtp_pass:
+            return False, "SMTP non configuré (ajoutez SMTP_USER et SMTP_PASS dans Secrets)"
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"[Atlantic Re IA] {sujet}"
+        msg["From"]    = smtp_user
+        msg["To"]      = destinataire
+        html_body = f"""
+        <html><body style="font-family:Arial,sans-serif;color:#0d2b3e">
+        <div style="border-top:4px solid #00b5a5;padding:20px;max-width:600px">
+          <h2 style="color:#0d2b3e">🤖 Atlantic Re IA — Notification</h2>
+          <div style="background:#f2f8f7;padding:16px;border-left:4px solid #00b5a5">
+            {corps}
+          </div>
+          <p style="color:#5a7a8a;font-size:12px;margin-top:20px">
+            Atlantic Re IA · Réassurance Non-Proportionnelle · Maroc<br>
+            <a href="https://atlantic-re-ia.streamlit.app" style="color:#00b5a5">Accéder à l'outil</a>
+          </p>
+        </div></body></html>"""
+        msg.attach(MIMEText(html_body, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, destinataire, msg.as_string())
+        return True, "Email envoyé"
+    except Exception as e:
+        return False, str(e)
+
+
+def notifier_consultation(user_email, module, details=""):
+    """Notifie automatiquement lors d'une consultation de l'agent."""
+    sujet = f"Consultation par {user_email} — {module}"
+    from datetime import datetime
+    corps = f"""
+    <p><b>Utilisateur :</b> {user_email}</p>
+    <p><b>Module consulté :</b> {module}</p>
+    <p><b>Date/Heure :</b> {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}</p>
+    {f'<p><b>Détails :</b> {details}</p>' if details else ''}
+    """
+    ok, msg = envoyer_notification_email(sujet, corps)
+    return ok
+
+
+# ════════════════════════════════════════════
+# RESSOURCES ACTUARIELLES — Sites web de référence
+# ════════════════════════════════════════════
+
+RESSOURCES_ACTUARIELLES = {
+    "Réassurance & Marché": [
+        {"nom": "Swiss Re Sigma",           "url": "https://www.swissre.com/institute/research/sigma-research/",        "desc": "Études et publications Swiss Re"},
+        {"nom": "Munich Re Publications",   "url": "https://www.munichre.com/en/solutions/reinsurance.html",            "desc": "Publications Munich Re"},
+        {"nom": "SCOR Technical Papers",    "url": "https://www.scor.com/en/expertise/insurance/reinsurance",           "desc": "SCOR réassurance"},
+        {"nom": "ACMAR Maroc",              "url": "https://www.acmar.ma",                                               "desc": "Association Compagnies Maroc"},
+        {"nom": "SCR Maroc",                "url": "https://www.atlantic-re.ma",                                         "desc": "Atlantic Re (ex SCR)"},
+        {"nom": "DAPS Maroc",               "url": "https://www.mays.gov.ma",                                            "desc": "Direction Assurances & Prévoyance Sociale"},
+    ],
+    "Actuariat & Standards": [
+        {"nom": "IAA (Intern. Actuarial)",  "url": "https://www.actuaries.org",                                          "desc": "Association Actuarielle Internationale"},
+        {"nom": "CAS (Casualty Actuarial)", "url": "https://www.casact.org",                                             "desc": "Casualty Actuarial Society — Non-Vie"},
+        {"nom": "SOA Publications",         "url": "https://www.soa.org/resources/research-reports/",                    "desc": "Society of Actuaries"},
+        {"nom": "Institut des Actuaires FR","url": "https://www.institutdesactuaires.com",                               "desc": "Institut des Actuaires France"},
+        {"nom": "ISFA Lyon",                "url": "https://isfa.univ-lyon1.fr",                                         "desc": "Institut de Science Financière et d'Assurances"},
+        {"nom": "CNAM Paris",               "url": "https://www.cnam.fr",                                                "desc": "Conservatoire National des Arts et Métiers"},
+    ],
+    "Cours & Formations": [
+        {"nom": "Cours Actuariat Paris",    "url": "https://www.actuariat-paris.fr",                                     "desc": "Master Actuariat Paris"},
+        {"nom": "Coursera Actuarial",       "url": "https://www.coursera.org/search?query=actuarial+science",            "desc": "MOOCs actuariat en ligne"},
+        {"nom": "EIOPA Publications",       "url": "https://www.eiopa.europa.eu/publications_en",                        "desc": "Publications réglementaires EU"},
+        {"nom": "SCAHT Techniques NP",      "url": "https://cas.confex.com",                                             "desc": "CAS Forum Non-Proportionnel"},
+        {"nom": "R-Actuarial",              "url": "https://actuarialsciencewithr.com",                                  "desc": "Actuariat avec R — cours pratiques"},
+        {"nom": "Variance Journal",         "url": "https://www.variancemagazine.org",                                   "desc": "Journal CAS sur tarification non-vie"},
+    ],
+    "Finance & Économie": [
+        {"nom": "NBER Working Papers",      "url": "https://www.nber.org/papers",                                        "desc": "National Bureau Economic Research"},
+        {"nom": "BIS Publications",         "url": "https://www.bis.org/publications/",                                  "desc": "Banque des Règlements Internationaux"},
+        {"nom": "IMF Insurance",            "url": "https://www.imf.org/en/Topics/climate-change/insurance",             "desc": "FMI & Assurance"},
+        {"nom": "ASTIN Bulletin",           "url": "https://www.cambridge.org/core/journals/astin-bulletin",             "desc": "Journal ASTIN — tarification actuarielle"},
+    ],
+}
+
+
+def afficher_ressources_actuarielles():
+    """Panneau de ressources actuarielles web pour l'agent."""
+    st.markdown("---")
+    st.markdown("#### 🌐 Ressources actuarielles — Sites de référence")
+    tabs_res = st.tabs(list(RESSOURCES_ACTUARIELLES.keys()))
+    for tab, (categorie, ressources) in zip(tabs_res, RESSOURCES_ACTUARIELLES.items()):
+        with tab:
+            cols = st.columns(2)
+            for i, r in enumerate(ressources):
+                with cols[i % 2]:
+                    st.markdown(f"""
+                    <a href="{r['url']}" target="_blank" style="text-decoration:none">
+                    <div style="background:white;border-left:3px solid #00b5a5;
+                        padding:12px 16px;margin-bottom:8px;cursor:pointer;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.06);transition:all 0.2s"
+                        onmouseover="this.style.borderLeftColor='#0d2b3e';this.style.boxShadow='0 4px 16px rgba(0,181,165,0.2)'"
+                        onmouseout="this.style.borderLeftColor='#00b5a5';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.06)'">
+                      <div style="font-size:13px;font-weight:700;color:#0d2b3e">{r['nom']}</div>
+                      <div style="font-size:11px;color:#5a7a8a;margin-top:3px">{r['desc']}</div>
+                      <div style="font-size:10px;color:#00b5a5;margin-top:4px">{r['url'][:50]}...</div>
+                    </div></a>""", unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════
+# INTÉGRATION R — Exécution de scripts R
+# ════════════════════════════════════════════
+
+SCRIPTS_R_TARIFICATION = {
+    "Hill Plot & Seuil Pareto": """
+# ─── Hill plot et sélection de seuil (style evir) ───────────────────
+library(evir)
+# X = vecteur des montants sinistres
+X <- sort(X, decreasing=TRUE)
+# Hill estimates
+hill_est <- function(X, k_max=NULL) {
+  n <- length(X)
+  if (is.null(k_max)) k_max <- min(n-1, 200)
+  hills <- numeric(k_max); ks <- 1:k_max
+  for (k in ks) hills[k] <- k / sum(log(X[1:k]/X[k+1]))
+  list(k=ks, alpha=hills)
+}
+h <- hill_est(X)
+plot(h$k, h$alpha, type="l", main="Hill Plot", xlab="k", ylab="alpha(k)")
+# Gertensgarbe — Mann-Kendall progressif/régressif
+abline(v=which.min(abs(diff(h$alpha))), col="red", lty=2)
+""",
+    "Fit GPD (evir)": """
+# ─── Fit GPD sur excédances (paquet evir, identique à l'outil) ───────
+library(evir)
+u <- quantile(X, 0.80)           # seuil (à ajuster via Hill+MEF)
+excesses <- X[X >= u] - u
+fit_gpd <- gpd(X, threshold=u)   # xi=forme, beta=échelle
+print(fit_gpd$par.ests)          # xi, sigma
+# Niveau de retour T ans
+T <- 20
+n_obs <- length(X); n_exc <- sum(X >= u)
+surv <- n_exc / n_obs
+freq_an <- n_obs / nb_annees
+m <- T * freq_an
+if (abs(fit_gpd$par.ests["xi"]) > 1e-10) {
+  Pm <- u + (fit_gpd$par.ests["sigma"] / fit_gpd$par.ests["xi"]) *
+        ((m * surv)^fit_gpd$par.ests["xi"] - 1)
+} else {
+  Pm <- u + fit_gpd$par.ests["sigma"] * log(m * surv)
+}
+cat("Pm (retour", T, "ans) =", Pm, "\\n")
+""",
+    "Simulation XL (Pareto/Poisson)": """
+# ─── Simulation Pareto-Poisson pour tarification XL ─────────────────
+sim_xl <- function(alpha, lambda, seuil, D, L, n_rec=1, n_sim=10000, gnpi=183e6) {
+  charges <- numeric(n_sim)
+  cap <- (n_rec + 1) * L
+  set.seed(42)
+  for (i in seq_len(n_sim)) {
+    N <- rpois(1, lambda)
+    if (N == 0) { charges[i] <- 0; next }
+    U <- runif(N)
+    Sp <- seuil * (U ^ (-1/alpha))   # Pareto par inversion
+    S <- sum(pmin(pmax(Sp - D, 0), L))
+    charges[i] <- min(S, cap)
+  }
+  tau_pur <- mean(charges) / gnpi
+  sigma   <- sd(charges) / gnpi
+  tau_risque <- tau_pur + 0.20 * sigma
+  list(tau_pur=tau_pur, sigma=sigma, tau_risque=tau_risque,
+       tau_tech=tau_risque/(1-0.10-0.05-0.10))
+}
+res <- sim_xl(alpha=1.45, lambda=3.2, seuil=1.6e6, D=2e6, L=13e6)
+cat("τ_pur:", res$tau_pur, "\\nτ_tech:", res$tau_tech, "\\n")
+""",
+    "Burning Cost As-If": """
+# ─── Burning Cost As-If + Stabilisation sur incréments ───────────────
+# df = data.frame(sinistre_id, annee_surv, annee_reg, total)
+# Indices d'inflation
+get_indice <- function(annee, df_indices) {
+  approx(df_indices$annee, df_indices$indice, xout=annee)$y
+}
+# Décumul → As-If → Stabilisation
+df <- df[order(df$sinistre_id, df$annee_reg),]
+df$prev <- c(0, df$total[-nrow(df)])
+df$prev[df$annee_reg == min(df$annee_reg[df$sinistre_id==df$sinistre_id[1]])] <- 0
+df$increment <- pmax(df$total - df$prev, 0)
+# As-If
+I_cotation <- get_indice(2026, df_indices)
+df$inc_asif <- df$increment * (I_cotation / df$I_reg)
+# Stabilisation (seuil = 5%)
+df$ratio <- df$I_reg / df$I_surv
+df$inc_stab <- ifelse(df$ratio >= 1.05, df$inc_asif * (df$I_surv/df$I_reg), df$inc_asif)
+# Recumul
+df$Sk       <- ave(df$inc_asif, df$sinistre_id, FUN=cumsum)
+df$Sprime_k <- ave(df$inc_stab, df$sinistre_id, FUN=cumsum)
+df$coeff    <- df$Sk / pmax(df$Sprime_k, 1e-6)
+""",
+}
+
+
+def afficher_integration_r():
+    """Interface d'intégration R Studio."""
+    st.markdown("---")
+    st.markdown("#### 🔬 Intégration R — Scripts de tarification")
+    st.caption("Scripts R correspondant aux méthodes implémentées dans Atlantic Re IA · Compatible RStudio · Package evir")
+
+    col_script, col_run = st.columns([2, 1])
+    with col_script:
+        script_choisi = st.selectbox("Script R", list(SCRIPTS_R_TARIFICATION.keys()), key="r_script_select")
+    with col_run:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.button("📋 Copier dans le presse-papier", key="btn_copy_r", use_container_width=True):
+            st.info("Copiez le code ci-dessous dans RStudio")
+
+    st.code(SCRIPTS_R_TARIFICATION[script_choisi], language="r")
+
+    st.markdown("##### Exécuter du code R personnalisé")
+    r_custom = st.text_area("Votre code R", height=120, key="r_custom_code",
+        placeholder="# Collez votre code R ici\n# Le résultat sera affiché ci-dessous")
+
+    if st.button("▶ Exécuter R (subprocess)", key="btn_run_r"):
+        import subprocess, tempfile, os
+        if r_custom.strip():
+            with tempfile.NamedTemporaryFile(suffix=".R", mode="w", delete=False, encoding="utf-8") as f:
+                f.write(r_custom); fname = f.name
+            try:
+                result = subprocess.run(
+                    ["Rscript", "--vanilla", fname],
+                    capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    st.code(result.stdout or "(aucun output)", language="text")
+                else:
+                    err = result.stderr
+                    if "not found" in err.lower() or "command" in err.lower():
+                        st.warning("R n'est pas installé sur ce serveur. Copiez le code dans votre RStudio local.")
+                    else:
+                        st.error(f"Erreur R :\n{err}")
+            except FileNotFoundError:
+                st.warning("R/Rscript non disponible sur Streamlit Cloud. Utilisez RStudio localement.")
+            except Exception as e:
+                st.error(str(e))
+            finally:
+                try: os.unlink(fname)
+                except: pass
+        else:
+            st.warning("Entrez du code R à exécuter.")
 
 
 def guide_prompt(etape, exemples_contexte, exemples_instructions, exemples_input, exemples_output):
@@ -1366,100 +1807,25 @@ with st.sidebar:
 # ACCUEIL INTELLIGENT
 # ════════════════════════════════════════════
 
-# ── Bandeau accueil stratégique (0 token) ──
-capacites_suivi = [
-    ("Programme", "df_prog"),
-    ("Triangle & Chain Ladder", "df_liq"),
-    ("Burning Cost", "resultats_bc"),
-    ("Simulation TVE/Pareto", "resultats_sim"),
-    ("Market Curve", "resultats_mkt"),
-    ("Rapport final", "df_rapport"),
-    ("ML entraîné", "labo_modeles"),
-    ("Optimisation programmes", "programmes_optimises_complets"),
-    ("Mémoire métier", "memoire_metier"),
-    ("Audit critique", "agent_critique"),
-]
-
-modules_realises = [n for n, k in capacites_suivi if k in st.session_state and st.session_state.get(k) is not None]
-modules_restants = [n for n, k in capacites_suivi if not (k in st.session_state and st.session_state.get(k) is not None)]
-modules_html = " · ".join([f"<span style='color:#86efac;font-weight:700'>{e}</span>" for e in modules_realises]) if modules_realises else "<span style='color:#cbd5e1'>Aucun module encore exécuté</span>"
-prochaine = modules_restants[0] if modules_restants else "Tous les modules clés sont disponibles"
-
-bandeau_html = f"""
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-    body {{ margin:0; padding:0; font-family: Inter, Arial, sans-serif; background: transparent; }}
-    .ar-banner {{
-        background: linear-gradient(135deg,#0b1220 0%,#111827 42%,#14532d 100%);
-        border-radius:18px;
-        padding:22px 28px;
-        box-shadow:0 8px 28px rgba(0,0,0,0.28);
-        border:1px solid rgba(134,239,172,0.25);
-        color:white;
-        box-sizing:border-box;
-        width:100%;
-    }}
-    .ar-top {{ display:flex; justify-content:space-between; gap:18px; align-items:flex-start; flex-wrap:wrap; }}
-    .ar-title {{ font-size:20px; font-weight:800; letter-spacing:-0.2px; }}
-    .ar-subtitle {{ font-size:12px; color:rgba(255,255,255,0.74); margin-top:7px; line-height:1.7; }}
-    .ar-state {{
-        background:rgba(255,255,255,0.08);
-        border:1px solid rgba(255,255,255,0.14);
-        border-radius:12px;
-        padding:10px 14px;
-        min-width:210px;
-        text-align:center;
-        box-sizing:border-box;
-    }}
-    .ar-state-label {{ font-size:11px; color:#cbd5e1; text-transform:uppercase; letter-spacing:0.6px; }}
-    .ar-state-value {{ font-size:16px; color:#86efac; font-weight:800; margin-top:3px; }}
-    .ar-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:10px; margin-top:18px; }}
-    .ar-card {{ background:rgba(255,255,255,0.07); border-radius:12px; padding:11px 13px; box-sizing:border-box; }}
-    .ar-card-title {{ font-size:13px; color:white; font-weight:700; }}
-    .ar-card-text {{ font-size:11px; color:#cbd5e1; margin-top:3px; }}
-    .green {{ border-left:3px solid #22c55e; }}
-    .blue {{ border-left:3px solid #3b82f6; }}
-    .orange {{ border-left:3px solid #f59e0b; }}
-    .purple {{ border-left:3px solid #a855f7; }}
-    .red {{ border-left:3px solid #ef4444; }}
-    .cyan {{ border-left:3px solid #14b8a6; }}
-    .ar-footer {{ font-size:12px; color:rgba(255,255,255,0.72); margin-top:14px; line-height:1.7; }}
-</style>
-</head>
-<body>
-<div class="ar-banner">
-    <div class="ar-top">
-        <div style="flex:1;min-width:280px">
-            <div class="ar-title">🤖 Atlantic Re IA — Agent actuariel XL non-proportionnel</div>
-            <div class="ar-subtitle">Tarification complète · IA agentique LLM/Python · ML supervisé · Optimisation de programmes · Audit critique · Reporting PDF</div>
-        </div>
-        <div class="ar-state">
-            <div class="ar-state-label">État du dossier</div>
-            <div class="ar-state-value">{len(modules_realises)}/{len(capacites_suivi)} modules actifs</div>
-        </div>
+# ── Bandeau accueil statique (0 token) ──
+etapes_faites     = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
+                      ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
+                      ("Market Curve","resultats_mkt")] if k in st.session_state]
+etapes_manquantes = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
+                      ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
+                      ("Market Curve","resultats_mkt")] if k not in st.session_state]
+etapes_html = " → ".join([f"<span style='color:#2d8a4e;font-weight:700'>{e}</span>" for e in etapes_faites]) if etapes_faites else "Aucune étape complétée"
+prochaine   = etapes_manquantes[0] if etapes_manquantes else "✅ Toutes les étapes complétées !"
+st.markdown(f"""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
+    border-radius:16px;padding:20px 28px;margin-bottom:16px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
+    <div style="font-size:17px;font-weight:700;color:white">🤖 Atlantic Re IA — Tarification XL Non-Proportionnelle</div>
+    <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:6px">
+        Workflow : <b style="color:white">Programme → Triangle → BC → Simulation → Market Curve → Rapport</b>
     </div>
-
-    <div class="ar-grid">
-        <div class="ar-card green"><div class="ar-card-title">📊 Tarification XL</div><div class="ar-card-text">BC, Simulation, Market Curve</div></div>
-        <div class="ar-card blue"><div class="ar-card-title">🧠 IA agentique</div><div class="ar-card-text">LLM + outils + décisions</div></div>
-        <div class="ar-card orange"><div class="ar-card-title">⚙️ Optimisation</div><div class="ar-card-text">Programmes complets multi-tranches</div></div>
-        <div class="ar-card purple"><div class="ar-card-title">🤖 Machine Learning</div><div class="ar-card-text">RF, arbre, XGBoost, CatBoost</div></div>
-        <div class="ar-card red"><div class="ar-card-title">🔍 Audit critique</div><div class="ar-card-text">Contrôle, challenger, cohérence</div></div>
-        <div class="ar-card cyan"><div class="ar-card-title">📄 Reporting</div><div class="ar-card-text">Synthèse, justification, PDF</div></div>
-    </div>
-
-    <div class="ar-footer">
-        ✅ Modules exécutés : {modules_html}<br>
-        ⏭️ Prochain module utile : <b style="color:#fbbf24">{prochaine}</b>
-    </div>
-</div>
-</body>
-</html>
-"""
-components.html(bandeau_html, height=345, scrolling=False)
+    <div style="font-size:12px;color:rgba(255,255,255,0.6);margin-top:4px">
+        ✅ Complétées : {etapes_html if etapes_faites else '<span style="color:#aaa">Aucune</span>'}
+        &nbsp;|&nbsp; ⏭️ Prochaine étape : <b style="color:#f59e0b">{prochaine}</b>
+    </div></div>""", unsafe_allow_html=True)
 
 # ── Analyse IA sur demande uniquement (évite les appels automatiques coûteux) ──
 if "accueil_ia_msg" in st.session_state:
@@ -1794,7 +2160,7 @@ def _labo_display_section():
     st.markdown("---")
     st.markdown("#### Laboratoire de tarification ML")
     st.caption(
-        "120 scénarios/tranche · BC + Simulation + Market Curve · Arbre/RF/XGB/CatBoost · "
+        "120 scénarios/tranche · BC + Simulation + Market Curve · RF/DT/XGB · "
         "Optimisation Dichotomie (actuarielle) + De Finetti · Programme multi-tranches"
     )
 
@@ -1822,104 +2188,6 @@ def _labo_display_section():
         if "labo_features" in st.session_state: labo._features_used    = st.session_state["labo_features"]
         if "labo_best"     in st.session_state: labo._best_model_name  = st.session_state["labo_best"]
         if "labo_df_ml"    in st.session_state: labo.df_ml             = st.session_state["labo_df_ml"]
-        return labo
-
-    def _labo_model_ready(labo):
-        """Vérifie réellement qu'un modèle ML utilisable est chargé.
-
-        Sécurité méthodologique : aucun taux calculé ne doit être utilisé
-        comme variable explicative. Les taux sont uniquement des variables cibles.
-        Si un ancien modèle en session a été entraîné avec des features de taux,
-        on force son réentraînement propre.
-        """
-        best = getattr(labo, "_best_model_name", None)
-        features = list(getattr(labo, "_features_used", []) or [])
-        has_taux_feature = any("taux" in str(f).lower() for f in features)
-        return bool(
-            getattr(labo, "modeles_entraines", None)
-            and best
-            and labo.modeles_entraines.get(best) is not None
-            and getattr(labo, "df_ml", None) is not None
-            and not labo.df_ml.empty
-            and not has_taux_feature
-        )
-
-    def _persist_labo_ml(labo):
-        """Centralise la sauvegarde de l'état ML dans Streamlit."""
-        st.session_state["labo_modeles"]    = labo.modeles_entraines
-        st.session_state["labo_metriques"]  = labo.metriques_ml
-        st.session_state["labo_importance"] = labo.importance_vars
-        st.session_state["labo_features"]   = labo._features_used
-        st.session_state["labo_best"]       = labo._best_model_name
-        if getattr(labo, "df_ml", None) is not None:
-            st.session_state["labo_df_ml"] = labo.df_ml
-
-    def _check_optional_ml_libs():
-        """Retourne l'état réel des bibliothèques optionnelles du laboratoire ML."""
-        status = {}
-        for lib, label in [("xgboost", "XGBoost"), ("catboost", "CatBoost")]:
-            try:
-                __import__(lib)
-                status[label] = {"installe": True, "message": "Installé"}
-            except Exception as e:
-                status[label] = {
-                    "installe": False,
-                    "message": f"Bibliothèque absente ou non importable : {e}",
-                }
-        return status
-
-    def _normaliser_metriques_labo(metriques):
-        """Garantit que les 4 modèles apparaissent toujours dans la comparaison ML."""
-        metriques = dict(metriques or {})
-        libs = _check_optional_ml_libs()
-        ordre = ["Arbre de decision", "Random Forest", "XGBoost", "CatBoost"]
-        normalise = {}
-        for nom in ordre:
-            if nom in metriques:
-                normalise[nom] = metriques[nom]
-                continue
-            if nom in ["XGBoost", "CatBoost"]:
-                info = libs.get(nom, {})
-                if info.get("installe"):
-                    msg = "Installé mais non entraîné dans cette session. Cliquez sur 'Entraîner les modèles'."
-                else:
-                    msg = info.get("message", "Bibliothèque non installée.")
-                normalise[nom] = {"MAE": None, "RMSE": None, "R2": None, "erreur": msg}
-            else:
-                normalise[nom] = {"MAE": None, "RMSE": None, "R2": None, "erreur": "Non entraîné"}
-        # Conserver d'éventuels autres modèles ajoutés plus tard
-        for nom, val in metriques.items():
-            if nom not in normalise:
-                normalise[nom] = val
-        return normalise
-
-    def _ensure_labo_models(labo, target=None, silent=False):
-        """
-        Garantit qu'un modèle ML est disponible avant optimisation.
-        Corrige le cas où l'utilisateur a déjà généré le dataset mais où les modèles
-        ne sont plus restaurés après un rerun / hot-reload Streamlit.
-        """
-        labo = _restore_labo(labo)
-        if _labo_model_ready(labo):
-            return labo
-
-        if getattr(labo, "df_ml", None) is None and "labo_df_ml" in st.session_state:
-            labo.df_ml = st.session_state["labo_df_ml"]
-
-        if getattr(labo, "df_ml", None) is None or labo.df_ml.empty:
-            st.error("Dataset ML introuvable. Générez d'abord le dataset ML.")
-            return labo
-
-        with st.spinner("Modèle ML non restauré : réentraînement automatique..."):
-            res_train = labo.entrainer_modeles(target=target or st.session_state.get("labo_target", "taux_retenu"))
-
-        if isinstance(res_train, dict) and res_train.get("erreur"):
-            st.error(res_train["erreur"])
-            return labo
-
-        _persist_labo_ml(labo)
-        if not silent:
-            st.info("Modèles ML restaurés automatiquement pour lancer l'optimisation.")
         return labo
 
     # ═══════════════════════════════════════════════════════════
@@ -2081,29 +2349,14 @@ def _labo_display_section():
     # ÉTAPE 3 — ML
     # ═══════════════════════════════════════════════════════════
     if "labo_df_ml" in st.session_state:
-        with st.expander("Étape 3 — Entraînement ML (Arbre / RF / XGBoost / CatBoost)", expanded=True):
+        with st.expander("Étape 3 — Entraînement ML (RF / DT / XGB)", expanded=True):
             df_ml = st.session_state["labo_df_ml"]
             n_feat = len(AgentLaboTarification.FEATURES)
-            libs_ml = _check_optional_ml_libs()
             st.caption(
                 f"Dataset : {len(df_ml)} lignes · {n_feat} features "
-                f"(conditions contractuelles + seuil_stab + α/λ). "
-                f"Les taux calculés sont exclus des variables explicatives et restent uniquement des cibles."
+                f"(conditions + taux_recon + seuil_stab + α/λ) · "
+                f"Target : τ technique"
             )
-            c_lib1, c_lib2, c_lib3, c_lib4 = st.columns(4)
-            c_lib1.success("Arbre : intégré")
-            c_lib2.success("Random Forest : intégré")
-            (c_lib3.success if libs_ml["XGBoost"]["installe"] else c_lib3.error)(
-                "XGBoost : " + ("installé" if libs_ml["XGBoost"]["installe"] else "à installer")
-            )
-            (c_lib4.success if libs_ml["CatBoost"]["installe"] else c_lib4.error)(
-                "CatBoost : " + ("installé" if libs_ml["CatBoost"]["installe"] else "à installer")
-            )
-            if not libs_ml["XGBoost"]["installe"] or not libs_ml["CatBoost"]["installe"]:
-                st.warning(
-                    "Pour afficher et exécuter XGBoost/CatBoost dans le laboratoire ML, ajoutez `xgboost` et `catboost` "
-                    "dans `requirements.txt`, puis redéployez l'application Streamlit."
-                )
             c1, c2 = st.columns([2,1])
             with c1:
                 target_choice = st.radio(
@@ -2114,33 +2367,26 @@ def _labo_display_section():
                 st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
                 if st.button("Entraîner les modèles", type="primary", key="btn_labo_train"):
                     labo = _make_labo(); labo.df_ml = df_ml
-                    with st.spinner("Entraînement Arbre / RF / XGB / CatBoost..."):
-                        res_train = labo.entrainer_modeles(target=target_choice)
-                    if isinstance(res_train, dict) and res_train.get("erreur"):
-                        st.error(res_train["erreur"])
-                    else:
-                        _persist_labo_ml(labo)
-                        st.rerun()
+                    with st.spinner("Entraînement RF / DT / XGB..."):
+                        labo.entrainer_modeles(target=target_choice)
+                    st.session_state["labo_modeles"]    = labo.modeles_entraines
+                    st.session_state["labo_metriques"]  = labo.metriques_ml
+                    st.session_state["labo_importance"] = labo.importance_vars
+                    st.session_state["labo_features"]   = labo._features_used
+                    st.session_state["labo_best"]       = labo._best_model_name
+                    st.rerun()
 
             if "labo_metriques" in st.session_state:
                 best = st.session_state.get("labo_best","")
-                metriques_labo = _normaliser_metriques_labo(st.session_state.get("labo_metriques", {}))
-                st.session_state["labo_metriques"] = metriques_labo
-                st.markdown("##### Comparaison des modèles du laboratoire")
                 tableau_resultats([{
                     "Modèle":     nom,
-                    "MAE (pts)":  f"{v.get('MAE',0)*100:.4f}" if v.get("MAE") is not None else "—",
-                    "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if v.get("RMSE") is not None else "—",
-                    "R²":         f"{v.get('R2',0):.4f}" if v.get("R2") is not None else "—",
+                    "MAE (pts)":  f"{v.get('MAE',0)*100:.4f}" if "MAE" in v else "—",
+                    "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if "RMSE" in v else "—",
+                    "R²":         f"{v.get('R2',0):.4f}" if "R2" in v else "—",
                     "N train":    v.get("n_train","—"),
-                    "N test":     v.get("n_test","—"),
                     "✓ Meilleur": "✅" if nom == best else "",
-                    "Statut":     "✅ Exécuté" if v.get("MAE") is not None else v.get("erreur", "Indisponible"),
-                } for nom, v in metriques_labo.items()])
-            else:
-                st.info("Aucun entraînement ML lancé dans le laboratoire. Cliquez sur **Entraîner les modèles** pour comparer Arbre, Random Forest, XGBoost et CatBoost.")
+                } for nom, v in st.session_state["labo_metriques"].items()])
 
-            if "labo_metriques" in st.session_state:
                 imp_dict = st.session_state.get("labo_importance", {})
                 if imp_dict:
                     best_nom, imp = list(imp_dict.items())[0]
@@ -2159,456 +2405,216 @@ def _labo_display_section():
                     )
 
     # ═══════════════════════════════════════════════════════════
-    # ÉTAPE 4 — OPTIMISATION DE PROGRAMMES COMPLETS
+    # ÉTAPE 4 — OPTIMISATION ACTUARIELLE
     # ═══════════════════════════════════════════════════════════
-
-    def _programme_cible_defaut():
-        """Construit un programme cible depuis les tranches actuellement saisies."""
-        prog = []
-        for i, t in enumerate(tranches_input or []):
-            n_rec = int(t.get("nb_reconstitutions", 1) or 0)
-            tr1 = float(t.get("taux_reconstitution", 100.0) or 100.0)
-            tr2 = 100.0 if n_rec >= 2 else 0.0
-            prog.append({
-                "nom": t.get("nom", f"Tranche {i+1}"),
-                "type": t.get("type", "travaillante"),
-                "priorite": float(t.get("priorite", 2_000_000) or 2_000_000),
-                "portee": float(t.get("portee", 13_000_000) or 13_000_000),
-                "AAD": float(t.get("AAD", 0) or 0),
-                "AAL": float(t.get("AAL", 0) or 0),
-                "nb_reconstitutions": n_rec,
-                "taux_recon_1": tr1,
-                "taux_recon_2": tr2,
-                "brokage": float(t.get("brokage", 0.10) or 0.10),
-                "frais": float(t.get("frais", 0.05) or 0.05),
-                "marge": float(t.get("marge", 0.10) or 0.10),
-                "retrocession": float(t.get("retrocession", 0.0) or 0.0),
-                "k_securite": 0.20,
-                "seuil_stab": 0.0,
-            })
-        return prog
-
-    def _df_programme(prog):
-        rows = []
-        for t in prog:
-            rows.append({
-                "Nom": t.get("nom", ""),
-                "Type": t.get("type", "travaillante"),
-                "Priorité": float(t.get("priorite", 0) or 0),
-                "Portée": float(t.get("portee", 0) or 0),
-                "AAD": float(t.get("AAD", 0) or 0),
-                "AAL": float(t.get("AAL", 0) or 0),
-                "Reconst.": int(t.get("nb_reconstitutions", 0) or 0),
-                "Rec1 %": float(t.get("taux_recon_1", 100.0) or 100.0),
-                "Rec2 %": float(t.get("taux_recon_2", 0.0) or 0.0),
-                "Brokage": float(t.get("brokage", 0.10) or 0.10),
-                "Frais": float(t.get("frais", 0.05) or 0.05),
-                "Marge": float(t.get("marge", 0.10) or 0.10),
-                "Rétro": float(t.get("retrocession", 0.0) or 0.0),
-                "k sécurité": float(t.get("k_securite", 0.20) or 0.20),
-                "Seuil stab.": float(t.get("seuil_stab", 0.0) or 0.0),
-            })
-        return pd.DataFrame(rows)
-
-    def _programme_from_df(df):
-        prog = []
-        for i, row in df.iterrows():
-            n_rec = int(row.get("Reconst.", 0) or 0)
-            rec1 = float(row.get("Rec1 %", 100.0) or 100.0)
-            rec2 = float(row.get("Rec2 %", 0.0) or 0.0)
-            if n_rec <= 0:
-                rec1 = 0.0; rec2 = 0.0
-            elif n_rec == 1:
-                rec2 = 0.0
-            prog.append({
-                "nom": str(row.get("Nom", f"Tranche {i+1}")),
-                "type": str(row.get("Type", "travaillante")),
-                "priorite": max(float(row.get("Priorité", 0) or 0), 100_000.0),
-                "portee": max(float(row.get("Portée", 0) or 0), 100_000.0),
-                "AAD": max(float(row.get("AAD", 0) or 0), 0.0),
-                "AAL": max(float(row.get("AAL", 0) or 0), 0.0),
-                "nb_reconstitutions": max(min(n_rec, 4), 0),
-                "taux_recon_1": max(min(rec1, 100.0), 0.0),
-                "taux_recon_2": max(min(rec2, 100.0), 0.0),
-                "brokage": max(min(float(row.get("Brokage", 0.10) or 0.10), 0.40), 0.0),
-                "frais": max(min(float(row.get("Frais", 0.05) or 0.05), 0.30), 0.0),
-                "marge": max(min(float(row.get("Marge", 0.10) or 0.10), 0.40), 0.0),
-                "retrocession": max(min(float(row.get("Rétro", 0.0) or 0.0), 0.40), 0.0),
-                "k_securite": max(min(float(row.get("k sécurité", 0.20) or 0.20), 0.60), 0.01),
-                "seuil_stab": max(min(float(row.get("Seuil stab.", 0.0) or 0.0), 0.30), 0.0),
-            })
-        return prog
-
-    def _cond_for_prediction(t):
-        return {
-            "type": t.get("type", "travaillante"),
-            "priorite": float(t.get("priorite", 0) or 0),
-            "portee": float(t.get("portee", 0) or 0),
-            "AAD": float(t.get("AAD", 0) or 0) or None,
-            "AAL": float(t.get("AAL", 0) or 0) or None,
-            "nb_reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
-            "taux_recon_1": float(t.get("taux_recon_1", 100.0) or 100.0),
-            "taux_recon_2": float(t.get("taux_recon_2", 0.0) or 0.0),
-            "brokage": float(t.get("brokage", 0.10) or 0.10),
-            "frais": float(t.get("frais", 0.05) or 0.05),
-            "marge": float(t.get("marge", 0.10) or 0.10),
-            "retrocession": float(t.get("retrocession", 0.0) or 0.0),
-            "k_securite": float(t.get("k_securite", 0.20) or 0.20),
-            "seuil_stab": float(t.get("seuil_stab", 0.0) or 0.0),
-            "alpha": st.session_state.get("alpha_est", 1.5),
-            "lambda_": st.session_state.get("lambda_est", 5.0),
-            "seuil_modelisation": st.session_state.get("seuil_est", 1_600_000),
-        }
-
-    def _evaluer_programme_complet(labo, prog, nom_programme="Programme"):
-        rows = []
-        prime_totale = 0.0
-        taux_global = 0.0
-        protection = 0.0
-        for t in prog:
-            cond = _cond_for_prediction(t)
-            tau = labo.predire_taux(cond)
-            tau = float(tau or 0.0)
-            prime = gnpi * tau
-            prime_totale += prime
-            taux_global += tau
-            protection += float(t.get("portee", 0) or 0) * (1 + int(t.get("nb_reconstitutions", 0) or 0))
-            rows.append({
-                "Tranche": t.get("nom", ""),
-                "Type": t.get("type", ""),
-                "Priorité": float(t.get("priorite", 0) or 0),
-                "Portée": float(t.get("portee", 0) or 0),
-                "AAD": float(t.get("AAD", 0) or 0),
-                "AAL": float(t.get("AAL", 0) or 0),
-                "Reconst.": int(t.get("nb_reconstitutions", 0) or 0),
-                "Rec1": float(t.get("taux_recon_1", 0) or 0),
-                "Rec2": float(t.get("taux_recon_2", 0) or 0),
-                "Brokage": float(t.get("brokage", 0) or 0),
-                "Frais": float(t.get("frais", 0) or 0),
-                "Marge": float(t.get("marge", 0) or 0),
-                "Taux prédit": tau,
-                "Prime MAD": prime,
-            })
-        return {
-            "nom": nom_programme,
-            "programme": prog,
-            "rows": rows,
-            "prime_totale": prime_totale,
-            "taux_global": taux_global,
-            "protection": protection,
-            "protection_pct_gnpi": protection / max(gnpi, 1),
-        }
-
-    def _distance_programme(prog, cible):
-        dist = 0.0
-        n = max(len(cible), 1)
-        for t, c in zip(prog, cible):
-            d0 = max(float(c.get("priorite", 1) or 1), 1)
-            c0 = max(float(c.get("portee", 1) or 1), 1)
-            dist += abs(float(t.get("priorite", 0) or 0) - d0) / d0
-            dist += abs(float(t.get("portee", 0) or 0) - c0) / c0
-            dist += 0.35 * abs(float(t.get("marge", 0) or 0) - float(c.get("marge", 0) or 0)) / 0.10
-            dist += 0.20 * abs(int(t.get("nb_reconstitutions", 0) or 0) - int(c.get("nb_reconstitutions", 0) or 0))
-        return dist / n
-
-    def _hash_programme(prog):
-        vals = []
-        for t in prog:
-            vals.append((
-                t.get("type", ""),
-                round(float(t.get("priorite", 0) or 0) / 500_000) * 500_000,
-                round(float(t.get("portee", 0) or 0) / 500_000) * 500_000,
-                int(t.get("nb_reconstitutions", 0) or 0),
-                round(float(t.get("marge", 0) or 0), 3),
-            ))
-        return tuple(vals)
-
-    def _muter_programme_cible(prog, mode, rng, intensite=1.0):
-        new = []
-        for t in prog:
-            u = dict(t)
-            typ = u.get("type", "travaillante")
-            if mode == "cible":
-                pass
-            elif mode == "protection":
-                u["priorite"] = u["priorite"] * rng.uniform(0.75, 0.95)
-                u["portee"] = u["portee"] * rng.uniform(1.05, 1.30)
-                u["nb_reconstitutions"] = min(int(u.get("nb_reconstitutions", 1)) + rng.choice([0, 1]), 4)
-                u["marge"] = min(float(u.get("marge", 0.10)) + rng.uniform(0.00, 0.04), 0.25)
-            elif mode == "economique":
-                u["priorite"] = u["priorite"] * rng.uniform(1.05, 1.35)
-                u["portee"] = u["portee"] * rng.uniform(0.80, 1.00)
-                u["nb_reconstitutions"] = max(int(u.get("nb_reconstitutions", 1)) - rng.choice([0, 1]), 0)
-                u["marge"] = max(float(u.get("marge", 0.10)) - rng.uniform(0.00, 0.03), 0.03)
-            else:  # equilibre / aleatoire
-                u["priorite"] = u["priorite"] * rng.uniform(0.80, 1.25)
-                u["portee"] = u["portee"] * rng.uniform(0.85, 1.25)
-                u["nb_reconstitutions"] = int(np.clip(int(u.get("nb_reconstitutions", 1)) + rng.choice([-1, 0, 1]), 0, 4))
-                u["marge"] = float(np.clip(float(u.get("marge", 0.10)) + rng.uniform(-0.03, 0.04), 0.03, 0.25))
-            # Ajustements par type : ne pas transformer la nature de la tranche.
-            if typ in ["cat", "non_travaillante"]:
-                u["AAD"] = 0.0; u["AAL"] = 0.0
-            # Arrondis contractuels.
-            u["priorite"] = max(round(float(u["priorite"]) / 500_000) * 500_000, 500_000)
-            u["portee"] = max(round(float(u["portee"]) / 500_000) * 500_000, 500_000)
-            if float(u.get("AAD", 0) or 0) > 0:
-                u["AAD"] = round(float(u["AAD"]) / 100_000) * 100_000
-            if float(u.get("AAL", 0) or 0) > 0:
-                u["AAL"] = round(float(u["AAL"]) / 100_000) * 100_000
-            # Cohérence de programme : priorité suivante au moins au niveau de la fin précédente, si mêmes couches cat successives.
-            new.append(u)
-        for i in range(1, len(new)):
-            prev_end = float(new[i-1].get("priorite", 0) or 0) + float(new[i-1].get("portee", 0) or 0)
-            if new[i].get("type") != "travaillante" and new[i-1].get("type") != "travaillante":
-                if float(new[i].get("priorite", 0) or 0) < prev_end * 0.85:
-                    new[i]["priorite"] = round(prev_end / 500_000) * 500_000
-        return new
-
-    def _optimiser_programmes_complets(labo, cible_prog, objectif, budget_pct, n_solutions=3, n_candidats=2500):
-        rng = np.random.default_rng(42)
-        modes = ["cible", "protection", "economique", "equilibre"]
-        evaluations = []
-        seen = set()
-        for k in range(n_candidats):
-            mode = modes[k % len(modes)] if k < 60 else rng.choice(modes[1:])
-            prog = cible_prog if mode == "cible" else _muter_programme_cible(cible_prog, mode, rng)
-            hp = _hash_programme(prog)
-            if hp in seen:
-                continue
-            seen.add(hp)
-            ev = _evaluer_programme_complet(labo, prog, nom_programme="")
-            dist = _distance_programme(prog, cible_prog)
-            tau = ev["taux_global"]
-            prot = ev["protection_pct_gnpi"]
-            # Score : pas une hallucination ; uniquement ML + contraintes utilisateur.
-            budget_penalty = max(0.0, tau - budget_pct) / max(budget_pct, 1e-6)
-            if objectif == "Respecter le programme cible":
-                score = 2.20 * dist + 2.00 * budget_penalty - 0.15 * prot
-            elif objectif == "Maximiser la protection sous budget":
-                score = 2.50 * budget_penalty + 0.80 * dist - 1.20 * prot
-            elif objectif == "Minimiser le taux global":
-                score = 2.00 * tau + 0.70 * dist - 0.10 * prot
-            else:  # équilibre
-                score = 1.20 * tau + 1.00 * budget_penalty + 0.90 * dist - 0.50 * prot
-            ev.update({"distance_cible": dist, "score": float(score), "mode": mode})
-            evaluations.append(ev)
-        if not evaluations:
-            return {"erreur": "Aucun programme candidat évaluable."}
-
-        cible_eval = _evaluer_programme_complet(labo, cible_prog, nom_programme="Programme cible")
-        cible_eval.update({"distance_cible": 0.0, "score": None, "mode": "cible"})
-
-        candidates = sorted(evaluations, key=lambda x: x["score"])
-        best_score = candidates[0]["score"]
-        # Le programme cible est retenu explicitement s'il respecte le budget et est proche du meilleur score.
-        cible_score_ref = 1.20 * cible_eval["taux_global"] + max(0.0, cible_eval["taux_global"] - budget_pct) / max(budget_pct, 1e-6)
-        cible_deja_optimal = (cible_eval["taux_global"] <= budget_pct and cible_score_ref <= best_score * 1.15 + 1e-9)
-
-        solutions = []
-        if cible_deja_optimal:
-            cible_eval["nom"] = "Programme 1 — Cible retenue (déjà optimal)"
-            cible_eval["justification"] = (
-                "Le programme proposé respecte le budget et son score est très proche du meilleur candidat. "
-                "Il est donc retenu pour éviter une optimisation artificielle."
-            )
-            solutions.append(cible_eval)
-
-        labels = [
-            "Programme prudent — protection renforcée",
-            "Programme équilibré — compromis coût/protection",
-            "Programme économique — taux global réduit",
-            "Programme alternatif — proche du programme cible",
-            "Programme technique — meilleur score ML",
-        ]
-        for ev in candidates:
-            if len(solutions) >= max(n_solutions, 3):
-                break
-            # Diversité : éviter de retourner trois fois le même programme.
-            if any(abs(ev["taux_global"] - s["taux_global"]) < 0.0003 and abs(ev["protection_pct_gnpi"] - s["protection_pct_gnpi"]) < 0.01 for s in solutions):
-                continue
-            ev["nom"] = f"Programme {len(solutions)+1} — {labels[min(len(solutions), len(labels)-1)]}"
-            if ev["taux_global"] > budget_pct:
-                ev["justification"] = (
-                    "Programme proche de la cible mais au-dessus du budget : à négocier ou à ajuster. "
-                    "Il est affiché car il reste parmi les meilleurs candidats disponibles."
-                )
-            elif ev["mode"] == "protection":
-                ev["justification"] = "Priorités abaissées/portées renforcées pour améliorer la protection sous contrainte de budget."
-            elif ev["mode"] == "economique":
-                ev["justification"] = "Priorités relevées ou portées réduites afin de diminuer le taux global prédit."
-            else:
-                ev["justification"] = "Compromis coût/protection obtenu par recherche autour du programme cible fourni."
-            solutions.append(ev)
-
-        # Sécurité : toujours au moins 3, quitte à compléter par les meilleurs candidats restants.
-        for ev in candidates:
-            if len(solutions) >= max(n_solutions, 3):
-                break
-            ev["nom"] = f"Programme {len(solutions)+1} — Variante complémentaire"
-            ev["justification"] = "Variante complémentaire issue des candidats les mieux scorés."
-            solutions.append(ev)
-
-        return {
-            "status": "ok",
-            "objectif": objectif,
-            "budget_pct": budget_pct,
-            "programme_cible": cible_eval,
-            "cible_deja_optimal": bool(cible_deja_optimal),
-            "solutions": solutions[:max(n_solutions, 3)],
-            "n_candidats_evalues": len(evaluations),
-            "note": "Les taux sont prédits par le modèle ML entraîné sur le laboratoire ; aucune tranche n'est inventée hors du programme cible, seules les conditions numériques sont ajustées autour de celui-ci.",
-        }
-
-    if "labo_df_ml" in st.session_state:
+    if "labo_modeles" in st.session_state:
         with st.expander(
-            "Étape 4 — Optimisation de programmes complets à partir de votre programme cible", expanded=True
+            "Étape 4 — Optimisation actuarielle (Dichotomie + De Finetti/Borch)", expanded=True
         ):
             st.markdown(
                 """
-Un **programme optimisé** doit rester un programme complet : plusieurs tranches, leurs conditions,
-leurs taux prédits, puis un taux global justifié. Ici, vous donnez le **programme cible souhaité** ;
-l'agent cherche au moins **3 programmes optimaux complets** autour de ce besoin. Si votre programme
-est déjà optimal, il est conservé comme solution n°1.
+**Méthodes disponibles :**
+- **Dichotomie (De Wylder, 1979 / méthode actuarielle)** : τ est monotone décroissant en D → bisection sur [D_min, D_max], convergence en ~50 itérations vers D* tel que τ(D*) = τ_cible. Méthode recommandée par les traités actuariels (Daykin, Pentikäinen & Pesonen, 1994).
+- **Frontière De Finetti–Borch (1940/1969)** : minimise Var(perte retenue) pour un budget de prime donné. Borch (1969) prouve que le stop-loss (XL) est optimal pour ce critère. Retourne la courbe Pareto-efficiente et le programme optimal.
+- **Programme multi-tranches** : combine les résultats des deux méthodes sur l'ensemble des tranches pour proposer le programme global.
                 """
             )
 
-            if "labo_programme_cible_df" not in st.session_state:
-                st.session_state["labo_programme_cible_df"] = _df_programme(_programme_cible_defaut())
-
-            st.markdown("##### 1) Programme cible fourni par l'utilisateur")
-            df_prog_edit = st.data_editor(
-                st.session_state["labo_programme_cible_df"],
-                use_container_width=True,
-                height=260,
-                num_rows="dynamic",
-                key="labo_programme_cible_editor",
-                column_config={
-                    "Type": st.column_config.SelectboxColumn(options=["travaillante", "cat", "non_travaillante"]),
-                    "Priorité": st.column_config.NumberColumn(format="%,.0f", min_value=100_000, step=500_000),
-                    "Portée": st.column_config.NumberColumn(format="%,.0f", min_value=100_000, step=500_000),
-                    "AAD": st.column_config.NumberColumn(format="%,.0f", min_value=0, step=100_000),
-                    "AAL": st.column_config.NumberColumn(format="%,.0f", min_value=0, step=100_000),
-                    "Reconst.": st.column_config.NumberColumn(min_value=0, max_value=4, step=1),
-                    "Rec1 %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=25.0),
-                    "Rec2 %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=25.0),
-                    "Brokage": st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.40, step=0.01),
-                    "Frais": st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.30, step=0.01),
-                    "Marge": st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.40, step=0.01),
-                    "Rétro": st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=0.40, step=0.01),
-                    "k sécurité": st.column_config.NumberColumn(format="%.2f", min_value=0.01, max_value=0.60, step=0.01),
-                    "Seuil stab.": st.column_config.NumberColumn(format="%.2f", min_value=0.0, max_value=0.30, step=0.01),
-                }
+            methode_opt = st.radio(
+                "Méthode d'optimisation",
+                ["Dichotomie actuarielle", "Frontière De Finetti–Borch", "Programme multi-tranches complet"],
+                horizontal=True, key="labo_methode_opt"
             )
-            st.session_state["labo_programme_cible_df"] = df_prog_edit
 
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3 = st.columns(3)
             with c1:
-                objectif_prog = st.selectbox(
-                    "Besoin d'optimisation",
-                    ["Équilibre coût/protection", "Respecter le programme cible", "Maximiser la protection sous budget", "Minimiser le taux global"],
-                    key="labo_objectif_programme"
-                )
+                tranche_opt_idx = st.selectbox(
+                    "Tranche de référence",
+                    options=list(range(len(tranches_input))),
+                    format_func=lambda i: tranches_input[i]["nom"],
+                    key="labo_tranche_idx"
+                ) if tranches_input else 0
             with c2:
-                budget_programme = st.number_input(
-                    "Budget max programme (% GNPI)", value=4.0, step=0.1, min_value=0.1,
-                    key="labo_budget_programme") / 100
+                taux_cible_opt = st.number_input(
+                    "Taux cible (%)", value=3.0, step=0.1, min_value=0.1,
+                    key="labo_taux_cible") / 100
             with c3:
-                nb_solutions = st.number_input(
-                    "Nombre de programmes", value=3, min_value=3, max_value=10, step=1,
-                    key="labo_nb_programmes")
-            with c4:
-                n_candidats = st.number_input(
-                    "Candidats explorés", value=2500, min_value=300, max_value=15000, step=500,
-                    key="labo_n_candidats_prog")
+                budget_pct = st.number_input(
+                    "Budget prime max (% GNPI)", value=4.0, step=0.1, min_value=0.1,
+                    key="labo_budget_pct") / 100
 
-            if st.button("Optimiser le programme complet", type="primary", key="btn_labo_opt_programmes"):
-                cible_prog = _programme_from_df(df_prog_edit)
-                if len(cible_prog) < 2:
-                    st.error("Un programme complet doit contenir au moins 2 tranches. Ajoutez vos tranches dans le tableau cible.")
-                else:
-                    labo = _ensure_labo_models(_make_labo(), target=st.session_state.get("labo_target", "taux_retenu"))
-                    if not _labo_model_ready(labo):
-                        st.error("Le modèle ML n'est pas disponible. Vérifiez l'étape 3 ou régénérez le dataset ML.")
+            if st.button("Lancer l'optimisation", type="primary", key="btn_labo_opt2"):
+                labo = _restore_labo(_make_labo())
+
+                if methode_opt == "Dichotomie actuarielle":
+                    if not tranches_input:
+                        st.error("Aucune tranche définie.")
                     else:
-                        with st.spinner("Recherche de programmes complets optimaux autour du programme cible..."):
-                            res_prog = _optimiser_programmes_complets(
-                                labo, cible_prog, objectif_prog, budget_programme,
-                                n_solutions=int(nb_solutions), n_candidats=int(n_candidats)
-                            )
-                        st.session_state["labo_opt_res"] = ("programmes_complets", res_prog, None)
-                        st.rerun()
+                        t_base = tranches_input[tranche_opt_idx]
+                        with st.spinner(f"Dichotomie sur la priorité de '{t_base['nom']}'..."):
+                            res_dich = labo.optimiser_dichotomie(t_base, taux_cible_opt)
+                        st.session_state["labo_opt_res"] = ("dichotomie", res_dich, t_base)
 
+                elif methode_opt == "Frontière De Finetti–Borch":
+                    if not tranches_input:
+                        st.error("Aucune tranche définie.")
+                    else:
+                        t_base = tranches_input[tranche_opt_idx]
+                        with st.spinner(f"Calcul frontière efficiente De Finetti pour '{t_base['nom']}'..."):
+                            res_finetti = labo.frontiere_de_finetti(
+                                t_base, budget_prime_pct=budget_pct, n_points=50)
+                        st.session_state["labo_opt_res"] = ("finetti", res_finetti, t_base)
+
+                else:  # multi-tranches
+                    with st.spinner("Optimisation du programme complet (toutes tranches)..."):
+                        resultats_mt = []
+                        for i, t in enumerate(tranches_input):
+                            r_d = labo.optimiser_dichotomie(t, taux_cible_opt)
+                            r_f = labo.frontiere_de_finetti(t, budget_prime_pct=budget_pct, n_points=30)
+                            resultats_mt.append({"tranche":t,"dichotomie":r_d,"finetti":r_f})
+                    st.session_state["labo_opt_res"] = ("multi", resultats_mt, None)
+                st.rerun()
+
+            # ── Affichage des résultats d'optimisation ──
             if "labo_opt_res" in st.session_state:
-                methode_r, res_r, _ = st.session_state["labo_opt_res"]
-                if methode_r == "programmes_complets":
-                    if not res_r or res_r.get("erreur"):
-                        st.error(res_r.get("erreur", "Erreur optimisation programmes."))
-                    else:
-                        st.success(
-                            f"{len(res_r.get('solutions', []))} programmes complets proposés · "
-                            f"{res_r.get('n_candidats_evalues', 0):,} candidats évalués"
+                methode_r, res_r, t_r = st.session_state["labo_opt_res"]
+
+                if methode_r == "dichotomie":
+                    st.markdown(f"##### Résultat dichotomie — {t_r['nom']}")
+                    if res_r is None:
+                        st.error("Modèle non entraîné — lancez d'abord l'étape 3.")
+                    elif not res_r.get("converge", True) or "message" in res_r:
+                        msg = res_r.get("message","Cible hors plage atteignable.")
+                        tau_lo = res_r.get("tau_lo",0); tau_hi = res_r.get("tau_hi",0)
+                        st.warning(msg)
+                        st.info(
+                            f"Plage atteignable : [{min(tau_lo,tau_hi):.4%} — {max(tau_lo,tau_hi):.4%}]. "
+                            f"Ajustez le taux cible dans cet intervalle."
                         )
-                        st.caption(res_r.get("note", ""))
-                        if res_r.get("cible_deja_optimal"):
-                            st.info("Le programme cible fourni est déjà jugé optimal au regard du budget et du score ML : il est conservé comme solution n°1.")
+                    else:
+                        D_star = res_r["D_star"]; tau_star = res_r["tau_star"]
+                        nb = res_r.get("nb_iter",0)
+                        st.success(
+                            f"**D\\* = {D_star:,.0f} MAD** → τ\\* = {tau_star:.4%} "
+                            f"(convergé en {nb} itérations)"
+                        )
+                        tableau_resultats([{
+                            "Priorité optimale D*": f"{D_star:,.0f}",
+                            "Portée C":             f"{t_r['portee']:,.0f}",
+                            "Taux obtenu τ*":       f"{tau_star:.4%}",
+                            "Taux cible":           f"{taux_cible_opt:.4%}",
+                            "Écart":                f"{abs(tau_star-taux_cible_opt)*100:.4f} pts",
+                            "Itérations":           nb,
+                            "Prime estimée (MAD)":  f"{gnpi*tau_star:,.0f}",
+                        }])
+                        # Tracer la convergence
+                        iters = res_r.get("iterations",[])
+                        if len(iters) > 2:
+                            fig_d, ax_d = plt.subplots(figsize=(7,3))
+                            ax_d.plot([it["D"] for it in iters],
+                                      [it["tau"]*100 for it in iters],
+                                      "o-", color="#2d8a4e", ms=4)
+                            ax_d.axhline(taux_cible_opt*100, color="red",
+                                         ls="--", label=f"Cible {taux_cible_opt:.2%}")
+                            ax_d.set_xlabel("Priorité D (MAD)")
+                            ax_d.set_ylabel("τ technique (%)")
+                            ax_d.set_title("Convergence dichotomie")
+                            ax_d.legend(); ax_d.grid(alpha=0.2)
+                            st.pyplot(fig_d); plt.close()
+                        st.caption(
+                            "**Principe (De Wylder / Daykin–Pentikäinen–Pesonen)** : "
+                            "τ est monotone décroissant en D (une priorité plus haute → "
+                            "moins de sinistres touchent la tranche). "
+                            "La bisection converge en O(log((D_max−D_min)/ε)) ≈ 50 itérations."
+                        )
 
-                        synthese = []
-                        for sol in res_r.get("solutions", []):
-                            synthese.append({
-                                "Programme": sol.get("nom", ""),
-                                "Taux global": f"{sol.get('taux_global', 0):.4%}",
-                                "Prime totale": f"{sol.get('prime_totale', 0):,.0f} MAD",
-                                "Protection/GNPI": f"{sol.get('protection_pct_gnpi', 0):.2%}",
-                                "Distance cible": f"{sol.get('distance_cible', 0):.3f}",
-                                "Budget respecté": "✅" if sol.get("taux_global", 0) <= res_r.get("budget_pct", 0) else "⚠️",
-                                "Justification": sol.get("justification", ""),
-                            })
-                        tableau_resultats(synthese, "Synthèse des programmes optimaux")
+                elif methode_r == "finetti":
+                    st.markdown(f"##### Frontière De Finetti–Borch — {t_r['nom']}")
+                    if not res_r or not res_r.get("frontier"):
+                        st.warning("Frontière vide. Vérifiez que le modèle ML est entraîné (étape 3).")
+                    else:
+                        frontier = res_r["frontier"]
+                        optimal  = res_r.get("optimal")
+                        fig_f, ax_f = plt.subplots(figsize=(7, 4))
+                        xs = [p["prime_pct"]*100 for p in frontier]
+                        ys = [p["var_retenue"]*1e4 for p in frontier]
+                        ax_f.plot(xs, ys, "o-", color="#2d8a4e", ms=5, label="Frontière efficiente")
+                        if optimal:
+                            ax_f.scatter([optimal["prime_pct"]*100],
+                                         [optimal.get("var_retenue",0)*1e4],
+                                         color="red", s=120, zorder=5, label="Programme optimal")
+                        ax_f.set_xlabel("Prime cédée (% GNPI)")
+                        ax_f.set_ylabel("Variance retenue (×10⁻⁴)")
+                        ax_f.set_title(
+                            "Frontière efficiente De Finetti–Borch\n"
+                            "min Var(retenu) s.c. E[cession] = budget"
+                        )
+                        ax_f.legend(); ax_f.grid(alpha=0.2)
+                        st.pyplot(fig_f); plt.close()
 
-                        for idx_sol, sol in enumerate(res_r.get("solutions", []), start=1):
-                            with st.expander(sol.get("nom", f"Programme {idx_sol}"), expanded=(idx_sol == 1)):
-                                st.markdown(f"**Justification :** {sol.get('justification', '')}")
-                                rows_detail = []
-                                for r in sol.get("rows", []):
-                                    rows_detail.append({
-                                        "Tranche": r["Tranche"],
-                                        "Type": r["Type"],
-                                        "Priorité": f"{r['Priorité']:,.0f}",
-                                        "Portée": f"{r['Portée']:,.0f}",
-                                        "AAD": f"{r['AAD']:,.0f}",
-                                        "AAL": f"{r['AAL']:,.0f}",
-                                        "Reconst.": r["Reconst."],
-                                        "Rec1": f"{r['Rec1']:.0f}%",
-                                        "Rec2": f"{r['Rec2']:.0f}%",
-                                        "Brokage": f"{r['Brokage']:.1%}",
-                                        "Frais": f"{r['Frais']:.1%}",
-                                        "Marge": f"{r['Marge']:.1%}",
-                                        "Taux": f"{r['Taux prédit']:.4%}",
-                                        "Prime": f"{r['Prime MAD']:,.0f} MAD",
-                                    })
-                                tableau_resultats(rows_detail)
-                                st.markdown(
-                                    f"**Taux global : {sol.get('taux_global', 0):.4%}** · "
-                                    f"**Prime totale : {sol.get('prime_totale', 0):,.0f} MAD** · "
-                                    f"**Protection : {sol.get('protection_pct_gnpi', 0):.2%} du GNPI**"
-                                )
+                        if optimal:
+                            st.success(
+                                f"**Programme De Finetti optimal** : "
+                                f"D\\* = {optimal.get('D',0):,.0f} · "
+                                f"C = {optimal.get('C',0):,.0f} · "
+                                f"τ\\* = {optimal.get('tau_pred',0):.4%}"
+                            )
+                            tableau_resultats([{
+                                "Priorité D*":     f"{optimal.get('D',0):,.0f}",
+                                "Portée C":        f"{optimal.get('C',0):,.0f}",
+                                "Taux prédit":     f"{optimal.get('tau_pred',0):.4%}",
+                                "Prime cédée":     f"{optimal.get('prime_pct',0):.4%}",
+                                "Var retenue":     f"{optimal.get('var_retenue',0):.6f}",
+                                "Score De Finetti":f"{optimal.get('score_finetti',0):.4f}",
+                                "Prime (MAD)":     f"{gnpi*optimal.get('tau_pred',0):,.0f}",
+                            }])
+                        st.caption(
+                            "**Borch (1969)** : pour une prime nette fixée, le stop-loss (XL) "
+                            "minimise la variance de la perte retenue. "
+                            "Le score De Finetti = Δvariance / prime mesure l'efficacité marginale "
+                            "de chaque euro de prime cédée."
+                        )
 
-                        try:
-                            # Export Excel multi-programmes.
-                            import io as _io_export
-                            with pd.ExcelWriter(_io_export.BytesIO(), engine="xlsxwriter") as writer:
-                                pd.DataFrame(synthese).to_excel(writer, index=False, sheet_name="Synthese")
-                                for i, sol in enumerate(res_r.get("solutions", []), start=1):
-                                    pd.DataFrame(sol.get("rows", [])).to_excel(writer, index=False, sheet_name=f"Programme_{i}")
-                                writer.book.close()
-                        except Exception:
-                            pass
-
+                elif methode_r == "multi":
+                    st.markdown("##### Programme multi-tranches — Résultats consolidés")
+                    st.caption(
+                        "Un programme optimal est composé d'au moins 2 tranches. "
+                        "Résultats dichotomie + De Finetti par tranche, puis consolidation."
+                    )
+                    rows_mt = []
+                    prime_totale = 0.0
+                    for item in res_r:
+                        t = item["tranche"]
+                        rd = item.get("dichotomie") or {}
+                        rf = item.get("finetti") or {}
+                        opt_f = rf.get("optimal") or {}
+                        tau_d = rd.get("tau_star", 0) if rd.get("converge", False) else None
+                        tau_f = opt_f.get("tau_pred", 0)
+                        tau_retenu = tau_d or tau_f
+                        prime_totale += gnpi * (tau_retenu or 0)
+                        rows_mt.append({
+                            "Tranche":          t["nom"],
+                            "Type":             t["type"],
+                            "D* Dich.":         f"{rd.get('D_star',0):,.0f}" if rd.get("converge") else "—",
+                            "τ* Dich.":         f"{tau_d:.4%}" if tau_d else "—",
+                            "D* De Finetti":    f"{opt_f.get('D',0):,.0f}" if opt_f else "—",
+                            "τ* De Finetti":    f"{tau_f:.4%}" if tau_f else "—",
+                            "τ Retenu":         f"{tau_retenu:.4%}" if tau_retenu else "—",
+                            "Prime (MAD)":      f"{gnpi*(tau_retenu or 0):,.0f}",
+                        })
+                    tableau_resultats(rows_mt)
+                    st.metric("Prime totale programme", f"{prime_totale:,.0f} MAD",
+                              f"{prime_totale/gnpi:.4%} du GNPI")
+                    st.caption(
+                        "Le programme multi-tranches consolide la protection : "
+                        "T1 travaillante (max BC/Sim) + T2/T3 cat (max Sim/Mkt). "
+                        "La protection globale = somme des portées × (1 + reconstitutions)."
+                    )
 
     # ═══════════════════════════════════════════════════════════
     # ÉTAPE 5 — NSGA-II  (Deb, Pratap, Agarwal & Meyarivan, 2002)
     # ═══════════════════════════════════════════════════════════
-    if "labo_df_ml" in st.session_state:
+    if "labo_modeles" in st.session_state:
         with st.expander(
             "Étape 5 — NSGA-II : Optimisation multi-objectif (Front de Pareto)",
             expanded=False
@@ -2642,7 +2648,7 @@ Algorithme évolutionnaire qui explore simultanément les **3 objectifs actuarie
                     help="Optimise toutes les tranches simultanément (chromosome global)")
 
             if st.button("Lancer NSGA-II", type="primary", key="btn_nsga2"):
-                labo = _ensure_labo_models(_make_labo(), target=st.session_state.get("labo_target", "taux_retenu"))
+                labo = _restore_labo(_make_labo())
                 bar_nsga = st.progress(0, "Initialisation population...")
                 def _nsga_cb(gen, n):
                     bar_nsga.progress(
@@ -4414,11 +4420,7 @@ class AgentML:
             return {"disponible":False,"message":"Target indisponible.","modeles":[],"meilleur_modele":None,"importance":[]}
 
         data=df.copy().replace([np.inf,-np.inf],np.nan)
-        y=pd.to_numeric(data[target],errors="coerce")
-        # Sécurité : les colonnes de taux ne sont jamais explicatives.
-        # Elles peuvent seulement servir de target lorsqu'elles sont explicitement choisies.
-        taux_cols = [c for c in data.columns if "taux" in str(c).lower() and c != target]
-        X=data.drop(columns=[target] + taux_cols,errors="ignore")
+        y=pd.to_numeric(data[target],errors="coerce"); X=data.drop(columns=[target],errors="ignore")
         keep=[c for c in X.columns if X[c].notna().mean()>=0.60]; X=X[keep]
         for c in X.columns:
             if X[c].dtype=="object": X[c]=X[c].astype(str).fillna("NA")
@@ -4430,32 +4432,20 @@ class AgentML:
         X_tr,X_te,y_tr,y_te=train_test_split(X_enc,y,test_size=0.25,random_state=self.random_state)
         models={"Arbre":DecisionTreeRegressor(max_depth=4,min_samples_leaf=5,random_state=self.random_state),
                 "Random Forest":RandomForestRegressor(n_estimators=250,max_depth=8,min_samples_leaf=3,random_state=self.random_state,n_jobs=-1)}
-        modeles_indisponibles = []
         try:
             from xgboost import XGBRegressor
-            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
-                subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
-        except Exception as e:
-            modeles_indisponibles.append({"modele":"XGBoost","MAE":None,"RMSE":None,"R2":None,
-                "erreur":f"Indisponible ou non importable : {e}"})
-        try:
-            from catboost import CatBoostRegressor
-            models["CatBoost"]=CatBoostRegressor(iterations=350,depth=5,learning_rate=0.05,
-                loss_function="RMSE",random_seed=self.random_state,verbose=False)
-        except Exception as e:
-            modeles_indisponibles.append({"modele":"CatBoost","MAE":None,"RMSE":None,"R2":None,
-                "erreur":f"Indisponible ou non importable : {e}"})
+            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
+        except: pass
 
         resultats=[]; best_name=None; best_mae=None; best_model=None
         for name,model in models.items():
             try:
                 model.fit(X_tr,y_tr); pred=model.predict(X_te)
                 mae=float(mean_absolute_error(y_te,pred)); rmse=float(np.sqrt(mean_squared_error(y_te,pred))); r2=float(r2_score(y_te,pred))
-                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te)),"statut":"OK"})
+                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te))})
                 if best_mae is None or mae<best_mae: best_mae=mae; best_name=name; best_model=model
             except Exception as e:
                 resultats.append({"modele":name,"MAE":None,"RMSE":None,"R2":None,"erreur":str(e)})
-        resultats.extend(modeles_indisponibles)
 
         importance=[]
         if best_model is not None and hasattr(best_model,"feature_importances_"):
@@ -4674,32 +4664,13 @@ def afficher_optimisation_avancee(opt):
     if rows: tableau_resultats(rows)
 
 def afficher_ml_agentique(ml):
+    if not ml: return
     st.markdown("#### Benchmark Machine Learning")
-    if not ml:
-        st.info("Benchmark ML non exécuté : lancez d'abord l'Agent Python ou l'entraînement ML.")
-        return
-    if not ml.get("disponible"):
-        st.info(ml.get("message","ML non disponible."))
-        return
-    modeles = ml.get("modeles", []) or []
-    if not modeles:
-        st.warning("Aucun modèle ML n'a été retourné. Vérifiez le dataset ML, scikit-learn et les dépendances optionnelles.")
-        return
-    def _fmt(v, pct=False):
-        if v is None or (isinstance(v, float) and not np.isfinite(v)): return "—"
-        return f"{v:.4f}" if pct else f"{v:,.6f}"
-    rows=[]
-    for r in modeles:
-        ok = r.get("MAE") is not None
-        rows.append({
-            "Modèle": r.get("modele", "—"),
-            "MAE": _fmt(r.get("MAE")),
-            "RMSE": _fmt(r.get("RMSE")),
-            "R²": _fmt(r.get("R2"), pct=True),
-            "N train": r.get("n_train", "—"),
-            "N test": r.get("n_test", "—"),
-            "Statut": "✅ Exécuté" if ok else r.get("erreur", "Erreur / indisponible")
-        })
+    if not ml.get("disponible"): st.info(ml.get("message","ML non disponible.")); return
+    rows=[{"Modèle":r.get("modele"),"MAE":f"{r.get('MAE',0):,.0f}" if r.get("MAE") else "Erreur",
+        "RMSE":f"{r.get('RMSE',0):,.0f}" if r.get("RMSE") else "Erreur",
+        "R²":f"{r.get('R2',0):.4f}" if r.get("R2") else "Erreur",
+        "Statut":"✅" if r.get("MAE") else r.get("erreur","Erreur")} for r in ml.get("modeles",[])]
     tableau_resultats(rows,"Comparaison des modèles ML")
     if ml.get("importance"):
         tableau_resultats([{"Variable":x["variable"],"Importance":f"{x['importance']:.4f}"} for x in ml["importance"]],
@@ -4716,7 +4687,7 @@ class AgentLaboTarification:
       1. Grille 120 scenarios/tranche (auto, modifiable)
       2. Batch BC + Simulation + Market Curve
       3. Dataset ML (conditions + params -> taux)
-      4. Arbre / RF / XGB / CatBoost
+      4. RF / DT / XGB
       5. Optimisation : dichotomie actuarielle + De Finetti
       6. Programme multi-tranches optimal
     """
@@ -5032,19 +5003,11 @@ class AgentLaboTarification:
         except Exception as e:
             return {"erreur":f"scikit-learn manquant : {e}"}
 
-        # Les taux calculés ne doivent jamais être utilisés comme variables explicatives.
-        # Ils sont réservés aux variables cibles : taux_retenu, taux_technique_bc,
-        # taux_technique_sim, taux_technique_mkt, etc.
-        taux_cols = {c for c in self.df_ml.columns if "taux" in str(c).lower()}
-        feats = [
-            f for f in self.FEATURES
-            if f in self.df_ml.columns
-            and f != target
-            and f not in taux_cols
-            and "taux" not in str(f).lower()
-        ]
-        if not feats:
-            return {"erreur":"Aucune variable explicative disponible après exclusion des taux."}
+        feats = [f for f in self.FEATURES if f in self.df_ml.columns]
+        extra = [c for c in ["taux_pur_bc","taux_technique_bc","taux_pur_sim",
+                              "taux_technique_sim","taux_technique_mkt"]
+                 if c in self.df_ml.columns and c != target]
+        feats += extra
         X = self.df_ml[feats].fillna(0); y = self.df_ml[target]
         mask = (y > 0) & np.isfinite(y); X = X[mask]; y = y[mask]
         if len(X) < 10: return {"erreur":"Trop peu de scenarios valides"}
@@ -5055,19 +5018,11 @@ class AgentLaboTarification:
             "Random Forest":     RandomForestRegressor(n_estimators=300,max_depth=10,
                                      min_samples_leaf=2,random_state=42,n_jobs=-1),
         }
-        modeles_indisponibles = {}
         try:
             from xgboost import XGBRegressor
             models["XGBoost"] = XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
                 subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=42)
-        except Exception as e:
-            modeles_indisponibles["XGBoost"] = {"erreur": f"Indisponible ou non importable : {e}"}
-        try:
-            from catboost import CatBoostRegressor
-            models["CatBoost"] = CatBoostRegressor(iterations=350,depth=5,learning_rate=0.05,
-                loss_function="RMSE",random_seed=42,verbose=False)
-        except Exception as e:
-            modeles_indisponibles["CatBoost"] = {"erreur": f"Indisponible ou non importable : {e}"}
+        except: pass
 
         resultats = {}; best_name = None; best_mae = None
         for nom, model in models.items():
@@ -5077,11 +5032,10 @@ class AgentLaboTarification:
                 rmse = float(np.sqrt(mean_squared_error(y_te, pred)))
                 r2   = float(r2_score(y_te, pred))
                 resultats[nom] = {"MAE":mae,"RMSE":rmse,"R2":r2,
-                                  "n_train":len(X_tr),"n_test":len(X_te),"statut":"OK"}
+                                  "n_train":len(X_tr),"n_test":len(X_te)}
                 self.modeles_entraines[nom] = model
                 if best_mae is None or mae < best_mae: best_mae=mae; best_name=nom
             except Exception as e: resultats[nom] = {"erreur":str(e)}
-        resultats.update(modeles_indisponibles)
 
         self.metriques_ml = resultats
         self._features_used  = feats
@@ -6453,11 +6407,7 @@ class AgentML:
             return {"disponible":False,"message":"Target indisponible.","modeles":[],"meilleur_modele":None,"importance":[]}
 
         data=df.copy().replace([np.inf,-np.inf],np.nan)
-        y=pd.to_numeric(data[target],errors="coerce")
-        # Sécurité : les colonnes de taux ne sont jamais explicatives.
-        # Elles peuvent seulement servir de target lorsqu'elles sont explicitement choisies.
-        taux_cols = [c for c in data.columns if "taux" in str(c).lower() and c != target]
-        X=data.drop(columns=[target] + taux_cols,errors="ignore")
+        y=pd.to_numeric(data[target],errors="coerce"); X=data.drop(columns=[target],errors="ignore")
         keep=[c for c in X.columns if X[c].notna().mean()>=0.60]; X=X[keep]
         for c in X.columns:
             if X[c].dtype=="object": X[c]=X[c].astype(str).fillna("NA")
@@ -6469,32 +6419,20 @@ class AgentML:
         X_tr,X_te,y_tr,y_te=train_test_split(X_enc,y,test_size=0.25,random_state=self.random_state)
         models={"Arbre":DecisionTreeRegressor(max_depth=4,min_samples_leaf=5,random_state=self.random_state),
                 "Random Forest":RandomForestRegressor(n_estimators=250,max_depth=8,min_samples_leaf=3,random_state=self.random_state,n_jobs=-1)}
-        modeles_indisponibles = []
         try:
             from xgboost import XGBRegressor
-            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
-                subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
-        except Exception as e:
-            modeles_indisponibles.append({"modele":"XGBoost","MAE":None,"RMSE":None,"R2":None,
-                "erreur":f"Indisponible ou non importable : {e}"})
-        try:
-            from catboost import CatBoostRegressor
-            models["CatBoost"]=CatBoostRegressor(iterations=350,depth=5,learning_rate=0.05,
-                loss_function="RMSE",random_seed=self.random_state,verbose=False)
-        except Exception as e:
-            modeles_indisponibles.append({"modele":"CatBoost","MAE":None,"RMSE":None,"R2":None,
-                "erreur":f"Indisponible ou non importable : {e}"})
+            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
+        except: pass
 
         resultats=[]; best_name=None; best_mae=None; best_model=None
         for name,model in models.items():
             try:
                 model.fit(X_tr,y_tr); pred=model.predict(X_te)
                 mae=float(mean_absolute_error(y_te,pred)); rmse=float(np.sqrt(mean_squared_error(y_te,pred))); r2=float(r2_score(y_te,pred))
-                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te)),"statut":"OK"})
+                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te))})
                 if best_mae is None or mae<best_mae: best_mae=mae; best_name=name; best_model=model
             except Exception as e:
                 resultats.append({"modele":name,"MAE":None,"RMSE":None,"R2":None,"erreur":str(e)})
-        resultats.extend(modeles_indisponibles)
 
         importance=[]
         if best_model is not None and hasattr(best_model,"feature_importances_"):
@@ -6713,32 +6651,13 @@ def afficher_optimisation_avancee(opt):
     if rows: tableau_resultats(rows)
 
 def afficher_ml_agentique(ml):
+    if not ml: return
     st.markdown("#### Benchmark Machine Learning")
-    if not ml:
-        st.info("Benchmark ML non exécuté : lancez d'abord l'Agent Python ou l'entraînement ML.")
-        return
-    if not ml.get("disponible"):
-        st.info(ml.get("message","ML non disponible."))
-        return
-    modeles = ml.get("modeles", []) or []
-    if not modeles:
-        st.warning("Aucun modèle ML n'a été retourné. Vérifiez le dataset ML, scikit-learn et les dépendances optionnelles.")
-        return
-    def _fmt(v, pct=False):
-        if v is None or (isinstance(v, float) and not np.isfinite(v)): return "—"
-        return f"{v:.4f}" if pct else f"{v:,.6f}"
-    rows=[]
-    for r in modeles:
-        ok = r.get("MAE") is not None
-        rows.append({
-            "Modèle": r.get("modele", "—"),
-            "MAE": _fmt(r.get("MAE")),
-            "RMSE": _fmt(r.get("RMSE")),
-            "R²": _fmt(r.get("R2"), pct=True),
-            "N train": r.get("n_train", "—"),
-            "N test": r.get("n_test", "—"),
-            "Statut": "✅ Exécuté" if ok else r.get("erreur", "Erreur / indisponible")
-        })
+    if not ml.get("disponible"): st.info(ml.get("message","ML non disponible.")); return
+    rows=[{"Modèle":r.get("modele"),"MAE":f"{r.get('MAE',0):,.0f}" if r.get("MAE") else "Erreur",
+        "RMSE":f"{r.get('RMSE',0):,.0f}" if r.get("RMSE") else "Erreur",
+        "R²":f"{r.get('R2',0):.4f}" if r.get("R2") else "Erreur",
+        "Statut":"✅" if r.get("MAE") else r.get("erreur","Erreur")} for r in ml.get("modeles",[])]
     tableau_resultats(rows,"Comparaison des modèles ML")
     if ml.get("importance"):
         tableau_resultats([{"Variable":x["variable"],"Importance":f"{x['importance']:.4f}"} for x in ml["importance"]],
@@ -7486,6 +7405,11 @@ with tab_agent:
         st.info("Transformez d'abord le triangle dans l'onglet Données & Triangle")
 
     elif lancer_py:
+        # Notification email de début
+        notifier_consultation(
+            st.session_state.get("user_email",""),
+            "Agent Python — Tarification lancée",
+            f"GNPI={gnpi:,.0f} MAD · {len(tranches_input)} tranches")
         with st.spinner("⚙️ Pipeline en cours..."):
             prog_bar = st.progress(0, text="Initialisation...")
 
@@ -7703,6 +7627,32 @@ with tab_agent:
 
     # ── Laboratoire ML (toujours accessible si df_proj disponible) ──
     _labo_display_section()
+
+    # ── Ressources actuarielles ──
+    with st.expander("🌐 Ressources actuarielles — Sites web & publications", expanded=False):
+        afficher_ressources_actuarielles()
+
+    # ── Intégration R ──
+    with st.expander("🔬 Intégration R Studio — Scripts de tarification", expanded=False):
+        afficher_integration_r()
+
+    # ── Notification email manuelle ──
+    st.markdown("---")
+    c_notif1, c_notif2 = st.columns([3, 1])
+    with c_notif1:
+        notif_msg = st.text_input("Message à envoyer à hervepagnangde@gmail.com", key="notif_msg",
+            placeholder="Ex: Session terminée — taux global 3.24%, prime 5.9M MAD")
+    with c_notif2:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.button("📧 Envoyer notification", key="btn_notif", use_container_width=True):
+            if notif_msg.strip():
+                user = st.session_state.get("user_email","Agent")
+                ok, msg = envoyer_notification_email(
+                    f"Message de {user} — Atlantic Re IA",
+                    f"<p><b>De :</b> {user}</p><p><b>Message :</b> {notif_msg}</p>",
+                    "hervepagnangde@gmail.com")
+                if ok: st.success("✅ Email envoyé")
+                else:   st.warning(f"⚠️ {msg}")
 
 
 with tab_full:
@@ -7924,7 +7874,66 @@ sur des critères statistiques objectifs, pas seulement des règles fixes.""",
                 },
                 "required": ["justification"]
             }
-        }
+        },
+        {
+            "name": "rechercher_web_actuariel",
+            "description": """Recherche des informations actuarielles sur le web.
+Utiliser pour : taux de marché de référence, publications CAS/ASTIN récentes,
+données de sinistralité automobile Maroc/Afrique, normes réglementaires DAPS,
+benchmarks de tarification réassurance non-proportionnelle.
+Sites prioritaires : swissre.com, munichre.com, casact.org, astin.org, actuaries.org.""",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "requete"      : {"type": "string", "description": "Termes de recherche (en français ou anglais)"},
+                    "type_recherche": {
+                        "type": "string",
+                        "enum": ["taux_marche", "publication_actuarielle", "reglementation", "sinistralite", "methode"],
+                        "description": "Type d'information recherchée"
+                    },
+                    "justification": {"type": "string"}
+                },
+                "required": ["requete", "type_recherche", "justification"]
+            }
+        },
+        {
+            "name": "envoyer_notification_agent",
+            "description": """Envoie une notification email à hervepagnangde@gmail.com.
+Utiliser : à la fin de chaque session de tarification complète, ou en cas d'anomalie critique.
+Format : résumé des résultats clés (prime totale, taux global, anomalies détectées).""",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "sujet"       : {"type": "string", "description": "Objet de l'email"},
+                    "contenu"     : {"type": "string", "description": "Corps du message (HTML autorisé)"},
+                    "niveau"      : {
+                        "type": "string",
+                        "enum": ["info", "alerte", "rapport_final"],
+                        "description": "Niveau de la notification"
+                    },
+                    "justification": {"type": "string"}
+                },
+                "required": ["sujet", "contenu", "niveau", "justification"]
+            }
+        },
+        {
+            "name": "consulter_ressource_actuarielle",
+            "description": """Référence et cite une ressource actuarielle de la bibliothèque interne.
+Retourne la liste des sites/publications disponibles par catégorie.
+Catégories : réassurance, actuariat, cours, finance, Maroc.""",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "categorie"   : {
+                        "type": "string",
+                        "enum": ["Réassurance & Marché", "Actuariat & Standards", "Cours & Formations", "Finance & Économie"],
+                        "description": "Catégorie de ressource"
+                    },
+                    "justification": {"type": "string"}
+                },
+                "required": ["categorie", "justification"]
+            }
+        },
     ]
 
     # ── Exécuteur evaluer_pertinence_methodes ──
@@ -8295,8 +8304,71 @@ sur des critères statistiques objectifs, pas seulement des règles fixes.""",
             return _executer_evaluer_methodes(
                 inclure_ks_ad=inputs.get("inclure_tests_ks_ad", True),
                 inclure_hill=inputs.get("inclure_stabilite_hill", True))
+        elif nom == "rechercher_web_actuariel":
+            return _executer_recherche_web(
+                inputs.get("requete",""), inputs.get("type_recherche","methode"))
+        elif nom == "envoyer_notification_agent":
+            return _executer_notification_email(
+                inputs.get("sujet","Notification Atlantic Re IA"),
+                inputs.get("contenu",""),
+                inputs.get("niveau","info"),
+                st.session_state.get("user_email",""))
+        elif nom == "consulter_ressource_actuarielle":
+            cat = inputs.get("categorie","Actuariat & Standards")
+            return {"status":"ok","categorie":cat,
+                    "ressources": RESSOURCES_ACTUARIELLES.get(cat,[])}
         else:
             return {"erreur": f"Outil inconnu : {nom}"}
+
+
+    def _executer_recherche_web(requete, type_recherche):
+        """Recherche web actuarielle via l'API web_search d'Anthropic."""
+        try:
+            client_s = __import__('anthropic').Anthropic(api_key=api_key)
+            prompt_s = f"""Recherche actuarielle : {requete}
+Type d'information : {type_recherche}
+Contexte : Tarification réassurance non-proportionnelle XL automobile Maroc.
+Fournir : chiffres clés, sources, applicabilité au contexte Maroc.
+Répondre de façon concise et structurée (max 300 mots)."""
+            resp = client_s.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=500,
+                tools=[{"type":"web_search_20250305","name":"web_search"}],
+                messages=[{"role":"user","content":prompt_s}])
+            text = " ".join(b.text for b in resp.content if hasattr(b,"text") and b.text)
+            return {"status":"ok","requete":requete,"type":type_recherche,
+                    "resultat":text or "Recherche effectuée — résultats dans le contexte."}
+        except Exception as e:
+            return {"status":"fallback","requete":requete,
+                    "resultat": f"Recherche web non disponible : {e}. "
+                                f"Consulter manuellement : casact.org, swissre.com, astin.org"}
+
+
+    def _executer_notification_email(sujet, contenu, niveau, user_email):
+        """Envoie notification email de fin de session."""
+        from datetime import datetime
+        if not contenu:
+            # Construire automatiquement depuis session_state
+            pt = st.session_state.get("prime_totale", 0)
+            tg = pt / gnpi3 if gnpi3 else 0
+            anomalies_count = len([a for a in st.session_state.get("agent_py_anomalies",[])
+                                   if a.get("niveau") == "CRITIQUE"])
+            contenu = f"""
+<p><b>Session terminée par :</b> {user_email}</p>
+<p><b>Date :</b> {datetime.now().strftime('%d/%m/%Y à %H:%M')}</p>
+<p><b>GNPI :</b> {gnpi3:,.0f} MAD</p>
+<p><b>Prime totale calculée :</b> {pt:,.0f} MAD</p>
+<p><b>Taux global :</b> {tg:.4%}</p>
+<p><b>Anomalies critiques :</b> {anomalies_count}</p>
+<p><b>Modules complétés :</b> BC, Simulation, Market Curve, Rapport Final</p>
+"""
+        icone = {"info":"ℹ️","alerte":"⚠️","rapport_final":"📋"}.get(niveau,"📊")
+        ok, msg = envoyer_notification_email(
+            f"{icone} {sujet}",
+            contenu,
+            "hervepagnangde@gmail.com")
+        return {"status": "ok" if ok else "non_configure",
+                "message": msg if ok else f"Email non envoyé ({msg}) — configurez SMTP_USER/SMTP_PASS dans Secrets Streamlit"}
 
 
     def _executer_burning_cost_p3(prog, gnpi_v):
@@ -8383,35 +8455,53 @@ sur des critères statistiques objectifs, pas seulement des règles fixes.""",
                        log_cont, result_cont, alert_cont):
         client = anthropic.Anthropic(api_key=api_key)
 
-        system_p3 = f"""Tu es un agent actuariel autonome de niveau expert.
-Tu as accès aux fichiers bruts d'Atlantic Re pour la tarification 2026.
+        system_p3 = f"""Tu es un agent actuariel autonome de niveau expert senior.
+Spécialiste : Réassurance Non-Proportionnelle XL, automobile, marchés émergents (Maroc/Afrique).
+Références : Daykin-Pentikäinen-Pesonen (1994), CAS ratemaking guidelines, ASTIN Bulletin, IAA standards.
 
-CONTEXTE FOURNI PAR L'UTILISATEUR :
-{contexte_v if contexte_v else "Portefeuille automobile Maroc, GNPI {gnpi_v:,} MAD, année cotation {annee_v}."}
+═══ CONTEXTE MISSION ═════════════════════════════════════════
+{contexte_v if contexte_v else f"Portefeuille automobile Maroc 2026 | GNPI {gnpi_v:,.0f} MAD | Cotation {annee_v}"}
 
-GNPI : {gnpi_v:,} MAD | Année cotation : {annee_v}
-Seuil d'alerte critique (écart BC/Sim) : {seuil_al}%
-Période de retour sinistres majeurs : {retour3} ans
+GNPI : {gnpi_v:,.0f} MAD | Année cotation : {annee_v} | Période retour majeurs : {retour3} ans
+Seuil alerte critique (écart BC/Sim) : {seuil_al}%
 
-SÉQUENCE OBLIGATOIRE :
-1. DÉFINIR le programme (tranches, priorités, portées, frais) depuis le contexte fourni
-2. ANALYSER ET TRANSFORMER le triangle (choix branche longue/courte basé sur les données)
-3. CALCULER le Burning Cost
-4. LANCER la Simulation avec les paramètres calibrés
+═══ CADRE MÉTHODOLOGIQUE ════════════════════════════════════
+RÈGLE R1 : τ_risque = τ_pur + σ_hist × 20% (chargement sécurité CAS standard)
+RÈGLE R2 : BC = 0 si années non-nulles < 3 (données insuffisantes)
+RÈGLE R3 : Sinistres majeurs par EVT/GPD (Pickands-Balkema-de Haan, 1974)
+RÈGLE R4 : Market curve = tranches CAT uniquement (ROL = a × x^-b)
+SÉLECTION : T_travaillante = max(BC, Sim) | T_cat = max(Sim, Marché)
+AS-IF : Sur incréments (méthode Finger, 2006) — PAS sur cumulatifs
+STABILISATION : Si I_règl/I_surv ≥ 1+seuil → neutralisation clause d'indexation
+
+═══ SÉQUENCE OBLIGATOIRE ════════════════════════════════════
+1. DÉFINIR le programme (tranches, priorités, portées, frais commerciaux)
+2. ANALYSER le triangle (choix branche longue/courte selon développement)
+3. BURNING COST (As-If → Stab → CL → agrégation annuelle)
+4. SIMULATION (calibrage α Hill-MLE, λ Poisson, seuil p80×D)
 5. Si écart BC/Sim > {seuil_al}% → DEMANDER_VALIDATION_HUMAINE
-6. CONSTRUIRE la Market Curve (filtre EVENEMENT par défaut)
-7. Si R² < 0.25 → DEMANDER_VALIDATION_HUMAINE
-8. GÉNÉRER le rapport final
+6. MARKET CURVE (filtre EVENEMENT, R² minimum 0.30)
+7. ÉVALUER la pertinence statistique des méthodes (KS, AD, Hill)
+8. RAPPORT FINAL (sélection méthode + prime totale + recommandations)
+9. NOTIFIER (envoyer email de fin de session)
 
-RÈGLES DE DÉCISION AUTONOME :
-- Branche longue si portefeuille > 5 ans d'historique avec développement > 3 ans
-- Alpha suspect si < 0.8 ou > 4.0 → signaler mais continuer
-- Pour tranches cat : méthode = max(simulation, market_curve)
-- Pour tranches travaillantes : méthode = simulation sauf si BC/Sim < 15%
-- Ne JAMAIS demander validation pour des décisions techniques mineures
-- Justifie CHAQUE décision avec des chiffres
+═══ RÈGLES DE DÉCISION AUTONOME ═════════════════════════════
+• Branche longue : historique > 5 ans ET développement observable > 3 ans
+• Alpha [0.8, 4.0] normal | < 0.8 queue très lourde | > 4.0 quasi-normale
+• Lambda [1, 30] normal | hors range → vérifier le seuil de modélisation
+• BC=0 tranche cat : NORMAL (pas d'anomalie)
+• ROL décroissant avec la priorité : vérifier hiérarchie T2 < T3 (ROL)
+• R² < 0.30 market curve : faible → mentionner mais utiliser si seule option
+• Justifier CHAQUE décision avec chiffres (pas d'affirmation non quantifiée)
+• Utiliser les outils de RECHERCHE WEB pour vérifier les taux de marché
 
-Agis de façon professionnelle et autonome."""
+═══ CHARTE QUALITÉ ══════════════════════════════════════════
+• Chain-of-thought systématique : [Observation] → [Calcul] → [Conclusion]
+• Incertitude explicite si données insuffisantes
+• Cohérence inter-tranches vérifiée (hiérarchie ROL/taux)
+• Recommandations actionnables et chiffrées
+
+Agis de façon professionnelle, autonome et rigoureuse."""
 
         messages = [{"role": "user", "content":
             f"Lance la tarification complète Atlantic Re 2026. GNPI={gnpi_v:,} MAD. Contexte : {contexte_v if contexte_v else 'Standard automobile Maroc'}. Go."}]
@@ -8757,115 +8847,27 @@ with tab_hist:
 
 with tab_admin:
     st.header("🔐 Interface Administrateur")
-
-    if st.button("ℹ️ À propos de l’outil", use_container_width=True, key="admin_about_btn"):
-        st.session_state["show_about_tool"] = not st.session_state.get("show_about_tool", False)
-
-    if st.session_state.get("show_about_tool", False):
-        with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
-            st.markdown('''
-### Atlantic Re IA — Assistant actuariel de tarification
-
-**Atlantic Re IA** est un assistant actuariel conçu pour accompagner la tarification des programmes de réassurance non-proportionnelle, notamment en automobile.
-
-L’outil centralise les principales méthodes utilisées dans l’étude d’un programme de réassurance :
-
-- **Burning Cost** avec As-If, stabilisation, Chain Ladder et règles de prudence ;
-- **Simulation fréquence/sévérité** avec calibration Pareto / Poisson ;
-- **Market Curve** par ajustement log-log ;
-- **Comparaison des méthodes** et sélection du taux final ;
-- **Optimisation de programme** selon différentes perspectives ;
-- **Agent LLM Claude** pour l’analyse, la justification et la recommandation ;
-- **Rapport PDF professionnel** avec synthèse, taux retenus et recommandations.
-
-L’IA ne remplace pas l’actuaire : elle propose, explique et contrôle. La décision finale reste sous responsabilité humaine.
-            ''')
-
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
-
     if admin_pwd == get_admin_password():
         st.success("✅ Accès accordé")
-
-        users_details = get_users_details()
-
+        users = get_users()
         st.markdown("#### 👥 Utilisateurs autorisés")
-        df_users = pd.DataFrame([
-            {
-                "Email": email,
-                "Nom": info.get("nom", ""),
-                "Poste": info.get("poste", "Non renseigné"),
-                "Code": info.get("code", ""),
-                "Statut": info.get("statut", "Actif"),
-            }
-            for email, info in users_details.items()
-        ])
-        st.dataframe(df_users, use_container_width=True, hide_index=True)
-
+        st.dataframe(pd.DataFrame([{"Email": e, "Code": c, "Statut": "Actif"}
+                                    for e, c in users.items()]), use_container_width=True)
         st.divider()
-        st.markdown("#### ⚙️ Ajouter ou modifier un utilisateur")
-        st.info(
-            "Pour enregistrer définitivement un utilisateur, copiez le bloc généré dans "
-            "Streamlit Cloud → Settings → Secrets. Le format enrichi permet maintenant de renseigner le poste."
-        )
-
-        c1, c2 = st.columns(2)
-        with c1:
-            email_new = st.text_input("Email", placeholder="prenom.nom@entreprise.com", key="admin_new_email")
-            nom_new = st.text_input("Nom complet", placeholder="Ex: Hervé NONGPANGA", key="admin_new_nom")
-        with c2:
-            poste_new = st.text_input("Poste", placeholder="Ex: Actuaire tarificateur", key="admin_new_poste")
-            statut_new = st.selectbox("Statut", ["Actif", "Suspendu", "Lecture seule"], key="admin_new_statut")
-
-        col_code1, col_code2 = st.columns([1, 1])
-        with col_code1:
-            code_custom = st.text_input("Code d’accès manuel (optionnel)", key="admin_code_custom")
-        with col_code2:
-            if st.button("🎲 Générer un code", use_container_width=True, key="admin_generate_code"):
+        st.markdown("#### ⚙️ Gérer les utilisateurs")
+        st.info("Allez sur Streamlit Cloud -> Settings -> Secrets et ajoutez :\nadmin_password = 'VotreMDP'\n[users]\n'email@ex.com' = 'CODE'")
+        st.divider()
+        st.markdown("#### 🎲 Générateur de code")
+        col1, col2 = st.columns(2)
+        with col1:
+            email_new = st.text_input("Email du nouvel utilisateur", key="new_email")
+        with col2:
+            if st.button("Générer un code"):
                 st.session_state["generated_code"] = secrets_lib.token_hex(4).upper()
-
-        code_final = code_custom.strip() or st.session_state.get("generated_code", "")
-
-        if code_final:
-            st.success(f"Code actif : **{code_final}**")
-
-        if email_new and code_final:
-            email_clean = email_new.lower().strip()
-            st.markdown("##### Bloc Secrets à copier")
-            secrets_block = f'''[users."{email_clean}"]
-code = "{code_final}"
-nom = "{nom_new.strip()}"
-poste = "{poste_new.strip()}"
-statut = "{statut_new}"'''
-            st.code(secrets_block, language="toml")
-
-            st.caption("Ancien format encore compatible, mais sans poste :")
-            legacy_block = f'''[users]
-"{email_clean}" = "{code_final}"'''
-            st.code(legacy_block, language="toml")
-
-        st.divider()
-        st.markdown("#### 🧾 Exemple complet de configuration Secrets")
-        with st.expander("Voir un exemple", expanded=False):
-            st.code('''admin_password = "VotreMotDePasseAdmin"
-
-[users."actuaire@atlanticre.ia"]
-code = "ACT2026"
-nom = "Actuaire Senior"
-poste = "Actuaire tarificateur"
-statut = "Actif"
-
-[users."manager@atlanticre.ia"]
-code = "MNG2026"
-nom = "Manager Technique"
-poste = "Responsable Réassurance"
-statut = "Actif"''', language="toml")
-
-        st.divider()
-        st.markdown("#### 🧩 Informations session")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Utilisateur connecté", st.session_state.get("user_email", "—"))
-        c2.metric("Poste", st.session_state.get("user_poste", "—") or "—")
-        c3.metric("Sessions chargées", len(db_list_sessions(st.session_state.get("user_email", ""))) if st.session_state.get("user_email") else 0)
-
+        if "generated_code" in st.session_state:
+            st.success(f"Code généré : **{st.session_state['generated_code']}**")
+            if email_new:
+                st.code(f'"{email_new}" = "{st.session_state["generated_code"]}"')
     elif admin_pwd:
         st.error("❌ Mot de passe incorrect")
