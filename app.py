@@ -1146,15 +1146,62 @@ Niveau d'expertise requis : Senior (15+ ans réassurance non-prop, marchés éme
 6. SOURCES PRIMAIRES : Préférer la littérature actuarielle (CAS, ASTIN, Daykin-Pentikäinen-Pesonen).
 
 ═══ CONTRAINTES MÉTIER SPÉCIFIQUES ═════════════════════════
-{contraintes if contraintes else """• Taux technique positif et < 50% (anomalie si ≥ 50%)
-• BC=0 pour tranche cat avec < 3 années non-nulles : NORMAL (règle R2)
-• Écart BC/Sim > 25% → signaler et justifier ; > 50% → anomalie critique
-• Market curve : tranches cat UNIQUEMENT (R4) — R² minimum acceptable : 0.45
-• Chargement sécurité : τ_risque = τ_pur + σ_hist × 20% (règle R1, CAS standard)
+{contraintes if contraintes else """
+━━━ RÈGLE FONDAMENTALE : PRIMAUTÉ DU BURNING COST ━━━━━━━━━━
+Le Burning Cost est LA méthode de référence en réassurance XL.
+• Il reflète l'EXPÉRIENCE RÉELLE de la cédante → TOUJOURS analyser en premier.
+• Si le BC est disponible et crédible → c'est lui qui fixe le tarif, la simulation est un outil de VALIDATION.
+• EXCEPTION : branches non-travaillantes, partiellement travaillantes, cat → BC peu/pas crédible → simulation prioritaire.
+
+━━━ DÉTECTION ET TRAITEMENT DES ANNÉES ATYPIQUES ━━━━━━━━━━
+L'actuaire DOIT identifier les années atypiques AVANT de tarifer.
+Causes d'écartement légitimes (doivent être documentées) :
+  [A] ISOLEMENT : L'année présente un taux >> ses voisines immédiates (N-1 et N+1 ont des taux normaux)
+  [B] NATURE CAT : L'année contient des sinistres CAT alors que la tranche tarifée est Risk uniquement (non R&C)
+  [C] GNPI/EPI FAIBLE : Le GNPI de cette année est anormalement bas vs la moyenne historique (< 50% de la médiane)
+  [D] SINISTRE UNIQUE : Un seul grand sinistre exceptionnel déforme l'année (doit être traité via TVE/GPD)
+  [E] CHANGEMENT PORTEFEUILLE : Modification majeure du périmètre assuré cette année-là
+Règle : Signaler l'anomalie, présenter les deux calculs (avec et sans), et justifier le choix retenu.
+
+━━━ RÈGLES PAR TYPE DE TRANCHE ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TRANCHE TRAVAILLANTE :
+  → BC = méthode principale (expérience directement disponible)
+  → Simulation = validation et détection de problèmes potentiels
+  → Objectif simulation : ajuster α et λ pour que la distribution simulée colle
+    au MAXIMUM à la distribution empirique, SURTOUT EN QUEUE
+  → Si simulation ≠ BC malgré ajustement optimal : signal que l'affaire a un problème structurel
+    (changement de portefeuille, sinistres atypiques non identifiés, etc.)
+  → τ_retenu = max(BC, Sim) — côté prudence
+
+TRANCHE NON-TRAVAILLANTE / PARTIELLEMENT TRAVAILLANTE :
+  → BC généralement nul ou non crédible (manque de sinistres historiques au-dessus de la priorité)
+  → SIMULATION = méthode principale — TRÈS grande attention aux paramètres
+  → Market curve = référence secondaire (calibrage externe)
+  → τ_retenu = max(Sim, Marché) — prudence absolue
+  → Justifier pourquoi le BC n'est pas utilisé (règle R2)
+
+TRANCHE CAT :
+  → BC = souvent nul (R2) ou non représentatif → normal
+  → SIMULATION = principale, TRÈS attention à α (queue lourde) et λ (fréquence événements)
+  → Market curve = important pour benchmarking
+  → τ_retenu = max(Sim, Marché) — ne jamais prendre le BC seul pour le cat
+
+━━━ RÈGLES MARKET CURVE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Utiliser UNIQUEMENT des données de marché représentatives des tranches tarifées
+• Si les tranches ont un ROL ~ 10% → filtrer les données entre ROL_min et ROL_max définis par tranche
+  (ex: si ROL cible ~ 10%, utiliser données entre 0% et 15% seulement)
+• Ne JAMAIS mélanger des données de ROL très élevé avec des tranches à faible ROL
+• R² minimum acceptable : 0.40 avec N ≥ 15 points
+• Si R² < 0.30 → mentionner la faible robustesse dans le rapport
+
+━━━ RÈGLES NUMÉRIQUES (INVARIANTES) ━━━━━━━━━━━━━━━━━━━━━
+• τ_pur ≤ τ_risque ≤ τ_technique (toujours, anomalie critique si non respecté)
+• τ_risque = τ_pur + σ_hist × 20% (R1, CAS standard)
+• BC = 0 si années non-nulles < 3 (R2)
+• Market curve : cat uniquement sauf exception documentée (R4)
 • Reconstitutions : cap = (n_rec + 1) × portée
-• As-If sur incréments (pas sur cumulatifs) — méthode Finger (2006)
-• Stabilisation : déclenché si I_règlement/I_survenance ≥ 1 + seuil
-• Sinistres majeurs : fit GPD sur excédances (méthode EVT/Pickands-Balkema-de Haan)"""}
+• As-If sur incréments (méthode Finger 2006)
+• Stabilisation : I_règl/I_surv ≥ 1 + seuil"""}
 
 ═══ CONTEXTE GLOBAL PORTEFEUILLE ════════════════════════════
 {contexte_global if contexte_global else "Portefeuille automobile Maroc, réassurance non-proportionnelle, marché en développement."}
@@ -1174,29 +1221,38 @@ Niveau d'expertise requis : Senior (15+ ans réassurance non-prop, marchés éme
 
 ═══ EXEMPLES FEW-SHOT (référence qualité) ═══════════════════
 {exemples if exemples else """
-EXEMPLE BON :
-"Taux BC T1 = 2.94% (8 années non-nulles / 10, σ=1.82%), Simulation = 3.98% (α=1.45, λ=3.2).
-Écart = 35% > 25% → règle de prudence : retenir la simulation. τ_technique = 3.98% × (1-0.00) / (1-0.10-0.05-0.10) = 5.24%.
-Point d'attention : l'écart élevé suggère une sous-estimation du BC due à des sinistres extrêmes non capturés."
+CAS 1 — Tranche travaillante avec BC crédible :
+  T1 (13M xs 2M) — Travaillante :
+  → BC : 8 ans non-nuls / 10 | τ_pur=2.18% σ=1.45% τ_risque=2.47% τ_tech=3.26% ✅ CRÉDIBLE
+  → Sim : τ_pur=3.12% τ_tech=4.59% | α=1.45 λ=3.2 → ajustement visuel OK
+  → Écart BC/Sim = 29% > 25% → analyser les années atypiques
+  → DÉCISION : BC=3.26% prioritaire (expérience directe) | retenu = max(3.26%, 4.59%) = 4.59% (prudence)
+
+CAS 2 — Année atypique détectée (cause B) :
+  Année 2019 : τ=8.2% vs voisines 2018=1.1%, 2020=1.4% → ATYPIQUE (ratio 6× voisines)
+  Cause identifiée : sinistre CAT (inondation) dans un programme Risk uniquement
+  → Décision : ÉCARTER 2019 de l'analyse BC
+  → BC recalculé sans 2019 : τ_tech=2.85% (vs 4.12% avec 2019)
+
+CAS 3 — Tranche cat sans données :
+  T2 Cat (10M xs 15M) :
+  → BC : 0 années non-nulles → τ_BC = 0% (R2 — NORMAL pour une tranche cat)
+  → Sim : α=1.45 λ=0.8 → τ_sim=1.24% | ROL_sim=2.27%
+  → Market : ROL_marché=1.85% (données filtrées ROL∈[0.5%, 3%], R²=0.52 N=22)
+  → DÉCISION : τ_retenu = max(1.24%, 1.34%) = 1.34% (marché légèrement supérieur)
 
 EXEMPLE MAUVAIS (à éviter) :
-"Le taux est raisonnable. Il faut vérifier les données."
-→ Aucun chiffre, aucune méthode, aucune décision actionnelle.
-
-EXEMPLE STRUCTURE ANALYSE :
-T1 Travaillante (13M xs 2M) :
-  • BC : τ_pur=2.18%, σ=1.45%, τ_risque=2.47%, Rec=8.2%, τ_tech=1.94% [8 ans non-nuls ✅]
-  • Sim : τ_pur=3.12%, τ_risque=3.44%, τ_tech=4.59% [α=1.45, λ=3.2]
-  • Écart BC/Sim = 43% > 25% → retenir Simulation → τ_retenu = 4.59%
-  • Prime T1 = 183M × 4.59% = 8,40M MAD"""}
+  "Le taux BC est faible donc on retient la simulation."
+  → Non quantifié, cause de l'écart non identifiée, aucune analyse des années atypiques."""}
 
 ═══ FORMAT DE SORTIE REQUIS ════════════════════════════════
 {output_instructions if output_instructions else """
-1. SYNTHÈSE EXÉCUTIVE (3-5 lignes, chiffres obligatoires)
-2. ANALYSE PAR TRANCHE (structure : BC → Sim → Marché → Retenu → Prime)
-3. POINTS D'ATTENTION (anomalies, incertitudes, conditions à surveiller)
-4. RECOMMANDATIONS (actionnelles, quantifiées, hiérarchisées)
-5. CONCLUSION ACTUARIELLE (verdict clair : ACCEPTER / NÉGOCIER / RÉVISER)"""}
+1. ANALYSE PRÉALABLE (années atypiques, crédibilité BC par tranche)
+2. SYNTHÈSE BURNING COST (avec/sans années atypiques si applicable)
+3. SYNTHÈSE SIMULATION (adéquation distribution empirique, notamment en queue)
+4. SYNTHÈSE MARKET CURVE (filtre ROL appliqué, R², représentativité)
+5. TARIF RETENU PAR TRANCHE (règle de sélection justifiée)
+6. CONCLUSION ACTUARIELLE (ACCEPTER / NÉGOCIER / RÉVISER + prime totale)"""}
 
 La précision quantitative prime sur l'exhaustivité qualitative.
 Chaque affirmation doit être étayée par un calcul explicite.
@@ -4058,6 +4114,61 @@ with tab3:
     if "df_proj" not in st.session_state:
         st.warning("⚠️ Transformez d'abord le triangle")
     else:
+        # ── DÉTECTEUR ANNÉES ATYPIQUES ─────────────────────────────────────
+        with st.expander("🔍 Analyse préalable — Détection des années atypiques (obligatoire)", expanded=True):
+            st.caption("AVANT le calcul BC: identifier les années atypiques. Causes [A]=Isolement [B]=Nature CAT [C]=GNPI faible [D]=Sinistre unique [E]=Périmètre")
+            df_proj_bc = st.session_state["df_proj"].copy()
+            t_ref = next((t for t in tranches_input if t["type"]=="travaillante"), tranches_input[0] if tranches_input else None)
+            if t_ref:
+                D_ref = t_ref["priorite"]; L_ref = t_ref["portee"]
+                df_proj_bc["Ck_ref"] = df_proj_bc.apply(
+                    lambda r: min(max(r["Sprime_ultime"] - D_ref, 0), L_ref) * r["coeff_stab"], axis=1)
+                ch_ann = df_proj_bc.groupby("annee_surv")["Ck_ref"].sum().reset_index()
+                ch_ann.columns = ["Annee","Charge_XL"]
+                gnpi_bc = {}
+                df_gref = st.session_state.get("df_gnpis_df", pd.DataFrame())
+                if not df_gref.empty:
+                    try:
+                        gi = df_gref.set_index(df_gref.columns[0]); gc = df_gref.columns[1]
+                        for ann2 in ch_ann["Annee"]:
+                            try: gnpi_bc[int(ann2)] = float(gi.loc[ann2, gc])
+                            except: gnpi_bc[int(ann2)] = gnpi
+                    except: pass
+                ch_ann["GNPI"] = ch_ann["Annee"].apply(lambda a: gnpi_bc.get(int(a), gnpi))
+                ch_ann["TxBC"] = ch_ann["Charge_XL"] / ch_ann["GNPI"].clip(lower=1)
+                med_t = ch_ann["TxBC"].median(); med_g = ch_ann["GNPI"].median()
+                anom = {}
+                ta = ch_ann["TxBC"].values; ga = ch_ann["GNPI"].values; aa = ch_ann["Annee"].values
+                for i2, (an2, tau2, gnpi2) in enumerate(zip(aa, ta, ga)):
+                    c2 = []
+                    vois = [ta[j] for j in [i2-1, i2+1] if 0 <= j < len(ta)]
+                    if vois and tau2 > 0 and med_t > 0:
+                        rv = tau2 / max(float(np.mean(vois)), 1e-10)
+                        if rv > 3.0 and tau2 > med_t * 2: c2.append(f"[A] Isolement: {tau2:.2%} >> voisines ({np.mean(vois):.2%}) ratio={rv:.1f}x")
+                    if gnpi2 < med_g * 0.5 and med_g > 0: c2.append(f"[C] GNPI faible: {gnpi2:,.0f} vs médiane {med_g:,.0f}")
+                    if c2: anom[int(an2)] = c2
+                rows_at = [{"Année":int(r["Annee"]),"Charge XL":f"{r['Charge_XL']:,.0f}","GNPI":f"{r['GNPI']:,.0f}",
+                    "τ BC":f"{r['TxBC']:.4%}","vs Médiane":f"{r['TxBC']/med_t:.1f}×" if med_t>0 else "—",
+                    "Anomalie":" | ".join(anom.get(int(r["Annee"]),[])) or "✅ Normale"}
+                    for _,r in ch_ann.iterrows()]
+                tableau_resultats(rows_at, f"Analyse années atypiques — {t_ref['nom']}")
+                if anom: st.warning(f"⚠️ Années atypiques détectées : {sorted(anom.keys())}")
+                col_e1, col_e2 = st.columns([3,1])
+                with col_e1:
+                    exc_ann = st.multiselect("Années à exclure du BC",
+                        options=sorted([int(a) for a in aa]), default=sorted(anom.keys()),
+                        key="bc_annees_exclues", help="[A]=Isolement [B]=Nature CAT [C]=GNPI faible [D]=Sinistre unique [E]=Périmètre")
+                with col_e2:
+                    cause_exc = st.selectbox("Cause",["[A] Isolement","[B] Nature CAT","[C] GNPI faible","[D] Sinistre unique","[E] Périmètre","Autre"],key="bc_cause_excl")
+                if exc_ann:
+                    t_av = ch_ann["TxBC"].mean(); t_ss = ch_ann[~ch_ann["Annee"].isin(exc_ann)]["TxBC"].mean()
+                    c1e,c2e,c3e = st.columns(3)
+                    with c1e: card("τ BC avec atypiques",f"{t_av:.4%}",couleur="#e74c3c",icone="⚠️")
+                    with c2e: card("τ BC sans atypiques",f"{t_ss:.4%}",couleur="#00b5a5",icone="✅")
+                    with c3e: card("Écart",f"{abs(t_av-t_ss)*100:.4f} pts",couleur="#0d2b3e",icone="📊")
+                    st.session_state["bc_annees_exclues_set"] = set(exc_ann)
+                    st.caption(f"Cause documentée : {cause_exc}")
+                else: st.session_state["bc_annees_exclues_set"] = set()
         if st.button("▶ Calculer le Burning Cost", type="primary"):
             with st.spinner("Calcul en cours..."):
                 df_proj = st.session_state["df_proj"]
@@ -4356,28 +4467,55 @@ with tab4:
 with tab5:
     st.header("Market Curve")
     st.caption("ROL = a x x^(-b)  |  x = (D + C/2) / GNPI  |  tau_pur = ROL x C / GNPI")
-    st.markdown("""<div style="background:rgba(239,68,68,0.08);border-left:4px solid #ef4444;
-        border-radius:0 8px 8px 0;padding:8px 14px;margin-bottom:8px;font-size:12px">
-        ⚠️ <b>R4</b> — La market curve est utilisée <b>UNIQUEMENT pour les tranches cat</b>.
-        Elle n’intervient pas dans la tarification de la tranche travaillante.
-        Critères qualité : <b>R² ≥ 0.45</b>, <b>N ≥ 15 points</b>, <b>cohérence ROL T2 > T3</b>.
-        </div>""", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d2b3e,#004d40);
+        padding:14px 20px;border-left:4px solid #00b5a5;margin-bottom:12px;font-size:13px;color:white">
+      <b style="color:#00b5a5">Regles Market Curve :</b><br>
+      Utiliser UNIQUEMENT des donnees representant les tranches a tarifer.<br>
+      Si ROL cible ~ 10% : filtrer donnees ROL entre 0% et 15% uniquement.<br>
+      Ne jamais melanger donnees a fort ROL avec tranches a faible ROL.<br>
+      R2 >= 0.40, N >= 15 points, hierarchie ROL respectee (priorite haute = ROL bas).<br>
+      <span style="color:#aaa;font-size:11px">
+      R4 -- Market curve applicable aux tranches cat et non-travaillantes.
+      </span>
+    </div>""", unsafe_allow_html=True)
 
-    f_mkt = st.file_uploader("📁 Données marché", type=["xlsx","csv"], key="f_mkt")
+    f_mkt = st.file_uploader("Donnees marche", type=["xlsx","csv"], key="f_mkt")
 
-    with st.expander("⚙️ Paramètres de filtrage", expanded=False):
+    # Filtres ROL par tranche
+    with st.expander("Parametres ROL par tranche (recommande)", expanded=True):
+        st.caption(
+            "Definissez la plage de ROL pour chaque tranche. "
+            "Ex: T2 ROL ~ 2% -> utiliser donnees ROL entre 0.5% et 4% uniquement.")
+        rol_par_tranche = {}
+        cat_tranches_mkt = [t for t in tranches_input if t["type"] != "travaillante"]
+        if cat_tranches_mkt:
+            cols_tr_mkt = st.columns(min(len(cat_tranches_mkt), 3))
+            for i_t, t_mkt in enumerate(cat_tranches_mkt):
+                with cols_tr_mkt[i_t % min(len(cat_tranches_mkt), 3)]:
+                    st.markdown(f"**{t_mkt['nom']}** ({t_mkt['type']})")
+                    r_mn = st.number_input(f"ROL min %", value=0.5, step=0.5,
+                        min_value=0.0, max_value=50.0, key=f"rol_min_t{i_t}")
+                    r_mx = st.number_input(f"ROL max %", value=5.0, step=0.5,
+                        min_value=0.0, max_value=100.0, key=f"rol_max_t{i_t}")
+                    rol_par_tranche[t_mkt["nom"]] = (r_mn/100, r_mx/100)
+        if rol_par_tranche:
+            st.session_state["rol_par_tranche"] = rol_par_tranche
+            st.info("Plages ROL par tranche enregistrees. Le fit sera realise avec les donnees filtrees par tranche si disponibles.")
+
+    with st.expander("Parametres de filtrage global", expanded=False):
         c1, c2, c3 = st.columns(3)
         with c1:
-            rol_min = st.number_input("ROL minimum (%)",  value=5.0,   step=1.0)  / 100
+            rol_min = st.number_input("ROL minimum (%)",  value=0.5,   step=0.5)  / 100
             rol_max = st.number_input("ROL maximum (%)",  value=100.0, step=10.0) / 100
         with c2:
-            tolerance = st.number_input("Tolérance proximité ROL≈Midpoint (%)", value=50.0, step=5.0) / 100
-            r2_min    = st.number_input("R² minimum accepté (%)", value=30.0, step=5.0) / 100
+            tolerance = st.number_input("Tolerance proximite ROL Midpoint (%)", value=50.0, step=5.0) / 100
+            r2_min    = st.number_input("R2 minimum accepte (%)", value=40.0, step=5.0) / 100
         with c3:
             filtre_branche = st.text_input("Filtre branche (INT_BUSINESS)", value="EVENEMENT")
             st.caption("Laisser vide = pas de filtre")
 
-    if f_mkt and st.button("▶ Construire la market curve", type="primary"):
+
         with st.spinner("📈 Construction en cours..."):
             df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
             df_mkt.columns = [c.strip() for c in df_mkt.columns]
@@ -8926,41 +9064,74 @@ Références : Daykin-Pentikäinen-Pesonen (1994), CAS ratemaking guidelines, AS
 GNPI : {gnpi_v:,.0f} MAD | Année cotation : {annee_v} | Période retour majeurs : {retour3} ans
 Seuil alerte critique (écart BC/Sim) : {seuil_al}%
 
+═══ RÈGLE FONDAMENTALE : PRIMAUTÉ DU BURNING COST ═══════════
+Le Burning Cost est LA méthode de référence en réassurance XL.
+Il reflète l'expérience RÉELLE de la cédante.
+TOUJOURS commencer par le BC, même quand il donne zéro.
+La simulation est un outil de validation du BC — pas une alternative par défaut.
+
+EXCEPTION MAJEURE :
+• Branches non-travaillantes / partiellement travaillantes → BC non crédible → Simulation prioritaire
+• Tranches cat → BC souvent nul (normal) → Simulation + Market curve prioritaires
+Dans ces cas : TRÈS GRANDE ATTENTION aux paramètres de simulation (α, λ, seuil).
+
+═══ DÉTECTION ANNÉES ATYPIQUES (OBLIGATOIRE avant tarification) ════
+AVANT de calculer le BC final, l'agent DOIT analyser chaque année.
+Causes d'écartement légitimes :
+  [A] ISOLEMENT  : τ année > 3× médiane de ses voisines (N-1, N+1)
+  [B] NATURE     : Sinistres CAT dans une tranche Risk uniquement
+  [C] GNPI FAIBLE: GNPI année < 50% de la médiane historique
+  [D] SINISTRE UNIQUE : Un seul sinistre exceptionnel (traiter via EVT/GPD)
+  [E] CHANGEMENT PÉRIMÈTRE : Modification majeure du portefeuille assuré
+Si écartement → présenter BC avec ET sans année atypique + justification documentée.
+
 ═══ CADRE MÉTHODOLOGIQUE ════════════════════════════════════
-RÈGLE R1 : τ_risque = τ_pur + σ_hist × 20% (chargement sécurité CAS standard)
-RÈGLE R2 : BC = 0 si années non-nulles < 3 (données insuffisantes)
-RÈGLE R3 : Sinistres majeurs par EVT/GPD (Pickands-Balkema-de Haan, 1974)
-RÈGLE R4 : Market curve = tranches CAT uniquement (ROL = a × x^-b)
-SÉLECTION : T_travaillante = max(BC, Sim) | T_cat = max(Sim, Marché)
-AS-IF : Sur incréments (méthode Finger, 2006) — PAS sur cumulatifs
-STABILISATION : Si I_règl/I_surv ≥ 1+seuil → neutralisation clause d'indexation
+R1 : τ_risque = τ_pur + σ_hist × 20%
+R2 : BC = 0 si années non-nulles < 3 (NORMAL pour cat)
+R3 : Sinistres majeurs par EVT/GPD (Pickands-Balkema-de Haan, 1974)
+R4 : Market curve = tranches CAT / non-travaillantes (ROL = a × x^-b)
+R5 : As-If sur incréments (Finger 2006) — PAS sur cumulatifs
+R6 : Stabilisation si I_règl/I_surv ≥ 1 + seuil
+
+Sélection finale :
+• TRAVAILLANTE   → max(BC, Sim) — BC prioritaire si crédible
+• NON-TRAV./CAT  → max(Sim, Marché) — jamais BC seul
+
+═══ RÈGLES SIMULATION ═══════════════════════════════════════
+Pour les branches travaillantes :
+• Objectif = faire coïncider la distribution simulée avec l'empirique, SURTOUT EN QUEUE
+• Si simulation ≠ BC malgré ajustement optimal → signal de problème structurel
+• Ajuster α (queue) et λ (fréquence) jusqu'à convergence visuelle
+
+Pour les branches non-travaillantes / cat :
+• Paramètres α et λ doivent être calibrés avec EXTRÊME soin
+• Comparer avec taux marché comme contre-vérification
+• Si simulation donne un résultat très différent du marché → investiguer
+
+═══ RÈGLES MARKET CURVE ═════════════════════════════════════
+• Filtrer les données de marché par plage de ROL pertinente pour chaque tranche
+  Ex: Tranche avec ROL cible ~ 10% → utiliser données ROL ∈ [0%, 15%] uniquement
+  Ex: Tranche avec ROL cible ~ 2% → utiliser données ROL ∈ [0%, 4%] uniquement
+• Ne jamais mélanger données de ROL élevé avec tranches à faible ROL
+• Vérifier la hiérarchie : priorité plus haute = ROL plus bas (si non respecté → signal d'erreur)
+• R² minimum : 0.40 avec N ≥ 15 points
 
 ═══ SÉQUENCE OBLIGATOIRE ════════════════════════════════════
-1. DÉFINIR le programme (tranches, priorités, portées, frais commerciaux)
-2. ANALYSER le triangle (choix branche longue/courte selon développement)
-3. BURNING COST (As-If → Stab → CL → agrégation annuelle)
-4. SIMULATION (calibrage α Hill-MLE, λ Poisson, seuil p80×D)
-5. Si écart BC/Sim > {seuil_al}% → DEMANDER_VALIDATION_HUMAINE
-6. MARKET CURVE (filtre EVENEMENT, R² minimum 0.30)
-7. ÉVALUER la pertinence statistique des méthodes (KS, AD, Hill)
-8. RAPPORT FINAL (sélection méthode + prime totale + recommandations)
-9. NOTIFIER (envoyer email de fin de session)
-
-═══ RÈGLES DE DÉCISION AUTONOME ═════════════════════════════
-• Branche longue : historique > 5 ans ET développement observable > 3 ans
-• Alpha [0.8, 4.0] normal | < 0.8 queue très lourde | > 4.0 quasi-normale
-• Lambda [1, 30] normal | hors range → vérifier le seuil de modélisation
-• BC=0 tranche cat : NORMAL (pas d'anomalie)
-• ROL décroissant avec la priorité : vérifier hiérarchie T2 < T3 (ROL)
-• R² < 0.30 market curve : faible → mentionner mais utiliser si seule option
-• Justifier CHAQUE décision avec chiffres (pas d'affirmation non quantifiée)
-• Utiliser les outils de RECHERCHE WEB pour vérifier les taux de marché
+1. DÉFINIR le programme (tranches, priorités, portées, frais)
+2. ANALYSER le triangle (choix branche longue/courte)
+3. DÉTECTER les années atypiques (causes A→E)
+4. BURNING COST (As-If → Stab → CL → agrégation, avec/sans atypiques)
+5. SIMULATION (calibrage α/λ pour coller à l'empirique)
+6. Si écart BC/Sim > {seuil_al}% ET tranche travaillante → DEMANDER_VALIDATION_HUMAINE
+7. MARKET CURVE (filtre ROL par tranche, R² ≥ 0.40)
+8. ÉVALUER pertinence statistique (KS, AD, Hill)
+9. RAPPORT FINAL + NOTIFIER
 
 ═══ CHARTE QUALITÉ ══════════════════════════════════════════
-• Chain-of-thought systématique : [Observation] → [Calcul] → [Conclusion]
-• Incertitude explicite si données insuffisantes
-• Cohérence inter-tranches vérifiée (hiérarchie ROL/taux)
-• Recommandations actionnables et chiffrées
+• Chain-of-thought : [Observation] → [Calcul] → [Conclusion chiffrée]
+• Toujours quantifier : τ_pur, σ, τ_risque, τ_technique, prime (MAD)
+• Signaler explicitement : années écartées + raison, crédibilité BC
+• Cohérence inter-tranches : hiérarchie ROL, taux décroissants avec la priorité
 
 Agis de façon professionnelle, autonome et rigoureuse."""
 
