@@ -4773,28 +4773,56 @@ with tab5:
             st.session_state["rol_par_tranche"] = rol_par_tranche
             st.info("Plages ROL par tranche enregistrees. Le fit sera realise avec les donnees filtrees par tranche si disponibles.")
 
-    with st.expander("Parametres de filtrage global", expanded=False):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            rol_min = st.number_input("ROL minimum (%)",  value=0.5,   step=0.5)  / 100
-            rol_max = st.number_input("ROL maximum (%)",  value=100.0, step=10.0) / 100
-        with c2:
-            tolerance = st.number_input("Tolerance proximite ROL Midpoint (%)", value=50.0, step=5.0) / 100
-            r2_min    = st.number_input("R2 minimum accepte (%)", value=40.0, step=5.0) / 100
-        with c3:
-            filtre_branche = st.text_input("Filtre branche (INT_BUSINESS)", value="EVENEMENT")
-            st.caption("Laisser vide = pas de filtre")
-
-
+        with st.expander("Parametres de filtrage global", expanded=False):
+            c1, c2, c3 = st.columns(3)
+        
+            with c1:
+                rol_min = st.number_input("ROL minimum (%)", value=0.5, step=0.5) / 100
+                rol_max = st.number_input("ROL maximum (%)", value=100.0, step=10.0) / 100
+        
+            with c2:
+                tolerance = st.number_input("Tolerance proximite ROL Midpoint (%)", value=50.0, step=5.0) / 100
+                r2_min = st.number_input("R2 minimum accepte (%)", value=40.0, step=5.0) / 100
+        
+            with c3:
+                filtre_branche = st.text_input("Filtre branche (INT_BUSINESS)", value="EVENEMENT")
+                st.caption("Laisser vide = pas de filtre")
+        
+        f_mkt = st.file_uploader(
+            "Donnees marche",
+            type=["xlsx", "csv"],
+            key="f_mkt"
+        )
+        
+        if f_mkt is None:
+            st.warning("⚠️ Chargez un fichier marché pour construire la Market Curve.")
+            st.stop()
+        
         with st.spinner("📈 Construction en cours..."):
-            df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
+            if f_mkt.name.lower().endswith(".xlsx"):
+                df_mkt = pd.read_excel(f_mkt)
+            else:
+                df_mkt = pd.read_csv(f_mkt)
+        
             df_mkt.columns = [c.strip() for c in df_mkt.columns]
-            for col in ['ROLs', 'midpoints', 'Garantie en MAD', 'Priorité en MAD']:
+        
+            for col in ["ROLs", "midpoints", "Garantie en MAD", "Priorité en MAD"]:
                 if col in df_mkt.columns and df_mkt[col].dtype == object:
-                    df_mkt[col] = (df_mkt[col].astype(str).str.replace('%','').str.replace(' ','').str.replace(',','.')
-                                   .apply(lambda x: float(x)/100 if x not in ['nan',''] and float(x) > 1.5
-                                          else (float(x) if x not in ['nan',''] else np.nan)))
-            df_mkt = df_mkt.dropna(subset=['ROLs', 'midpoints'])
+                    df_mkt[col] = (
+                        df_mkt[col]
+                        .astype(str)
+                        .str.replace("%", "", regex=False)
+                        .str.replace(" ", "", regex=False)
+                        .str.replace(",", ".", regex=False)
+                        .apply(
+                            lambda x: float(x) / 100
+                            if x not in ["nan", ""] and float(x) > 1.5
+                            else (float(x) if x not in ["nan", ""] else np.nan)
+                        )
+                    )
+        
+            df_mkt = df_mkt.dropna(subset=["ROLs", "midpoints"])
+        
             n_avant = len(df_mkt)
             if filtre_branche.strip():
                 col_business = next((c for c in df_mkt.columns if 'BUSINESS' in c.upper()), None)
