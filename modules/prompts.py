@@ -255,7 +255,7 @@ def claude_stream(api_key, prompt, max_tokens=2000, session_key="", use_opus=Fal
 
 
 
-def guide_prompt(etape, exemples_contexte, exemples_instructions, exemples_input, exemples_output):
+def guide_prompt(etape, exemples_contexte, exemples_instructions, exemples_input, exemples_output=None):
     with st.expander("💡 Conseils pour bien prompter Claude sur cette étape", expanded=False):
         st.markdown(f"""<div style="background:#f0fff4;border-left:4px solid #2d8a4e;border-radius:0 8px 8px 0;
             padding:14px 18px;margin-bottom:12px"><b style="color:#2d8a4e">🎯 Meilleure analyse pour : {etape}</b></div>""",
@@ -269,8 +269,9 @@ def guide_prompt(etape, exemples_contexte, exemples_instructions, exemples_input
         with c2:
             st.markdown("**📥 Données supplémentaires**")
             for ex in exemples_input: st.markdown(f"- {ex}")
-            st.markdown("**📤 Format de sortie**")
-            for ex in exemples_output: st.markdown(f"- {ex}")
+            if exemples_output:
+                st.markdown("**📤 Format de sortie**")
+                for ex in exemples_output: st.markdown(f"- {ex}")
         st.markdown("""<div style="background:#fff8f0;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;
             padding:10px 14px;margin-top:8px;font-size:12px">
             ⚠️ <b>Règle d'or :</b> Plus vous donnez de contexte métier, plus l'analyse sera pertinente.
