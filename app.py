@@ -3548,7 +3548,7 @@ with tab6:
                         mult = 1.0 if i == 0 else (0.90 if i == 1 else 1.05)
                         taux_scen[t["nom"]] = st.number_input(
                             f"τ {t['nom'][:12]} (%)", value=round(taux_ref_f * mult, 4),
-                            step=0.01, format="%.4f", key=f"scen_t{i}_{t['nom'][:8]}")
+                            step=0.01, format="%.4f", key=f"scen_t{i}_{hash(t['nom'])%9999}")
                     prime_scen = sum(gnpi * t_v / 100 for t_v in taux_scen.values())
                     st.markdown(f"""<div class="comp-card {'highlight' if i==0 else ''}">
                       <b>{label}</b><br>
