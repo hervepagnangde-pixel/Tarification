@@ -281,51 +281,173 @@ def envoyer_webhook_notification(sujet, corps_texte, niveau="info"):
 
 
 
+
 def generer_pptx_rapport(gnpi_val, tranches, resultats_bc, resultats_sim,
                           taux_mkt_final, df_rapport, prime_totale, annee=2026):
-    """Génère un rapport PPTX via PptxGenJS (Node.js). Retourne None si Node.js indisponible."""
-    import json, subprocess, tempfile, os
+    """
+    Génère un rapport PPTX avec python-pptx (100% Python, fonctionne sur Streamlit Cloud).
+    Palette : navy #0d2b3e + teal #00b5a5.
+    """
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt, Emu
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        import io as _io_p
+    except ImportError:
+        return None
+
+    NAV  = RGBColor(0x0d, 0x2b, 0x3e)
+    TEAL = RGBColor(0x00, 0xb5, 0xa5)
+    WHT  = RGBColor(0xFF, 0xFF, 0xFF)
+    GRY  = RGBColor(0xf2, 0xf8, 0xf7)
+    DRK  = RGBColor(0x1a, 0x1a, 0x1a)
+
     taux_global = prime_totale / gnpi_val if gnpi_val else 0
 
-    rows_rapport_js = "[]"
+    prs = Presentation()
+    prs.slide_width  = Inches(13.33)
+    prs.slide_height = Inches(7.5)
+    blank = prs.slide_layouts[6]  # Blank layout
+
+    def add_slide():
+        return prs.slides.add_slide(blank)
+
+    def bg(slide, color):
+        from pptx.oxml.ns import qn
+        from lxml import etree
+        bg_elem = slide.background
+        fill = bg_elem.fill
+        fill.solid()
+        fill.fore_color.rgb = color
+
+    def txbox(slide, text, left, top, width, height,
+              size=18, bold=False, color=WHT, align=PP_ALIGN.LEFT, italic=False):
+        tb = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
+        tf = tb.text_frame
+        tf.word_wrap = True
+        p  = tf.paragraphs[0]
+        p.alignment = align
+        run = p.add_run()
+        run.text = str(text)
+        run.font.size = Pt(size)
+        run.font.bold = bold
+        run.font.italic = italic
+        run.font.color.rgb = color
+        return tb
+
+    def rect(slide, left, top, width, height, color):
+        from pptx.util import Inches
+        shape = slide.shapes.add_shape(
+            1,  # MSO_SHAPE_TYPE.RECTANGLE
+            Inches(left), Inches(top), Inches(width), Inches(height))
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = color
+        shape.line.fill.background()
+        return shape
+
+    def add_table(slide, headers, rows, left, top, width, height):
+        from pptx.util import Inches, Pt
+        n_cols = len(headers)
+        n_rows = len(rows) + 1
+        tbl = slide.shapes.add_table(n_rows, n_cols,
+            Inches(left), Inches(top), Inches(width), Inches(height)).table
+        col_w = Inches(width / n_cols)
+        for i in range(n_cols):
+            tbl.columns[i].width = col_w
+        # Header row
+        for j, h in enumerate(headers):
+            cell = tbl.cell(0, j)
+            cell.fill.solid(); cell.fill.fore_color.rgb = NAV
+            p = cell.text_frame.paragraphs[0]
+            run = p.add_run(); run.text = str(h)
+            run.font.bold = True; run.font.size = Pt(9); run.font.color.rgb = WHT
+        # Data rows
+        for i, row in enumerate(rows):
+            bg_color = GRY if i % 2 == 0 else WHT
+            for j, val in enumerate(row):
+                cell = tbl.cell(i+1, j)
+                cell.fill.solid(); cell.fill.fore_color.rgb = bg_color
+                p = cell.text_frame.paragraphs[0]
+                run = p.add_run(); run.text = str(val)
+                run.font.size = Pt(8); run.font.color.rgb = DRK
+
+    # ── Slide 1 : Couverture ──────────────────────────────────────────
+    s1 = add_slide(); bg(s1, NAV)
+    rect(s1, 0, 5.8, 13.33, 0.5, TEAL)
+    txbox(s1, "ATLANTIC RE", 0.5, 0.8, 12, 1.5, size=48, bold=True, color=WHT)
+    txbox(s1, f"Rapport de Tarification {annee}", 0.5, 2.4, 12, 0.8, size=22, color=TEAL)
+    txbox(s1, "Réassurance Non-Proportionnelle · Automobile · Maroc",
+          0.5, 3.1, 12, 0.6, size=13, color=WHT)
+    txbox(s1, f"GNPI : {gnpi_val:,.0f} MAD  |  Prime totale : {prime_totale:,.0f} MAD  |  Taux global : {taux_global:.4%}",
+          0.5, 5.85, 12, 0.4, size=11, color=NAV)
+
+    # ── Slide 2 : Programme ───────────────────────────────────────────
+    s2 = add_slide(); bg(s2, GRY)
+    rect(s2, 0, 0, 13.33, 0.85, NAV)
+    txbox(s2, "Programme de Réassurance", 0.4, 0.05, 12, 0.75, size=22, bold=True, color=WHT)
+    rect(s2, 0, 0.85, 13.33, 0.05, TEAL)
+    if tranches:
+        hdrs = ["Tranche","Type","Priorité","Portée","Reconstitutions"]
+        rows = [[t.get("nom",""), t.get("type",""),
+                 f"{t.get('priorite',0)/1e6:.1f}M MAD",
+                 f"{t.get('portee',0)/1e6:.1f}M MAD",
+                 f"{t.get('nb_reconstitutions',1)}x{t.get('taux_reconstitution',100):.0f}%"]
+                for t in tranches]
+        add_table(s2, hdrs, rows, 0.4, 1.1, 12.5, min(0.45*len(rows)+0.5, 5.5))
+
+    # ── Slide 3 : Burning Cost ────────────────────────────────────────
+    s3 = add_slide(); bg(s3, GRY)
+    rect(s3, 0, 0, 13.33, 0.85, NAV)
+    txbox(s3, "Burning Cost", 0.4, 0.05, 12, 0.75, size=22, bold=True, color=WHT)
+    rect(s3, 0, 0.85, 13.33, 0.05, TEAL)
+    txbox(s3, "Méthode de référence · R1 : τ_risque = τ_pur + σ × 20%",
+          0.4, 0.95, 12, 0.35, size=10, italic=True, color=DRK)
+    if resultats_bc:
+        hdrs = ["Tranche","τ pur","τ risque","τ technique","Années non nulles"]
+        rows = [[r.get("tranche",""), f"{r.get('taux_pur',0):.4%}",
+                 f"{r.get('taux_risque',0):.4%}", f"{r.get('taux_technique',0):.4%}",
+                 str(r.get('n_ann_nonzero',0))] for r in resultats_bc]
+        add_table(s3, hdrs, rows, 0.4, 1.4, 12.5, min(0.45*len(rows)+0.5, 5.5))
+
+    # ── Slide 4 : Simulation ──────────────────────────────────────────
+    s4 = add_slide(); bg(s4, GRY)
+    rect(s4, 0, 0, 13.33, 0.85, NAV)
+    txbox(s4, "Simulation Pareto / Poisson", 0.4, 0.05, 12, 0.75, size=22, bold=True, color=WHT)
+    rect(s4, 0, 0.85, 13.33, 0.05, TEAL)
+    if resultats_sim:
+        hdrs = ["Tranche","τ pur","τ risque","τ technique","Sans AAL","Sans AAD"]
+        rows = [[r.get("tranche",""), f"{r.get('taux_pur',0):.4%}",
+                 f"{r.get('taux_risque',0):.4%}", f"{r.get('taux_technique',0):.4%}",
+                 f"{r.get('sans_aal',0):.4%}", f"{r.get('sans_aad',0):.4%}"]
+                for r in resultats_sim]
+        add_table(s4, hdrs, rows, 0.4, 1.1, 12.5, min(0.45*len(rows)+0.5, 5.5))
+
+    # ── Slide 5 : Synthèse ────────────────────────────────────────────
+    s5 = add_slide(); bg(s5, GRY)
+    rect(s5, 0, 0, 13.33, 0.85, NAV)
+    txbox(s5, "Synthèse de Tarification", 0.4, 0.05, 12, 0.75, size=22, bold=True, color=WHT)
+    rect(s5, 0, 0.85, 13.33, 0.05, TEAL)
     if df_rapport is not None and not df_rapport.empty:
-        rows_rapport_js = json.dumps([
-            {"t": str(r.get("Tranche","") or r.get("tranche","")),
-             "ret": str(r.get("Taux retenu","") or f"{r.get('taux_retenu',0):.4%}"),
-             "prime": str(r.get("Prime (MAD)","") or f"{r.get('prime_MAD',0):,.0f}")}
-            for _, r in df_rapport.iterrows()
-        ], ensure_ascii=False)
+        cols = list(df_rapport.columns)
+        rows = [list(map(str, r)) for r in df_rapport.values.tolist()]
+        add_table(s5, cols, rows, 0.4, 1.1, 12.5, min(0.45*len(rows)+0.5, 5.8))
 
-    tranches_js = json.dumps([
-        {"nom": t.get("nom",""), "type": t.get("type",""),
-         "prio": f"{t.get('priorite',0)/1e6:.0f}M",
-         "port": f"{t.get('portee',0)/1e6:.0f}M"}
-        for t in tranches
-    ], ensure_ascii=False)
+    # ── Slide 6 : Conclusion ──────────────────────────────────────────
+    s6 = add_slide(); bg(s6, NAV)
+    rect(s6, 0, 0, 13.33, 0.06, TEAL)
+    txbox(s6, "Conclusion & Recommandations", 0.5, 0.4, 9, 1.0, size=28, bold=True, color=WHT)
+    txbox(s6, "Prime totale", 0.8, 1.6, 4, 0.4, size=13, bold=True, color=TEAL)
+    txbox(s6, f"{prime_totale:,.0f} MAD", 0.8, 2.0, 4, 0.7, size=24, bold=True, color=WHT)
+    txbox(s6, "Taux global", 0.8, 2.8, 4, 0.4, size=13, bold=True, color=TEAL)
+    txbox(s6, f"{taux_global:.4%}", 0.8, 3.2, 4, 0.7, size=24, bold=True, color=WHT)
+    txbox(s6, (f"Sélection : max(BC, Sim) travaillante\n"
+               f"max(Sim, Marché) cat / non-travaillante\n\n"
+               f"BC = méthode de référence\n"
+               f"Simulation = validation & prudence\n"
+               f"Généré par Atlantic Re IA · {datetime.now().strftime('%d/%m/%Y %H:%M')}"),
+          5.5, 1.8, 7.0, 4.0, size=12, color=RGBColor(0xc8, 0xdc, 0xe6))
 
-    script = f"""
-const pptxgen = require("pptxgenjs");
-const prs = new pptxgen();
-prs.layout = 'LAYOUT_16x9';
-const NAV = "0d2b3e", TEAL = "00b5a5", WHITE = "FFFFFF";
-let s1 = prs.addSlide();
-s1.background = {{color: NAV}};
-s1.addText("ATLANTIC RE", {{x:0.5,y:0.8,w:9,h:1.2,fontSize:48,bold:true,color:WHITE}});
-s1.addText("Rapport de Tarification {annee}", {{x:0.5,y:2.0,w:9,h:0.7,fontSize:24,color:TEAL}});
-s1.addText("GNPI : {gnpi_val:,.0f} MAD  |  Prime : {prime_totale:,.0f} MAD  |  Taux : {taux_global:.4%}", {{x:0.5,y:3.5,w:9,h:0.5,fontSize:14,color:WHITE}});
-await prs.writeFile({{fileName:"/tmp/rapport_{annee}.pptx"}});
-console.log("OK");
-"""
-    tmp_dir = tempfile.mkdtemp()
-    script_path = os.path.join(tmp_dir, "make.mjs")
-    with open(script_path, "w", encoding="utf-8") as f:
-        f.write(script)
-    try:
-        subprocess.run(["node", script_path], capture_output=True, text=True, timeout=30)
-        pptx_path = f"/tmp/rapport_{annee}.pptx"
-        if os.path.exists(pptx_path):
-            with open(pptx_path, "rb") as f:
-                return f.read()
-        return None
-    except Exception:
-        return None
+    buf = _io_p.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
