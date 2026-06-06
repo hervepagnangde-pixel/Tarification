@@ -277,3 +277,55 @@ def envoyer_webhook_notification(sujet, corps_texte, niveau="info"):
             resultats.append(("Teams", False, str(e)[:80]))
 
     return resultats
+
+
+
+
+def generer_pptx_rapport(gnpi_val, tranches, resultats_bc, resultats_sim,
+                          taux_mkt_final, df_rapport, prime_totale, annee=2026):
+    """Génère un rapport PPTX via PptxGenJS (Node.js). Retourne None si Node.js indisponible."""
+    import json, subprocess, tempfile, os
+    taux_global = prime_totale / gnpi_val if gnpi_val else 0
+
+    rows_rapport_js = "[]"
+    if df_rapport is not None and not df_rapport.empty:
+        rows_rapport_js = json.dumps([
+            {"t": str(r.get("Tranche","") or r.get("tranche","")),
+             "ret": str(r.get("Taux retenu","") or f"{r.get('taux_retenu',0):.4%}"),
+             "prime": str(r.get("Prime (MAD)","") or f"{r.get('prime_MAD',0):,.0f}")}
+            for _, r in df_rapport.iterrows()
+        ], ensure_ascii=False)
+
+    tranches_js = json.dumps([
+        {"nom": t.get("nom",""), "type": t.get("type",""),
+         "prio": f"{t.get('priorite',0)/1e6:.0f}M",
+         "port": f"{t.get('portee',0)/1e6:.0f}M"}
+        for t in tranches
+    ], ensure_ascii=False)
+
+    script = f"""
+const pptxgen = require("pptxgenjs");
+const prs = new pptxgen();
+prs.layout = 'LAYOUT_16x9';
+const NAV = "0d2b3e", TEAL = "00b5a5", WHITE = "FFFFFF";
+let s1 = prs.addSlide();
+s1.background = {{color: NAV}};
+s1.addText("ATLANTIC RE", {{x:0.5,y:0.8,w:9,h:1.2,fontSize:48,bold:true,color:WHITE}});
+s1.addText("Rapport de Tarification {annee}", {{x:0.5,y:2.0,w:9,h:0.7,fontSize:24,color:TEAL}});
+s1.addText("GNPI : {gnpi_val:,.0f} MAD  |  Prime : {prime_totale:,.0f} MAD  |  Taux : {taux_global:.4%}", {{x:0.5,y:3.5,w:9,h:0.5,fontSize:14,color:WHITE}});
+await prs.writeFile({{fileName:"/tmp/rapport_{annee}.pptx"}});
+console.log("OK");
+"""
+    tmp_dir = tempfile.mkdtemp()
+    script_path = os.path.join(tmp_dir, "make.mjs")
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(script)
+    try:
+        subprocess.run(["node", script_path], capture_output=True, text=True, timeout=30)
+        pptx_path = f"/tmp/rapport_{annee}.pptx"
+        if os.path.exists(pptx_path):
+            with open(pptx_path, "rb") as f:
+                return f.read()
+        return None
+    except Exception:
+        return None
