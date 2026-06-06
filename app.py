@@ -3246,7 +3246,10 @@ with tab5:
 
 
         with st.spinner("📈 Construction en cours..."):
-            df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
+            if f_mkt is None:
+                st.warning("Veuillez uploader un fichier Market Curve.")
+                st.stop()
+            df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xls')
             df_mkt.columns = [c.strip() for c in df_mkt.columns]
             for col in ['ROLs', 'midpoints', 'Garantie en MAD', 'Priorité en MAD']:
                 if col in df_mkt.columns and df_mkt[col].dtype == object:
