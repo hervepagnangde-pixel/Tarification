@@ -62,6 +62,7 @@ def db_init():
                 nom_session TEXT,
                 gnpi        FLOAT,
                 programme   TEXT,
+                version_code TEXT DEFAULT '1.0',
                 created_at  TIMESTAMP DEFAULT NOW(),
                 updated_at  TIMESTAMP DEFAULT NOW()
             )""")
@@ -73,6 +74,16 @@ def db_init():
                 data_json  TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
             )""")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id         SERIAL PRIMARY KEY,
+                user_email TEXT,
+                session_id INTEGER,
+                action     TEXT,
+                details    TEXT,
+                ip_hash    TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )""")
     else:
         cur.executescript("""
             CREATE TABLE IF NOT EXISTS sessions (
@@ -81,6 +92,7 @@ def db_init():
                 nom_session TEXT,
                 gnpi        REAL,
                 programme   TEXT,
+                version_code TEXT DEFAULT '1.0',
                 created_at  TEXT DEFAULT (datetime('now','localtime')),
                 updated_at  TEXT DEFAULT (datetime('now','localtime'))
             );
@@ -90,8 +102,34 @@ def db_init():
                 etape      TEXT,
                 data_json  TEXT,
                 created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_email TEXT,
+                session_id INTEGER,
+                action     TEXT,
+                details    TEXT,
+                ip_hash    TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
             );""")
     con.commit(); con.close()
+
+
+def db_audit(user_email, action, details="", session_id=None):
+    """Enregistre une action dans le journal d'audit."""
+    try:
+        import hashlib
+        db_init()
+        con, db = _get_conn(); p = _ph()
+        # Hash de l'email pour pseudo-anonymisation
+        ip_hash = hashlib.sha256(user_email.encode()).hexdigest()[:12]
+        cur = con.cursor()
+        cur.execute(
+            f"INSERT INTO audit_log (user_email,session_id,action,details,ip_hash) VALUES ({_ph(5)})",
+            (user_email, session_id, action, details[:500], ip_hash))
+        con.commit(); con.close()
+    except Exception:
+        pass  # Audit ne doit jamais bloquer l'application
 
 def db_save_session(user_email, gnpi_val, tranches, nom=None):
     db_init()
@@ -384,11 +422,75 @@ def generer_pdf_rapport(user_email, gnpi_val, tranches,
                         S["AR_Caption"])]
 
     doc.build(story)
-    return buf.getvalue()
+    pdf_data = buf.getvalue()
+    # ── Signature SHA-256 ────────────────────────────────────────
+    sig = _pdf_signature_qr(pdf_data)
+    return pdf_data
 
 
-def _json_safe(obj):
-    """Convertit les types numpy non-sérialisables en types Python natifs"""
+def _pdf_signature_qr(pdf_bytes):
+    """Génère un hash SHA-256 du contenu PDF pour la traçabilité."""
+    import hashlib
+    h = hashlib.sha256(pdf_bytes).hexdigest()
+    return h
+
+
+def envoyer_webhook_notification(sujet, corps_texte, niveau="info"):
+    """
+    Envoie une notification via webhook Slack ou Microsoft Teams.
+    Configurer dans Secrets : SLACK_WEBHOOK_URL ou TEAMS_WEBHOOK_URL
+    """
+    import urllib.request, urllib.error
+    slack_url  = ""
+    teams_url  = ""
+    try:
+        slack_url  = st.secrets.get("SLACK_WEBHOOK_URL", "")
+        teams_url  = st.secrets.get("TEAMS_WEBHOOK_URL", "")
+    except Exception:
+        pass
+
+    icone = {"info":"ℹ️","alerte":"⚠️","rapport_final":"📋","succes":"✅"}.get(niveau,"📊")
+    resultats = []
+
+    # ── Slack ──────────────────────────────────────────────────────
+    if slack_url:
+        payload = json.dumps({
+            "text": f"{icone} *[Atlantic Re IA]* {sujet}",
+            "blocks": [
+                {"type":"section","text":{"type":"mrkdwn",
+                    "text":f"{icone} *{sujet}*\n{corps_texte[:500]}"}},
+                {"type":"context","elements":[
+                    {"type":"mrkdwn","text":f"Atlantic Re IA · {datetime.now().strftime('%d/%m/%Y %H:%M')}"}]}
+            ]
+        }).encode()
+        try:
+            req = urllib.request.Request(slack_url, data=payload,
+                headers={"Content-Type":"application/json"})
+            urllib.request.urlopen(req, timeout=5)
+            resultats.append(("Slack", True, "OK"))
+        except Exception as e:
+            resultats.append(("Slack", False, str(e)[:80]))
+
+    # ── Teams ──────────────────────────────────────────────────────
+    if teams_url:
+        color_map = {"info":"0076D7","alerte":"FF8C00","rapport_final":"107C10","succes":"107C10"}
+        payload = json.dumps({
+            "@type":"MessageCard","@context":"http://schema.org/extensions",
+            "themeColor": color_map.get(niveau,"0076D7"),
+            "summary": sujet,
+            "sections":[{"activityTitle": f"{icone} {sujet}",
+                          "activitySubtitle": "Atlantic Re IA",
+                          "text": corps_texte[:500]}]
+        }).encode()
+        try:
+            req = urllib.request.Request(teams_url, data=payload,
+                headers={"Content-Type":"application/json"})
+            urllib.request.urlopen(req, timeout=5)
+            resultats.append(("Teams", True, "OK"))
+        except Exception as e:
+            resultats.append(("Teams", False, str(e)[:80]))
+
+    return resultats
     if isinstance(obj, dict):  return {k: _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, list):  return [_json_safe(v) for v in obj]
     if isinstance(obj, np.bool_):   return bool(obj)
@@ -657,71 +759,12 @@ def get_admin_password():
     try: return st.secrets["admin_password"]
     except: return "Admin@AtlanticRe2026"
 
-def get_users_details():
-    """
-    Retourne les utilisateurs sous forme normalisée.
-
-    Formats acceptés dans st.secrets :
-
-    1) Format simple historique :
-       [users]
-       "demo@atlanticre.ia" = "DEMO2026"
-
-    2) Format enrichi recommandé :
-       [users."demo@atlanticre.ia"]
-       code = "DEMO2026"
-       poste = "Actuaire tarificateur"
-       nom = "Utilisateur Démo"
-       statut = "Actif"
-    """
-    fallback = {
-        "demo@atlanticre.ia": {
-            "code": "DEMO2026",
-            "poste": "Utilisateur démo",
-            "nom": "Compte Démo",
-            "statut": "Actif",
-        }
-    }
-    try:
-        raw_users = dict(st.secrets.get("users", {}))
-    except Exception:
-        raw_users = {}
-
-    if not raw_users:
-        return fallback
-
-    details = {}
-    for email, value in raw_users.items():
-        email_norm = str(email).lower().strip()
-        if isinstance(value, dict):
-            v = dict(value)
-            code_val = str(v.get("code", v.get("password", v.get("cle", v.get("code_acces", ""))))).strip()
-            details[email_norm] = {
-                "code": code_val,
-                "poste": str(v.get("poste", v.get("role", "Non renseigné"))),
-                "nom": str(v.get("nom", v.get("name", ""))),
-                "statut": str(v.get("statut", "Actif")),
-            }
-        else:
-            details[email_norm] = {
-                "code": str(value).strip(),
-                "poste": "Non renseigné",
-                "nom": "",
-                "statut": "Actif",
-            }
-    return details
-
 def get_users():
-    """Compatibilité avec l'ancien système : retourne {email: code}."""
-    return {email: info.get("code", "") for email, info in get_users_details().items()}
+    try: return dict(st.secrets["users"])
+    except: return {"demo@atlanticre.ia": "DEMO2026"}
 
 def check_access(email, code):
-    email_norm = email.lower().strip()
-    details = get_users_details().get(email_norm, {})
-    statut = str(details.get("statut", "Actif")).lower()
-    if statut in ["suspendu", "bloqué", "bloque", "inactif"]:
-        return False
-    return details.get("code", "") == code.strip()
+    return get_users().get(email.lower().strip()) == code.strip()
 
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -746,12 +789,8 @@ if not st.session_state["authenticated"]:
         code  = st.text_input("🔑 Code d'accès", type="password", placeholder="CODE123", key="login_code")
         if st.button("Se connecter", type="primary", use_container_width=True):
             if check_access(email, code):
-                email_norm = email.lower().strip()
-                user_info = get_users_details().get(email_norm, {})
                 st.session_state["authenticated"] = True
-                st.session_state["user_email"]    = email_norm
-                st.session_state["user_poste"]    = user_info.get("poste", "")
-                st.session_state["user_nom"]      = user_info.get("nom", "")
+                st.session_state["user_email"]    = email
                 st.rerun()
             else:
                 st.error("❌ Email ou code d'accès incorrect")
@@ -1028,8 +1067,37 @@ h3 { color: var(--ar-green); font-weight: 600; }
 }
 .stProgress > div { background: var(--ar-light); border-radius: 0; }
 
-/* ── Séparateurs ── */
-hr { border: none; border-top: 1px solid var(--ar-border); margin: 24px 0; }
+/* ── Tooltips actuariels ── */
+.ar-tooltip {
+  position: relative; cursor: help;
+  border-bottom: 1px dashed var(--ar-teal); color: var(--ar-teal);
+  font-weight: 600;
+}
+.ar-tooltip::after {
+  content: attr(data-tip);
+  position: absolute; bottom: 125%; left: 50%; transform: translateX(-50%);
+  background: var(--ar-primary); color: white;
+  padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 400;
+  white-space: nowrap; z-index: 1000; pointer-events: none;
+  opacity: 0; transition: opacity 0.2s; max-width: 320px; white-space: normal;
+  border: 1px solid var(--ar-teal);
+}
+.ar-tooltip:hover::after { opacity: 1; }
+
+/* ── Scénario comparison cards ── */
+.comp-card {
+  background: white; border-top: 4px solid var(--ar-teal);
+  padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.comp-card.highlight { border-top-color: #00c896; background: #f2fff9; }
+
+/* ── Executive dashboard ── */
+.exec-kpi { display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px; }
+.exec-kpi-item {
+  flex:1;min-width:140px;background:white;padding:14px 18px;
+  border-top:3px solid var(--ar-teal);box-shadow:0 2px 8px rgba(0,0,0,0.06);
+}
+
 
 /* ── Success / Warning / Error — style Orange BF ── */
 .stSuccess, div[data-baseweb="notification"][kind="positive"] {
@@ -1169,6 +1237,41 @@ def prompt_inputs(key_prefix, placeholder_contexte="", placeholder_instructions=
                 height=80, key=f"{key_prefix}_output")
     return contexte, instructions, input_data, output_instructions
 
+
+def _charger_few_shot_dynamiques(user_email, n_max=3):
+    """Charge les N meilleurs exemples de sessions validées depuis la DB comme few-shot."""
+    try:
+        con, db = _get_conn(); cur = con.cursor(); p = _ph()
+        cur.execute(f"""SELECT s.nom_session, s.gnpi, r.data_json FROM sessions s
+            JOIN resultats r ON r.session_id=s.id
+            WHERE s.user_email={p} AND r.etape='rapport'
+            ORDER BY s.updated_at DESC LIMIT {n_max}""", (user_email,))
+        rows = cur.fetchall(); con.close()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    exemples = []
+    for nom, gnpi_h, data_json in rows:
+        try:
+            import json as _j
+            d = _j.loads(data_json)
+            rapport_rows = d.get("rows", [])
+            pt = d.get("prime_totale", 0)
+            if not rapport_rows: continue
+            lines_ex = [f"SESSION : {nom or 'Sans nom'} | GNPI {(gnpi_h or 0):,.0f} MAD | Prime {pt:,.0f} MAD"]
+            for r in rapport_rows[:4]:
+                nom_t = r.get("tranche","") or r.get("Tranche","")
+                typ_t = r.get("type","") or r.get("Type","")
+                tau   = r.get("taux_retenu","") or r.get("Taux retenu","")
+                meth  = r.get("methode","") or r.get("Méthode","")
+                lines_ex.append(f"  {nom_t} ({typ_t}) → Retenu {tau} via {meth}")
+            exemples.append("\n".join(lines_ex))
+        except Exception:
+            continue
+    if not exemples:
+        return ""
+    return "\n\n".join([f"CAS HISTORIQUE {i+1} :\n{ex}" for i, ex in enumerate(exemples)])
 
 def build_prompt(role, task, data, contexte="", instructions="",
                  input_data="", output_instructions="",
@@ -1361,47 +1464,29 @@ def claude_stream(api_key, prompt, max_tokens=2000, session_key="", use_opus=Fal
 # NOTIFICATION EMAIL — Alerte consultation agent
 # ════════════════════════════════════════════
 
-def _normaliser_destinataires_email(destinataire):
-    """Accepte une chaîne séparée par virgule/point-virgule ou une liste d'emails."""
-    if destinataire is None:
-        return []
-    if isinstance(destinataire, (list, tuple, set)):
-        items = list(destinataire)
-    else:
-        items = str(destinataire).replace(";", ",").split(",")
-    emails = []
-    for e in items:
-        e = str(e).strip()
-        if e and "@" in e and "." in e.split("@")[-1]:
-            emails.append(e)
-    return emails
-
-def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.com",
-                                pieces_jointes=None):
+def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.com"):
     """
     Envoie via Gmail SMTP.
-
-    destinataire : email unique, liste d'emails, ou chaîne "a@x.com, b@y.com".
-    pieces_jointes : liste de dictionnaires :
-        {"filename": "rapport.pdf", "data": bytes, "mime_type": "application/pdf"}
+    IMPORTANT : Pour Gmail, il faut un App Password (16 caractères), PAS le mot de passe ordinaire.
+    → Google Account → Sécurité → Validation en 2 étapes → Mots de passe des applications
+    → Générer → Copier les 16 caractères → coller dans SMTP_PASS des Secrets
     """
-    destinataires = _normaliser_destinataires_email(destinataire)
-    if not destinataires:
-        return False, "Aucun destinataire valide."
-
     # Lire les secrets avec différentes méthodes (robustesse)
     smtp_user = ""
     smtp_pass = ""
     try:
+        # Méthode 1 : accès direct par clé (niveau racine)
         smtp_user = st.secrets["SMTP_USER"]
         smtp_pass = st.secrets["SMTP_PASS"]
     except (KeyError, Exception):
         try:
+            # Méthode 2 : via .get() (niveau racine)
             smtp_user = st.secrets.get("SMTP_USER", "")
             smtp_pass = st.secrets.get("SMTP_PASS", "")
         except Exception:
             pass
-
+    # Méthode 3 : si les clés sont dans une section (ex: [roles] en TOML)
+    # En TOML, tout ce qui suit [roles] est dans st.secrets["roles"]
     if not smtp_user or not smtp_pass:
         for section in ["roles", "smtp", "email", "config"]:
             try:
@@ -1416,26 +1501,32 @@ def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.
 
     if not smtp_user or not smtp_pass:
         return False, (
-            "SMTP non configuré. Ajoutez SMTP_USER et SMTP_PASS dans les Secrets Streamlit. "
-            "Pour Gmail, SMTP_PASS doit être un App Password de 16 caractères."
+            "SMTP non configuré. "
+            "Vérifiez que SMTP_USER et SMTP_PASS sont bien dans les Secrets Streamlit "
+            "(sans section, au niveau racine du fichier secrets.toml)."
         )
+
+    # Vérification : le mot de passe Gmail ordinaire ne fonctionne pas — App Password requis
+    # Un App Password Google fait exactement 16 caractères sans espaces
+    pass_clean = smtp_pass.replace(" ", "")
+    is_app_password = len(pass_clean) == 16 and pass_clean.isalnum()
+    if not is_app_password and "@" in smtp_user and "gmail" in smtp_user.lower():
+        # Essayer quand même mais avertir si erreur
+        pass
 
     import smtplib
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
-    from email.mime.base import MIMEBase
-    from email import encoders
 
-    msg = MIMEMultipart("mixed")
+    msg = MIMEMultipart("alternative")
     msg["Subject"] = f"[Atlantic Re IA] {sujet}"
     msg["From"]    = smtp_user
-    msg["To"]      = ", ".join(destinataires)
+    msg["To"]      = destinataire
 
-    alt = MIMEMultipart("alternative")
     html_body = f"""
     <html><body style="font-family:Arial,sans-serif;color:#0d2b3e">
-    <div style="border-top:4px solid #00b5a5;padding:20px;max-width:680px">
-      <h2 style="color:#0d2b3e">&#x1F916; Atlantic Re IA</h2>
+    <div style="border-top:4px solid #00b5a5;padding:20px;max-width:600px">
+      <h2 style="color:#0d2b3e">&#x1F916; Atlantic Re IA &#x2014; Notification</h2>
       <div style="background:#f2f8f7;padding:16px;border-left:4px solid #00b5a5">
         {corps}
       </div>
@@ -1443,107 +1534,41 @@ def envoyer_notification_email(sujet, corps, destinataire="hervepagnangde@gmail.
         Atlantic Re IA &middot; Réassurance Non-Proportionnelle &middot; Maroc
       </p>
     </div></body></html>"""
-    alt.attach(MIMEText(html_body, "html"))
-    msg.attach(alt)
-
-    for pj in (pieces_jointes or []):
-        try:
-            data = pj.get("data", b"")
-            filename = pj.get("filename", "piece_jointe")
-            mime_type = pj.get("mime_type", "application/octet-stream")
-            maintype, subtype = mime_type.split("/", 1) if "/" in mime_type else ("application", "octet-stream")
-            part = MIMEBase(maintype, subtype)
-            part.set_payload(data)
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
-            msg.attach(part)
-        except Exception:
-            continue
+    msg.attach(MIMEText(html_body, "html"))
 
     # Essai 1 : SSL port 465
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
             server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, destinataires, msg.as_string())
-        return True, f"Email envoyé à {len(destinataires)} destinataire(s) (SSL 465)"
+            server.sendmail(smtp_user, destinataire, msg.as_string())
+        return True, "Email envoyé (SSL 465)"
     except smtplib.SMTPAuthenticationError:
-        return False, (
-            "Authentification Gmail échouée. Créez un App Password Gmail : "
-            "myaccount.google.com → Sécurité → Validation 2 étapes → Mots de passe des applications."
+        hint = (
+            "Authentification Gmail échouée. "
+            "SOLUTION : créez un App Password Gmail (16 caractères) :\n"
+            "myaccount.google.com → Sécurité → Validation 2 étapes → "
+            "Mots de passe des applications → Créer → Copier les 16 caractères → "
+            "Coller dans SMTP_PASS des Secrets Streamlit (sans espaces)."
         )
+        return False, hint
     except Exception as e1:
         # Essai 2 : STARTTLS port 587
         try:
-            with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
                 server.ehlo(); server.starttls(); server.ehlo()
                 server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, destinataires, msg.as_string())
-            return True, f"Email envoyé à {len(destinataires)} destinataire(s) (STARTTLS 587)"
+                server.sendmail(smtp_user, destinataire, msg.as_string())
+            return True, "Email envoyé (STARTTLS 587)"
         except smtplib.SMTPAuthenticationError:
-            return False, "Authentification Gmail échouée (port 587). App Password Gmail requis."
+            hint = (
+                "Authentification Gmail échouée (port 587). "
+                "SOLUTION : App Password Gmail requis. "
+                "Allez sur : myaccount.google.com → Sécurité → "
+                "Validation 2 étapes → Mots de passe des applications"
+            )
+            return False, hint
         except Exception as e2:
             return False, f"Erreur SMTP (SSL: {e1} | TLS: {e2})"
-
-
-def generer_pdf_rapport_courant(gnpi_val, tranches, prime_totale_val, annee=2026):
-    """Génère le PDF du rapport courant depuis session_state."""
-    return generer_pdf_rapport(
-        user_email=st.session_state.get("user_email",""),
-        gnpi_val=gnpi_val,
-        tranches=tranches,
-        resultats_bc=st.session_state.get("resultats_bc",[]),
-        resultats_sim=st.session_state.get("resultats_sim",[]),
-        taux_mkt_final=st.session_state.get("taux_mkt_final",[]),
-        df_rapport=st.session_state.get("df_rapport"),
-        prime_totale=prime_totale_val,
-        analyse_claude=st.session_state.get("reco_finale",""),
-        annee=annee
-    )
-
-def envoyer_rapport_pdf_email(destinataires, gnpi_val, tranches, prime_totale_val,
-                              message_html="", annee=2026):
-    """Génère et envoie le rapport PDF courant à n'importe quel destinataire valide."""
-    pdf_bytes = generer_pdf_rapport_courant(gnpi_val, tranches, prime_totale_val, annee=annee)
-    nom_fichier = f"atlantic_re_rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
-    taux_global = prime_totale_val / gnpi_val if gnpi_val else 0
-    corps = f"""
-    <p>Bonjour,</p>
-    <p>Veuillez trouver ci-joint le rapport de tarification généré par <b>Atlantic Re IA</b>.</p>
-    <ul>
-      <li><b>Utilisateur :</b> {st.session_state.get("user_email","")}</li>
-      <li><b>GNPI :</b> {gnpi_val:,.0f} MAD</li>
-      <li><b>Prime totale :</b> {prime_totale_val:,.0f} MAD</li>
-      <li><b>Taux global :</b> {taux_global:.4%}</li>
-      <li><b>Date :</b> {datetime.now().strftime('%d/%m/%Y à %H:%M')}</li>
-    </ul>
-    {message_html if message_html else ""}
-    <p>Cordialement,<br>Atlantic Re IA</p>
-    """
-    return envoyer_notification_email(
-        "Rapport de tarification XL",
-        corps,
-        destinataire=destinataires,
-        pieces_jointes=[{
-            "filename": nom_fichier,
-            "data": pdf_bytes,
-            "mime_type": "application/pdf",
-        }]
-    )
-
-
-def get_destinataires_notifications_agent():
-    """Retourne les destinataires configurés dans l'application pour les notifications IA."""
-    candidats = [
-        st.session_state.get("email_notifications_agent", ""),
-        st.session_state.get("notif_destinataires", ""),
-        st.session_state.get("rapport_email_destinataires", ""),
-        st.session_state.get("user_email", ""),
-    ]
-    for candidat in candidats:
-        emails = _normaliser_destinataires_email(candidat)
-        if emails:
-            return emails
-    return []
 
 
 def notifier_consultation(user_email, module, details=""):
@@ -1556,10 +1581,7 @@ def notifier_consultation(user_email, module, details=""):
     <p><b>Date/Heure :</b> {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}</p>
     {f'<p><b>Détails :</b> {details}</p>' if details else ''}
     """
-    destinataires = get_destinataires_notifications_agent()
-    if not destinataires:
-        return False
-    ok, msg = envoyer_notification_email(sujet, corps, destinataire=destinataires)
+    ok, msg = envoyer_notification_email(sujet, corps)
     return ok
 
 
@@ -1793,7 +1815,296 @@ Pm     <- {st.session_state.get('Pm_proxy',   0):.0f}     # Pm proxy P99.5 (MAD)
         )
 
 
-def guide_prompt(etape, exemples_contexte, exemples_instructions, exemples_input, exemples_output):
+def tooltip(terme, definition):
+    """Retourne un terme avec tooltip HTML inline."""
+    safe_def = definition.replace('"', '&quot;')
+    return f'<span class="ar-tooltip" data-tip="{safe_def}">{terme}</span>'
+
+
+GLOSSAIRE_ACTUARIEL = {
+    "τ_pur":        "Taux pur = Charge moyenne / GNPI. Coût moyen annuel avant chargements.",
+    "τ_risque":     "R1 : τ_risque = τ_pur + σ × 20%. Intègre un chargement de sécurité proportionnel à la volatilité.",
+    "τ_technique":  "Taux technique = τ_risque × (1−Rec) / (1−Brokage−Frais−Marge−Rétro). Prix de revient du réassureur.",
+    "σ":            "Écart-type des charges annuelles non nulles divisé par le GNPI. Mesure la volatilité historique.",
+    "Rec":          "Facteur de reconstitution = Pr_Rec / (Pr_Rec + N). Réduction du taux liée aux primes de reconstitution.",
+    "BC":           "Burning Cost = Σ charges XL nettes / Σ GNPI. Méthode de référence basée sur l'expérience réelle.",
+    "ROL":          "Rate On Line = Prime XL / Portée. Indicateur standard de niveau de taux en réassurance cat.",
+    "AAL":          "Annual Aggregate Limit. Plafond de la charge annuelle totale à la charge du réassureur.",
+    "AAD":          "Annual Aggregate Deductible. Franchise annuelle agrégée : le réassuré conserve les premiers sinistres.",
+    "Alpha (α)":    "Indice de queue Pareto. α faible = queue lourde (grands sinistres fréquents). Plage normale [0.8 ; 4.0].",
+    "Lambda (λ)":   "Fréquence Poisson. Nombre moyen de sinistres/an au-dessus du seuil de modélisation.",
+    "IBNR":         "Incurred But Not Reported. Sinistres survenus mais non encore déclarés. Estimés par Chain Ladder.",
+    "IBNER":        "Incurred But Not Enough Reserved. Sinistres déclarés mais sous-réservés. Facteurs CL sur montants.",
+    "GPD":          "Generalized Pareto Distribution. Utilisée pour modéliser les excédances au-dessus d'un seuil u (TVE).",
+    "As-If":        "Revalorisation des sinistres historiques au niveau de coût de l'année de cotation. Sur incréments.",
+    "Pm":           "Niveau de retour T ans. Calculé par GPD : Pm = u + (σ/ξ) × ((m×P(X>u))^ξ − 1).",
+    "Credibility":  "Bühlmann-Straub : τ = Z × BC + (1−Z) × μ_priori. Z = n/(n+k), k = σ²_entre/σ²_intra.",
+    "NSGA-II":      "Non-dominated Sorting Genetic Algorithm II (Deb 2002). Optimisation multi-objectif : τ min, Var min, Protection max.",
+    "TOPSIS":       "Technique for Order Preference by Similarity to Ideal Solution. Compromise entre objectifs normalisés.",
+    "Reconst.":     "Reconstitution : prime payée pour rétablir la capacité après sinistre. Taux variable par reconstitution.",
+}
+
+
+def html_glossaire_inline(texte):
+    """Remplace automatiquement les termes du glossaire par des tooltips dans un texte HTML."""
+    for terme, definition in GLOSSAIRE_ACTUARIEL.items():
+        texte = texte.replace(terme, tooltip(terme, definition), 1)
+    return texte
+
+
+def buehlmann_straub_credibility(resultats_bc_list, a_priori_pct=None, gnpi_val=1.0):
+    """
+    Formule de Bühlmann-Straub (1967) — Crédibilité actuarielle.
+
+    Z = n / (n + k)        où k = σ²_intra / σ²_inter
+    τ_crédible = Z × τ_BC + (1 − Z) × μ_a_priori
+
+    Avec σ²_intra = variance interne (fluctuation aléatoire) ≈ σ²_hist
+         σ²_inter = variance entre portefeuilles (hétérogénéité structurelle)
+         k         = ratio de crédibilité
+
+    Retourne un dict par tranche avec Z, τ_crédible, interprétation.
+    """
+    resultats = {}
+    for r in resultats_bc_list:
+        nom       = r.get("tranche", "")
+        tau_bc    = r.get("taux_technique", 0.0)
+        sigma_h   = r.get("sigma_hist", 0.0)     # σ individuelle (intra)
+        n_nz      = int(r.get("n_ann_nonzero", 0))
+
+        # μ a priori : fourni manuellement ou calculé comme moyenne inter-portefeuilles
+        mu = float(a_priori_pct or tau_bc or 0.03)
+
+        if n_nz < 1 or sigma_h == 0:
+            resultats[nom] = {
+                "Z": 0.0, "tau_credible": mu,
+                "interpretation": "Aucune donnée — a priori retenu",
+                "formule": f"Z=0, τ={mu:.4%}"
+            }
+            continue
+
+        # k estimé à partir du ratio de Bühlmann (hypothèse simplifiée)
+        # σ²_inter estimée comme (variance entre la moyenne BC et l'a priori)
+        sigma2_intra = sigma_h ** 2
+        sigma2_inter = max((tau_bc - mu) ** 2, sigma2_intra * 0.1)  # garde-fou
+        k = sigma2_intra / max(sigma2_inter, 1e-10)
+
+        Z = n_nz / (n_nz + k)
+        tau_credible = Z * tau_bc + (1 - Z) * mu
+
+        if Z >= 0.80:
+            interp = "Haute crédibilité — BC quasi-seul retenu"
+        elif Z >= 0.50:
+            interp = "Crédibilité moyenne — mélange BC et a priori"
+        else:
+            interp = "Faible crédibilité — a priori dominant"
+
+        resultats[nom] = {
+            "Z":              round(Z, 4),
+            "tau_bc":         round(tau_bc, 6),
+            "mu_a_priori":    round(mu, 6),
+            "tau_credible":   round(tau_credible, 6),
+            "k":              round(k, 4),
+            "sigma_intra":    round(sigma_h, 6),
+            "n_annees":       n_nz,
+            "interpretation": interp,
+            "formule":        f"Z={Z:.3f}, τ_BC={tau_bc:.4%}, μ={mu:.4%} → τ_cred={tau_credible:.4%}",
+        }
+    return resultats
+
+
+def bootstrap_ci_bc(df_proj, tranche_info, gnpi_val, n_boot=2000, alpha_ci=0.05):
+    """
+    Intervalle de confiance Bootstrap sur le taux BC (Efron & Tibshirani, 1993).
+    Rééchantillonne les années de sinistralité avec remise, recalcule le BC.
+    Retourne IC [α/2, 1−α/2] sur le taux technique.
+    """
+    D   = tranche_info["priorite"];  L = tranche_info["portee"]
+    aal = tranche_info.get("AAL");   aad = tranche_info.get("AAD")
+    n_rec = tranche_info.get("nb_reconstitutions", 1)
+    t_r   = tranche_info.get("taux_reconstitution", 100) / 100
+    bk    = tranche_info["brokage"]; fg = tranche_info["frais"]
+    mg    = tranche_info["marge"];   rt = tranche_info.get("retrocession", 0)
+    cap   = (n_rec + 1) * L
+
+    df_proj = df_proj.copy()
+    df_proj["Ck"] = df_proj.apply(
+        lambda row: min(max(row["Sprime_ultime"] - D, 0), L) * row["coeff_stab"], axis=1)
+    charges_par_ann = df_proj.groupby("annee_surv")["Ck"].sum()
+    charges_list    = []
+    for ann, ch in charges_par_ann.items():
+        if aad: ch = max(ch - aad, 0)
+        if aal: ch = min(ch, aal)
+        charges_list.append(float(min(ch, cap)))
+
+    if len(charges_list) < 4:
+        return None  # Pas assez de données pour bootstrap
+
+    np.random.seed(42)
+    boot_taux = []
+    for _ in range(n_boot):
+        sample    = np.random.choice(charges_list, size=len(charges_list), replace=True)
+        nz        = [c for c in sample if c > 0]
+        if len(nz) < 1: continue
+        tp        = np.mean(sample) / gnpi_val
+        sigma     = np.std(nz) / gnpi_val if len(nz) >= 2 else 0
+        tr        = tp + sigma * 0.20
+        tt        = (tr * (1 - 0.0)) / max(1 - bk - fg - mg - rt, 0.01)
+        boot_taux.append(tt)
+
+    if len(boot_taux) < 10:
+        return None
+
+    lo = float(np.percentile(boot_taux, 100 * alpha_ci / 2))
+    hi = float(np.percentile(boot_taux, 100 * (1 - alpha_ci / 2)))
+    med = float(np.median(boot_taux))
+    return {"ic_lo": lo, "ic_hi": hi, "mediane_boot": med,
+            "n_boot": n_boot, "alpha": alpha_ci,
+            "label": f"IC {int((1-alpha_ci)*100)}% : [{lo:.4%}, {hi:.4%}]"}
+
+
+def generer_pptx_rapport(gnpi_val, tranches, resultats_bc, resultats_sim,
+                          taux_mkt_final, df_rapport, prime_totale, annee=2026):
+    """
+    Génère un rapport de tarification en format PPTX (6 slides).
+    Palette : Ocean Executive — navy #0d2b3e + teal #00b5a5 + blanc
+    """
+    import io as _io_pptx
+    import subprocess, os, tempfile, json as _json
+
+    # Construire le script PptxGenJS
+    taux_global = prime_totale / gnpi_val if gnpi_val else 0
+
+    rows_rapport_js = "[]"
+    if df_rapport is not None and not df_rapport.empty:
+        rows_rapport_js = _json.dumps([
+            {"t": str(r.get("Tranche","") or r.get("tranche","")),
+             "bc": str(r.get("Taux BC","") or f"{r.get('taux_bc',0):.4%}"),
+             "sim": str(r.get("Taux Sim.","") or f"{r.get('taux_sim',0):.4%}"),
+             "mkt": str(r.get("Taux Marché","") or f"{r.get('taux_mkt',0):.4%}"),
+             "ret": str(r.get("Taux retenu","") or f"{r.get('taux_retenu',0):.4%}"),
+             "prime": str(r.get("Prime (MAD)","") or f"{r.get('prime_MAD',0):,.0f}")}
+            for _, r in df_rapport.iterrows()
+        ], ensure_ascii=False)
+
+    tranches_js = _json.dumps([
+        {"nom": t.get("nom",""), "type": t.get("type",""),
+         "prio": f"{t.get('priorite',0)/1e6:.0f}M",
+         "port": f"{t.get('portee',0)/1e6:.0f}M",
+         "rec":  f"{t.get('nb_reconstitutions',1)}x{t.get('taux_reconstitution',100):.0f}%"}
+        for t in tranches
+    ], ensure_ascii=False)
+
+    bc_js  = _json.dumps([{"t":r.get("tranche",""),"tt":f"{r.get('taux_technique',0):.4%}",
+                            "tp":f"{r.get('taux_pur',0):.4%}","n":r.get("n_ann_nonzero",0)}
+                           for r in (resultats_bc or [])], ensure_ascii=False)
+    sim_js = _json.dumps([{"t":r.get("tranche",""),"tt":f"{r.get('taux_technique',0):.4%}",
+                            "tp":f"{r.get('taux_pur',0):.4%}"}
+                           for r in (resultats_sim or [])], ensure_ascii=False)
+
+    script = f"""
+const pptxgen = require("pptxgenjs");
+const prs = new pptxgen();
+prs.layout = 'LAYOUT_16x9';
+prs.author = 'Atlantic Re IA';
+prs.title = 'Rapport Tarification XL {annee}';
+
+const NAV = "0d2b3e", TEAL = "00b5a5", WHITE = "FFFFFF", GRAY = "f2f8f7", MGRAY = "5a7a8a";
+const tranches = {tranches_js};
+const bcData   = {bc_js};
+const simData  = {sim_js};
+const rapport  = {rows_rapport_js};
+
+// ── Slide 1 : Couverture ──────────────────────────────
+let s1 = prs.addSlide();
+s1.background = {{color: NAV}};
+s1.addShape(prs.ShapeType.rect, {{x:0,y:4.5,w:10,h:1.125,fill:{{color:TEAL}}}});
+s1.addText("ATLANTIC RE", {{x:0.5,y:0.8,w:9,h:1.2,fontSize:48,bold:true,color:WHITE,fontFace:"Georgia"}});
+s1.addText("Rapport de Tarification {annee}", {{x:0.5,y:2.0,w:9,h:0.7,fontSize:24,color:TEAL,fontFace:"Calibri"}});
+s1.addText("Réassurance Non-Proportionnelle · Automobile · Maroc", {{x:0.5,y:2.7,w:9,h:0.5,fontSize:14,color:WHITE,fontFace:"Calibri"}});
+s1.addText("GNPI : {gnpi_val:,.0f} MAD  |  Prime totale : {prime_totale:,.0f} MAD  |  Taux global : {taux_global:.4%}", {{x:0.5,y:4.6,w:9,h:0.4,fontSize:12,color:NAV,fontFace:"Calibri"}});
+
+// ── Slide 2 : Programme ───────────────────────────────
+let s2 = prs.addSlide();
+s2.background = {{color: GRAY}};
+s2.addShape(prs.ShapeType.rect, {{x:0,y:0,w:10,h:0.9,fill:{{color:NAV}}}});
+s2.addText("Programme de Réassurance", {{x:0.4,y:0,w:9,h:0.9,fontSize:22,bold:true,color:WHITE,valign:"middle"}});
+const tRows = [["Tranche","Type","Priorité","Portée","Reconstitutions"].map(h=>{{text:h,options:{{bold:true,color:WHITE,fill:{{color:NAV}}}}}})]
+  .concat(tranches.map(t=>[t.nom,t.type,t.prio,t.port,t.rec].map(v=>{{return{{text:v}}}})));
+s2.addTable(tRows, {{x:0.4,y:1.1,w:9.2,colW:[2.5,1.5,1.8,1.8,1.6],border:{{type:'none'}},rowH:0.45,fontSize:13,fontFace:"Calibri",color:"1a1a1a",fill:{{color:WHITE}},border:{{pt:0.5,color:"d0e8e2"}}}});
+
+// ── Slide 3 : Burning Cost ────────────────────────────
+let s3 = prs.addSlide();
+s3.background = {{color: GRAY}};
+s3.addShape(prs.ShapeType.rect, {{x:0,y:0,w:10,h:0.9,fill:{{color:NAV}}}});
+s3.addText("Burning Cost", {{x:0.4,y:0,w:9,h:0.9,fontSize:22,bold:true,color:WHITE,valign:"middle"}});
+s3.addShape(prs.ShapeType.rect, {{x:0,y:0.85,w:10,h:0.06,fill:{{color:TEAL}}}});
+s3.addText("Méthode de référence · As-If sur incréments · Règle R1 : τ_risque = τ_pur + σ × 20%", {{x:0.4,y:0.95,w:9.2,h:0.35,fontSize:11,color:MGRAY,italic:true}});
+const bcRows = [[["Tranche","τ pur","τ technique","Années non nulles"].map(h=>{{text:h,options:{{bold:true,color:WHITE,fill:{{color:NAV}}}}}})]].flat()
+  .concat ? [["Tranche","τ pur","τ technique","Années non nulles"].map(h=>{{text:h,options:{{bold:true,color:WHITE,fill:{{color:NAV}}}}}})]
+  .concat(bcData.map(r=>[r.t,r.tp,r.tt,String(r.n)].map(v=>{{return{{text:v}}}}))) : [];
+if(bcRows.length > 1) s3.addTable(bcRows, {{x:0.4,y:1.4,w:9.2,colW:[3,2,2.5,1.7],border:{{pt:0.5,color:"d0e8e2"}},rowH:0.5,fontSize:13,fontFace:"Calibri",color:"1a1a1a"}});
+
+// ── Slide 4 : Simulation ──────────────────────────────
+let s4 = prs.addSlide();
+s4.background = {{color: GRAY}};
+s4.addShape(prs.ShapeType.rect, {{x:0,y:0,w:10,h:0.9,fill:{{color:NAV}}}});
+s4.addText("Simulation Pareto / Poisson", {{x:0.4,y:0,w:9,h:0.9,fontSize:22,bold:true,color:WHITE,valign:"middle"}});
+s4.addShape(prs.ShapeType.rect, {{x:0,y:0.85,w:10,h:0.06,fill:{{color:TEAL}}}});
+const simRows = [["Tranche","τ pur","τ technique"].map(h=>{{text:h,options:{{bold:true,color:WHITE,fill:{{color:NAV}}}}}})]
+  .concat(simData.map(r=>[r.t,r.tp,r.tt].map(v=>{{return{{text:v}}}})));
+if(simRows.length > 1) s4.addTable(simRows, {{x:0.4,y:1.4,w:9.2,colW:[3.5,2.5,3.2],border:{{pt:0.5,color:"d0e8e2"}},rowH:0.5,fontSize:13,fontFace:"Calibri",color:"1a1a1a"}});
+
+// ── Slide 5 : Synthèse ────────────────────────────────
+let s5 = prs.addSlide();
+s5.background = {{color: GRAY}};
+s5.addShape(prs.ShapeType.rect, {{x:0,y:0,w:10,h:0.9,fill:{{color:NAV}}}});
+s5.addText("Synthèse de Tarification", {{x:0.4,y:0,w:9,h:0.9,fontSize:22,bold:true,color:WHITE,valign:"middle"}});
+s5.addShape(prs.ShapeType.rect, {{x:0,y:0.85,w:10,h:0.06,fill:{{color:TEAL}}}});
+if(rapport.length > 0) {{
+  const rptRows = [["Tranche","BC","Simulation","Marché","Retenu","Prime (MAD)"].map(h=>{{text:h,options:{{bold:true,color:WHITE,fill:{{color:NAV}}}}}})]
+    .concat(rapport.map(r=>[r.t,r.bc,r.sim,r.mkt,r.ret,r.prime].map(v=>{{return{{text:v}}}})));
+  s5.addTable(rptRows, {{x:0.4,y:1.4,w:9.2,colW:[2.0,1.4,1.4,1.4,1.4,1.6],border:{{pt:0.5,color:"d0e8e2"}},rowH:0.45,fontSize:12,fontFace:"Calibri",color:"1a1a1a"}});
+}}
+
+// ── Slide 6 : Conclusion ──────────────────────────────
+let s6 = prs.addSlide();
+s6.background = {{color: NAV}};
+s6.addShape(prs.ShapeType.rect, {{x:0,y:0,w:10,h:0.06,fill:{{color:TEAL}}}});
+s6.addText("Conclusion & Recommandations", {{x:0.5,y:0.5,w:9,h:1,fontSize:30,bold:true,color:WHITE,fontFace:"Georgia"}});
+s6.addText([
+  {{text:"Prime totale\\n",   options:{{bold:true,fontSize:14,color:TEAL}}}},
+  {{text:"{prime_totale:,.0f} MAD\\n\\n", options:{{fontSize:22,bold:true,color:WHITE}}}},
+  {{text:"Taux global\\n",    options:{{bold:true,fontSize:14,color:TEAL}}}},
+  {{text:"{taux_global:.4%}\\n\\n",       options:{{fontSize:22,bold:true,color:WHITE}}}},
+  {{text:"Généré par Atlantic Re IA · {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+     options:{{fontSize:10,color:"9ab5c5",italic:true}}}}
+], {{x:0.8,y:1.8,w:4.5,h:3.5,valign:"top"}});
+s6.addText("Sélection : max(BC, Sim) travaillante\\nmax(Sim, Marché) cat / non-travaillante\\n\\nBC = méthode de référence\\nSimulation = validation & prudence\\nMarket curve = benchmark externe cat", {{x:5.5,y:2.0,w:4.0,h:3.0,fontSize:13,color:"c8dce6",fontFace:"Calibri",valign:"top"}});
+
+await prs.writeFile({{fileName:"/tmp/atlantic_re_rapport_{annee}.pptx"}});
+console.log("OK");
+"""
+
+    # Écrire et exécuter le script Node.js
+    tmp_dir = tempfile.mkdtemp()
+    script_path = os.path.join(tmp_dir, "make_pptx.mjs")
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(script)
+
+    try:
+        result = subprocess.run(
+            ["node", script_path],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "NODE_PATH": "/home/claude/.npm-global/lib/node_modules"}
+        )
+        pptx_path = f"/tmp/atlantic_re_rapport_{annee}.pptx"
+        if os.path.exists(pptx_path):
+            with open(pptx_path, "rb") as f:
+                return f.read()
+        return None
+    except Exception:
+        return None
     with st.expander("💡 Conseils pour bien prompter Claude sur cette étape", expanded=False):
         st.markdown(f"""<div style="background:#f0fff4;border-left:4px solid #2d8a4e;border-radius:0 8px 8px 0;
             padding:14px 18px;margin-bottom:12px"><b style="color:#2d8a4e">🎯 Meilleure analyse pour : {etape}</b></div>""",
@@ -2004,17 +2315,6 @@ with st.sidebar:
     if api_key:
         st.caption("⚡ Haiku pour analyses | 🔬 Opus pour agents autonomes uniquement")
     gnpi    = st.number_input("💰 GNPI (MAD)", value=183_000_000, step=1_000_000)
-
-    st.divider()
-    st.markdown("### 📧 Notifications IA")
-    st.text_input(
-        "Destinataire(s)",
-        value=st.session_state.get("email_notifications_agent", st.session_state.get("user_email", "")),
-        key="email_notifications_agent",
-        help="Email unique ou plusieurs emails séparés par virgule ou point-virgule. Le SMTP_USER reste seulement l'expéditeur."
-    )
-    st.caption("Ces emails recevront les messages automatiques envoyés par l'IA.")
-
     st.divider()
     st.markdown("### 📊 Statut des étapes")
     for nom, key in [("Programme","df_prog"),("Données","df_liq"),
@@ -2152,9 +2452,29 @@ with st.sidebar:
         else:
             st.error(f"❌ {msg_smtp}")
 
-    st.markdown("### 🌍 Contexte global")
+    st.divider()
+    st.markdown("### 🔔 Notifications Slack / Teams")
+    slack_wh_cfg = ""
+    teams_wh_cfg = ""
+    try: slack_wh_cfg = st.secrets.get("SLACK_WEBHOOK_URL","")
+    except: pass
+    try: teams_wh_cfg = st.secrets.get("TEAMS_WEBHOOK_URL","")
+    except: pass
+    if slack_wh_cfg: st.caption(f"✅ Slack webhook configuré")
+    elif teams_wh_cfg: st.caption(f"✅ Teams webhook configuré")
+    else:
+        st.caption("Configurez SLACK_WEBHOOK_URL ou TEAMS_WEBHOOK_URL dans les Secrets pour activer.")
+    if st.button("🔔 Test webhook", key="btn_test_webhook", use_container_width=True):
+        wh_r = envoyer_webhook_notification(
+            "Test Atlantic Re IA",
+            f"Test depuis la sidebar · Utilisateur : {st.session_state.get('user_email','')}",
+            niveau="info")
+        if wh_r:
+            for svc, ok_w, msg_w in wh_r:
+                (st.success if ok_w else st.error)(f"{svc} : {msg_w}")
+        else:
+            st.info("Aucun webhook configuré dans les Secrets.")
     instructions_globales = st.text_area("Contexte portefeuille",
-        placeholder="Ex: Portefeuille automobile Maroc, forte croissance 2023...",
         height=120, key="instructions_globales",
         help="Inclus dans TOUS les prompts Claude")
 
@@ -2169,18 +2489,56 @@ etapes_faites     = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"
 etapes_manquantes = [n for n, k in [("Programme","df_prog"),("Triangle","df_liq"),
                       ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
                       ("Market Curve","resultats_mkt")] if k not in st.session_state]
-etapes_html = " → ".join([f"<span style='color:#2d8a4e;font-weight:700'>{e}</span>" for e in etapes_faites]) if etapes_faites else "Aucune étape complétée"
 prochaine   = etapes_manquantes[0] if etapes_manquantes else "✅ Toutes les étapes complétées !"
-st.markdown(f"""<div style="background:linear-gradient(135deg,#1a1a1a 0%,#2d8a4e 100%);
-    border-radius:16px;padding:20px 28px;margin-bottom:16px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
-    <div style="font-size:17px;font-weight:700;color:white">🤖 Atlantic Re IA — Tarification XL Non-Proportionnelle</div>
-    <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:6px">
-        Workflow : <b style="color:white">Programme → Triangle → BC → Simulation → Market Curve → Rapport</b>
+
+# ── Dashboard exécutif ──────────────────────────────────────────────────────
+pt_exec   = st.session_state.get("prime_totale", 0)
+tg_exec   = pt_exec / gnpi if gnpi and pt_exec else 0
+n_atyp    = len(st.session_state.get("bc_annees_exclues_set", set()))
+alpha_v   = st.session_state.get("alpha_est", None)
+lmbd_v    = st.session_state.get("lambda_est", None)
+
+kpi_html = ""
+if pt_exec:
+    kpi_html += f"""<div class="exec-kpi-item">
+      <div style="font-size:11px;color:#5a7a8a;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Prime totale</div>
+      <div style="font-size:22px;font-weight:800;color:#0d2b3e">{pt_exec:,.0f} <span style="font-size:13px;font-weight:400">MAD</span></div></div>"""
+    kpi_html += f"""<div class="exec-kpi-item">
+      <div style="font-size:11px;color:#5a7a8a;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Taux global</div>
+      <div style="font-size:22px;font-weight:800;color:#0d2b3e">{tg_exec:.4%}</div></div>"""
+if alpha_v:
+    kpi_html += f"""<div class="exec-kpi-item">
+      <div style="font-size:11px;color:#5a7a8a;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Alpha Pareto</div>
+      <div style="font-size:22px;font-weight:800;color:#0d2b3e">{alpha_v:.4f}</div></div>"""
+if n_atyp:
+    kpi_html += f"""<div class="exec-kpi-item" style="border-top-color:#e74c3c">
+      <div style="font-size:11px;color:#e74c3c;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Années exclues</div>
+      <div style="font-size:22px;font-weight:800;color:#e74c3c">{n_atyp}</div></div>"""
+
+etapes_status = "".join([
+    f"<span style='background:{'#00b5a5' if e in etapes_faites else '#e2e8f0'};color:{'white' if e in etapes_faites else '#5a7a8a'};"
+    f"padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;margin:2px'>{e}</span>"
+    for e, _ in [("Programme","df_prog"),("Triangle","df_liq"),
+                  ("Burning Cost","resultats_bc"),("Simulation","resultats_sim"),
+                  ("Market Curve","resultats_mkt")]
+])
+
+st.markdown(f"""
+<div style="background:linear-gradient(135deg,#0d2b3e 0%,#1e3a52 60%,#004d40 100%);
+    padding:20px 28px;margin-bottom:16px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+    <div>
+      <div style="font-size:17px;font-weight:700;color:white">🤖 Atlantic Re IA — Tarification XL</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.6);margin-top:4px">{etapes_status}</div>
+      <div style="font-size:12px;color:#f59e0b;margin-top:6px">⏭ Prochaine : <b style="color:white">{prochaine}</b></div>
     </div>
-    <div style="font-size:12px;color:rgba(255,255,255,0.6);margin-top:4px">
-        ✅ Complétées : {etapes_html if etapes_faites else '<span style="color:#aaa">Aucune</span>'}
-        &nbsp;|&nbsp; ⏭️ Prochaine étape : <b style="color:#f59e0b">{prochaine}</b>
-    </div></div>""", unsafe_allow_html=True)
+    {f'<div style="display:flex;gap:8px;flex-wrap:wrap">{kpi_html}</div>' if kpi_html else ''}
+  </div>
+</div>""", unsafe_allow_html=True)
+
+# Audit log à la connexion
+db_audit(st.session_state.get("user_email",""), "session_active",
+         f"GNPI={gnpi:,.0f} MAD", st.session_state.get("db_session_id"))
 
 # ── Analyse IA sur demande uniquement (évite les appels automatiques coûteux) ──
 if "accueil_ia_msg" in st.session_state:
@@ -2762,6 +3120,59 @@ def _labo_display_section():
     # ═══════════════════════════════════════════════════════════
     # ÉTAPE 4 — OPTIMISATION ACTUARIELLE
     # ═══════════════════════════════════════════════════════════
+    if "labo_modeles" in st.session_state:
+        with st.expander("🎯 Recommandeur de conditions optimales (ML)", expanded=False):
+            st.caption(
+                "Le modèle ML prédit le taux pour n'importe quelle combinaison de conditions. "
+                "Entrez un taux cible et l'outil trouve les conditions qui s'en approchent."
+            )
+            col_rco1, col_rco2, col_rco3 = st.columns(3)
+            with col_rco1:
+                t_target_reco = st.number_input("Taux cible (%)", value=3.0, step=0.1,
+                    min_value=0.01, key="reco_taux_cible") / 100
+                typ_reco = st.selectbox("Type de tranche",
+                    ["travaillante","cat","non_travaillante"], key="reco_type")
+            with col_rco2:
+                t_tol = st.number_input("Tolérance ±(%)", value=0.5, step=0.1,
+                    min_value=0.05, key="reco_tolerance") / 100
+                n_reco = st.slider("Nb résultats max", 5, 30, 15, key="reco_n")
+            with col_rco3:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("🔍 Trouver les conditions optimales", type="primary",
+                             key="btn_reco_conditions", use_container_width=True):
+                    labo_reco = AgentLaboTarification(
+                        tranches_base=tranches_input, gnpi=gnpi,
+                        df_proj=st.session_state["df_proj"],
+                        coeffs=st.session_state.get("coeffs", np.array([1.0])),
+                        alpha=st.session_state.get("alpha_est",1.5),
+                        lambda_=st.session_state.get("lambda_est",5.0),
+                        seuil=st.session_state.get("seuil_est",1_600_000))
+                    labo_reco.modeles_entraines  = st.session_state.get("labo_modeles",{})
+                    labo_reco._features_used     = st.session_state.get("labo_features",[])
+                    labo_reco._best_model_name   = st.session_state.get("labo_best","")
+                    results_reco, info_reco = labo_reco.optimiser_via_ml(
+                        tranche_type=typ_reco,
+                        taux_min=t_target_reco - t_tol,
+                        taux_max=t_target_reco + t_tol,
+                        n_candidats=3000)
+                    st.session_state["reco_results"] = results_reco
+                    st.session_state["reco_info"]    = info_reco
+
+            if "reco_results" in st.session_state and st.session_state["reco_results"]:
+                info_r = st.session_state.get("reco_info", {})
+                if info_r.get("hors_plage"):
+                    st.warning(info_r.get("message","Taux cible hors plage — résultats les plus proches affichés"))
+                else:
+                    st.success(f"✅ {len(st.session_state['reco_results'])} combinaison(s) trouvée(s) près de {t_target_reco:.4%}")
+                    st.caption(f"Plage observée : [{info_r.get('pred_min',0):.4%} — {info_r.get('pred_max',0):.4%}]")
+                tableau_resultats(st.session_state["reco_results"][:n_reco],
+                    "Conditions optimales recommandées par le modèle ML")
+                st.caption(
+                    "Note : ces conditions sont des prédictions ML — recalculer le BC et la simulation "
+                    "avec les paramètres retenus pour valider le taux technique réel."
+                )
+
+    # ═══════════════════════════════════════════════════════════════════
     if "labo_modeles" in st.session_state:
         with st.expander(
             "Étape 4 — Optimisation actuarielle (Dichotomie + De Finetti/Borch)", expanded=True
@@ -3926,6 +4337,66 @@ with tab2:
                 with st.expander("Tableau seuils Pareto (KS)"):
                     st.dataframe(st.session_state["df_seuils_pareto"], use_container_width=True)
 
+        # ── DÉTECTEUR D'ANOMALIES DU TRIANGLE ──────────────────────────────
+        with st.expander("⚠️ Détecteur d'anomalies du triangle (avant tout calcul)", expanded=True):
+            df_liq_check = st.session_state["df_liq"]
+            anomalies_tri = []
+            # 1. Incréments négatifs (réductions de réserves anormales)
+            neg_inc = df_liq_check[df_liq_check["increment"] < 0] if "increment" in df_liq_check.columns else pd.DataFrame()
+            if len(neg_inc) > 0:
+                anomalies_tri.append({
+                    "Type": "⚠️ Incréments négatifs",
+                    "N": len(neg_inc),
+                    "Impact": "Réductions de réserves → mis à 0 pour la modélisation",
+                    "Sévérité": "Modérée"})
+            # 2. Sinistres avec un seul développement observé
+            dev_counts = df_liq_check.groupby("sinistre_id")["dev"].count()
+            n_single_dev = (dev_counts == 1).sum()
+            if n_single_dev > len(dev_counts) * 0.30:
+                anomalies_tri.append({
+                    "Type": "⚠️ Sinistres à 1 seul développement",
+                    "N": int(n_single_dev),
+                    "Impact": f"{n_single_dev/len(dev_counts):.0%} des sinistres — Triangle potentiellement incomplet",
+                    "Sévérité": "Haute"})
+            # 3. Années de survenance avec très peu de sinistres
+            ann_counts = df_liq_check.groupby("annee_surv")["sinistre_id"].nunique()
+            low_years  = ann_counts[ann_counts < 3]
+            if len(low_years) > 0:
+                anomalies_tri.append({
+                    "Type": "⚠️ Années avec < 3 sinistres",
+                    "N": len(low_years),
+                    "Impact": f"Années : {list(low_years.index)} → BC peu fiable ces années",
+                    "Sévérité": "Haute"})
+            # 4. Montants extrêmes (> 50× médiane)
+            med_tot = df_liq_check["total"].median()
+            extreme = df_liq_check[df_liq_check["total"] > 50 * med_tot] if med_tot > 0 else pd.DataFrame()
+            if len(extreme) > 0:
+                anomalies_tri.append({
+                    "Type": "🚨 Montants extrêmes (> 50× médiane)",
+                    "N": len(extreme),
+                    "Impact": f"Max = {df_liq_check['total'].max():,.0f} MAD — Vérifier si erreur de saisie",
+                    "Sévérité": "Critique"})
+            # 5. Trous dans le développement (années de règlement manquantes)
+            devs_obs = sorted(df_liq_check["dev"].unique())
+            devs_exp = list(range(min(devs_obs), max(devs_obs)+1)) if devs_obs else []
+            devs_manquants = [d for d in devs_exp if d not in devs_obs]
+            if devs_manquants:
+                anomalies_tri.append({
+                    "Type": "⚠️ Développements manquants",
+                    "N": len(devs_manquants),
+                    "Impact": f"Développements absents : {devs_manquants} — Facteurs CL non calculables",
+                    "Sévérité": "Haute"})
+
+            if anomalies_tri:
+                tableau_resultats(anomalies_tri, "Anomalies détectées dans le triangle")
+                n_crit = sum(1 for a in anomalies_tri if a["Sévérité"] == "Critique")
+                if n_crit > 0:
+                    st.error(f"🚨 {n_crit} anomalie(s) critique(s) — vérifiez les données avant de tarifer.")
+                else:
+                    st.warning(f"⚠️ {len(anomalies_tri)} anomalie(s) — à analyser avant tarification.")
+            else:
+                st.success("✅ Aucune anomalie détectée dans le triangle.")
+
         with st.expander("Triangle — vérification stabilisation"):
             cols_show = ['sinistre_id','annee_surv','annee_reg','dev','total','I_surv','I_reg','ratio_check','Sk','S_prime_k','coeff_stab']
             st.dataframe(st.session_state["df_liq"][[c for c in cols_show if c in st.session_state["df_liq"].columns]].head(50), use_container_width=True)
@@ -4609,9 +5080,49 @@ with tab3:
 
 
 
+
+        # ── CRÉDIBILITÉ BÜHLMANN-STRAUB ──────────────────────────────────────
+        with st.expander("Crédibilité Bühlmann-Straub", expanded=False):
+            st.markdown("""<div style="background:#f2f8f7;border-left:4px solid #00b5a5;padding:12px 16px;font-size:12px">
+            <b>Bühlmann-Straub (1967) :</b> τ_crédible = Z × τ_BC + (1-Z) × μ_a_priori | Z = n / (n + k) | k = σ²_intra / σ²_inter
+            </div>""", unsafe_allow_html=True)
+            a_priori_bs = st.number_input("μ a priori global (% GNPI)", value=3.0, step=0.1, min_value=0.0,
+                key="bs_apriori", help="Taux de marché ou expérience groupe") / 100
+            cred_res = buehlmann_straub_credibility(st.session_state["resultats_bc"], a_priori_pct=a_priori_bs, gnpi_val=gnpi)
+            tableau_resultats([{"Tranche":n,"Z":f"{r['Z']:.3f}","τ BC":f"{r.get('tau_bc',0):.4%}",
+                "μ a priori":f"{r.get('mu_a_priori',a_priori_bs):.4%}","τ Bühlmann":f"{r['tau_credible']:.4%}",
+                "Interprétation":r["interpretation"]} for n,r in cred_res.items()],
+                "Crédibilité Bühlmann-Straub par tranche")
+
+        # ── BOOTSTRAP IC ──────────────────────────────────────────────────────
+        with st.expander("IC Bootstrap (Efron & Tibshirani, 1993)", expanded=False):
+            st.caption("Rééchantillonnage avec remise sur les années. Quantifie l'incertitude liée au faible historique.")
+            n_boot_v = st.slider("Rééchantillons", 500, 5000, 2000, 500, key="n_boot_ci")
+            alpha_ci_pct = st.select_slider("Niveau confiance %", options=[90,95,99], value=95, key="alpha_ci")
+            if st.button("Calculer les IC Bootstrap", key="btn_bootstrap_ci"):
+                rows_ic = []
+                for t_bc in tranches_input:
+                    ic = bootstrap_ci_bc(st.session_state["df_proj"].copy(), t_bc, gnpi,
+                                         n_boot=n_boot_v, alpha_ci=1-alpha_ci_pct/100)
+                    if ic:
+                        tau_r = next((r["taux_technique"] for r in st.session_state["resultats_bc"]
+                                      if r["tranche"]==t_bc["nom"]),0)
+                        rows_ic.append({"Tranche":t_bc["nom"],
+                            "τ BC central":f"{tau_r:.4%}",
+                            f"IC {alpha_ci_pct}% bas":f"{ic['ic_lo']:.4%}",
+                            f"IC {alpha_ci_pct}% haut":f"{ic['ic_hi']:.4%}",
+                            "Amplitude":f"{(ic['ic_hi']-ic['ic_lo'])*100:.4f} pts"})
+                    else:
+                        rows_ic.append({"Tranche":t_bc["nom"],"Note":"< 4 années — impossible"})
+                if rows_ic:
+                    st.session_state["ic_bootstrap"] = rows_ic
+                    tableau_resultats(rows_ic, f"IC {alpha_ci_pct}% Bootstrap ({n_boot_v} rééchantillons)")
+            elif "ic_bootstrap" in st.session_state:
+                tableau_resultats(st.session_state["ic_bootstrap"])
+
+
         st.divider()
         guide_prompt("Burning Cost",
-            ["Sinistralité exceptionnelle 2020 (COVID)", "Portefeuille en croissance +15%/an", "Historique 10 ans, branche longue"],
             ["Comparer avec taux marché attendu 2-4%", "Signaler si BC < simulation de plus de 30%", "Identifier les années atypiques"],
             ["Taux BC N-1 : R&C=2.5%, CatL1=0%", "Objectif prime totale < 12M MAD", "Taux Partner Re 2025 : R&C=2.30%"],
             ["Tableau par tranche avec verdict ✅/⚠️/❌", "Recommandation unique par tranche", "Maximum 1 page"])
@@ -4779,6 +5290,8 @@ with tab5:
       </span>
     </div>""", unsafe_allow_html=True)
 
+    f_mkt = st.file_uploader("Donnees marche", type=["xlsx","csv"], key="f_mkt")
+
     # Filtres ROL par tranche
     with st.expander("Parametres ROL par tranche (recommande)", expanded=True):
         st.caption(
@@ -4802,53 +5315,26 @@ with tab5:
 
     with st.expander("Parametres de filtrage global", expanded=False):
         c1, c2, c3 = st.columns(3)
-    
         with c1:
-            rol_min = st.number_input("ROL minimum (%)", value=0.5, step=0.5) / 100
-            rol_max = st.number_input("ROL maximum (%)", value=100.0, step=10.0) / 100
-    
+            rol_min = st.number_input("ROL minimum (%)",  value=0.5,   step=0.5)  / 100
+            rol_max = st.number_input("ROL maximum (%)",  value=100.0, step=10.0) / 100
         with c2:
             tolerance = st.number_input("Tolerance proximite ROL Midpoint (%)", value=50.0, step=5.0) / 100
-            r2_min = st.number_input("R2 minimum accepte (%)", value=40.0, step=5.0) / 100
-    
+            r2_min    = st.number_input("R2 minimum accepte (%)", value=40.0, step=5.0) / 100
         with c3:
             filtre_branche = st.text_input("Filtre branche (INT_BUSINESS)", value="EVENEMENT")
             st.caption("Laisser vide = pas de filtre")
-    
-    f_mkt = st.file_uploader(
-        "Donnees marche",
-        type=["xlsx", "csv"],
-        key="f_mkt"
-    )
-    
-    if f_mkt is None:
-        st.warning("⚠️ Chargez un fichier marché pour construire la Market Curve.")
-    else:
+
+
         with st.spinner("📈 Construction en cours..."):
-            if f_mkt.name.lower().endswith(".xlsx"):
-                df_mkt = pd.read_excel(f_mkt)
-            else:
-                df_mkt = pd.read_csv(f_mkt)
-    
+            df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
             df_mkt.columns = [c.strip() for c in df_mkt.columns]
-    
-            for col in ["ROLs", "midpoints", "Garantie en MAD", "Priorité en MAD"]:
+            for col in ['ROLs', 'midpoints', 'Garantie en MAD', 'Priorité en MAD']:
                 if col in df_mkt.columns and df_mkt[col].dtype == object:
-                    df_mkt[col] = (
-                        df_mkt[col]
-                        .astype(str)
-                        .str.replace("%", "", regex=False)
-                        .str.replace(" ", "", regex=False)
-                        .str.replace(",", ".", regex=False)
-                        .apply(
-                            lambda x: float(x) / 100
-                            if x not in ["nan", ""] and float(x) > 1.5
-                            else (float(x) if x not in ["nan", ""] else np.nan)
-                        )
-                    )
-    
-            df_mkt = df_mkt.dropna(subset=["ROLs", "midpoints"])
-    
+                    df_mkt[col] = (df_mkt[col].astype(str).str.replace('%','').str.replace(' ','').str.replace(',','.')
+                                   .apply(lambda x: float(x)/100 if x not in ['nan',''] and float(x) > 1.5
+                                          else (float(x) if x not in ['nan',''] else np.nan)))
+            df_mkt = df_mkt.dropna(subset=['ROLs', 'midpoints'])
             n_avant = len(df_mkt)
             if filtre_branche.strip():
                 col_business = next((c for c in df_mkt.columns if 'BUSINESS' in c.upper()), None)
@@ -4959,6 +5445,7 @@ with tab5:
                 st.toast("💾 Market Curve sauvegardée", icon="✅")
             except Exception as _e:
                 st.toast(f"⚠️ Sauvegarde DB : {_e}", icon="⚠️")
+
     if "resultats_mkt" in st.session_state and "df_mkt_clean" in st.session_state:
         rmt = st.session_state.get("resultats_mkt", [])
         # Vérification du format : resultats_mkt doit contenir des dicts avec clé "quantile"
@@ -5103,18 +5590,76 @@ with tab6:
         with c2: card("Taux global",  f"{prime_totale/gnpi:.4%}", couleur="#1a1a1a",  icone="📊")
         with c3: card("Tranches",     str(len(tranches_input)),   couleur="#2d8a4e",  icone="📋")
 
-        # ── EXPORT PDF + EXCEL + EMAIL ──
-        st.markdown("### 📥 Exports et envoi du rapport")
-        col_pdf, col_xls, col_email, col_name = st.columns([1, 1, 1.4, 1.6])
+        # ── EXPORT PDF + EXCEL + PPTX ──
+        st.markdown("### 📥 Exports")
 
+        # ── Comparaison de scénarios ──────────────────────────────────────────
+        with st.expander("🔀 Comparaison de scénarios (côte à côte)", expanded=False):
+            st.caption(
+                "Comparez jusqu'à 3 jeux de paramètres pour la négociation. "
+                "Renseignez les taux retenus manuellement ou chargez depuis les résultats."
+            )
+            n_scenarios_cmp = st.radio("Nombre de scénarios", [2, 3], horizontal=True, key="n_scen_cmp")
+            cols_cmp = st.columns(n_scenarios_cmp)
+            scenarios_cmp = []
+            defaults_cmp = [
+                ("Scénario Base (tarif technique)",   "Programme actuel"),
+                ("Scénario B (concession −10%)",      "Réduction de 10% sur taux retenus"),
+                ("Scénario C (marché cédant +5%)",    "Hausse de 5% côté cédante"),
+            ]
+            for i in range(n_scenarios_cmp):
+                with cols_cmp[i]:
+                    label = st.text_input(f"Nom scénario {i+1}", value=defaults_cmp[i][0], key=f"scen_name_{i}")
+                    desc  = st.text_input(f"Description", value=defaults_cmp[i][1], key=f"scen_desc_{i}")
+                    taux_scen = {}
+                    for t in tranches_input:
+                        taux_ref = next(
+                            (r.get("taux_retenu", r.get("Taux retenu", 0))
+                             for r in (st.session_state.get("df_rapport", pd.DataFrame()).to_dict("records")
+                                       if st.session_state.get("df_rapport") is not None else [])
+                             if str(r.get("Tranche","") or r.get("tranche","")) == t["nom"]), 0)
+                        try: taux_ref_f = float(str(taux_ref).replace("%",""))
+                        except: taux_ref_f = 0.0
+                        mult = 1.0 if i == 0 else (0.90 if i == 1 else 1.05)
+                        taux_scen[t["nom"]] = st.number_input(
+                            f"τ {t['nom'][:12]} (%)", value=round(taux_ref_f * mult, 4),
+                            step=0.01, format="%.4f", key=f"scen_t{i}_{t['nom'][:8]}")
+                    prime_scen = sum(gnpi * t_v / 100 for t_v in taux_scen.values())
+                    st.markdown(f"""<div class="comp-card {'highlight' if i==0 else ''}">
+                      <b>{label}</b><br>
+                      <span style="font-size:11px;color:#5a7a8a">{desc}</span><br>
+                      <div style="font-size:18px;font-weight:800;color:#0d2b3e;margin-top:8px">{prime_scen:,.0f} MAD</div>
+                      <div style="font-size:12px;color:#00b5a5">{prime_scen/gnpi:.4%}</div>
+                    </div>""", unsafe_allow_html=True)
+                    scenarios_cmp.append({"label": label, "taux": taux_scen, "prime": prime_scen})
+
+            if len(scenarios_cmp) >= 2:
+                st.markdown("**Tableau comparatif :**")
+                rows_comp_scen = []
+                for t in tranches_input:
+                    row_c = {"Tranche": t["nom"]}
+                    for sc in scenarios_cmp:
+                        row_c[sc["label"][:20]] = f"{sc['taux'].get(t['nom'],0):.4f}%"
+                    rows_comp_scen.append(row_c)
+                rows_comp_scen.append({"Tranche": "TOTAL PRIME",
+                    **{sc["label"][:20]: f"{sc['prime']:,.0f} MAD" for sc in scenarios_cmp}})
+                tableau_resultats(rows_comp_scen, "Comparaison des scénarios")
+
+        col_pdf, col_xls, col_pptx, col_name = st.columns([1, 1, 1, 1.5])
         with col_pdf:
-            if st.button("📄 Télécharger PDF", type="primary", use_container_width=True):
+            if st.button("📄 PDF", type="primary", use_container_width=True):
                 try:
                     with st.spinner("Génération PDF..."):
-                        pdf_bytes = generer_pdf_rapport_courant(
+                        pdf_bytes = generer_pdf_rapport(
+                            user_email=st.session_state.get("user_email",""),
                             gnpi_val=gnpi,
                             tranches=tranches_input,
-                            prime_totale_val=prime_totale,
+                            resultats_bc=st.session_state.get("resultats_bc",[]),
+                            resultats_sim=st.session_state.get("resultats_sim",[]),
+                            taux_mkt_final=st.session_state.get("taux_mkt_final",[]),
+                            df_rapport=st.session_state.get("df_rapport"),
+                            prime_totale=prime_totale,
+                            analyse_claude=st.session_state.get("reco_finale",""),
                             annee=2026
                         )
                     st.download_button(
@@ -5127,9 +5672,8 @@ with tab6:
                     st.success("✅ PDF prêt !")
                 except Exception as e_pdf:
                     st.error(f"Erreur PDF : {e_pdf}")
-
         with col_xls:
-            if st.button("📊 Télécharger Excel", use_container_width=True):
+            if st.button("📊 Excel", use_container_width=True):
                 try:
                     import io as _io_xls
                     xls_buf = _io_xls.BytesIO()
@@ -5143,7 +5687,7 @@ with tab6:
                             pd.DataFrame(st.session_state["resultats_sim"]).to_excel(
                                 writer, sheet_name="Simulation", index=False)
                     st.download_button(
-                        "⬇️ Cliquer pour télécharger",
+                        "⬇️ Télécharger .xlsx",
                         data=xls_buf.getvalue(),
                         file_name=f"atlantic_re_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -5153,40 +5697,29 @@ with tab6:
                 except Exception as e_xls:
                     st.error(f"Erreur Excel : {e_xls}")
 
-        with col_email:
-            st.markdown("**📧 Envoyer le rapport PDF**")
-            destinataires_rapport = st.text_input(
-                "Destinataire(s)",
-                placeholder="ex: client@compagnie.com, manager@reassureur.com",
-                key="rapport_email_destinataires"
-            )
-            message_rapport = st.text_area(
-                "Message court (optionnel)",
-                placeholder="Ex: Bonjour, veuillez trouver ci-joint le rapport de tarification.",
-                height=76,
-                key="rapport_email_message"
-            )
-            if st.button("📨 Envoyer le PDF par email", use_container_width=True, key="btn_envoyer_rapport_email"):
-                emails_valides = _normaliser_destinataires_email(destinataires_rapport)
-                if not emails_valides:
-                    st.error("Veuillez renseigner au moins une adresse email valide.")
-                else:
-                    try:
-                        with st.spinner("Génération et envoi du rapport..."):
-                            ok, msg = envoyer_rapport_pdf_email(
-                                destinataires=emails_valides,
-                                gnpi_val=gnpi,
-                                tranches=tranches_input,
-                                prime_totale_val=prime_totale,
-                                message_html=f"<p>{message_rapport}</p>" if message_rapport.strip() else "",
-                                annee=2026
-                            )
-                        if ok:
-                            st.success(f"✅ Rapport envoyé : {msg}")
-                        else:
-                            st.error(f"❌ Envoi impossible : {msg}")
-                    except Exception as e_mail:
-                        st.error(f"Erreur envoi email : {e_mail}")
+        with col_pptx:
+            if st.button("📑 PowerPoint", use_container_width=True):
+                try:
+                    with st.spinner("Génération PPTX (PptxGenJS)..."):
+                        pptx_bytes = generer_pptx_rapport(
+                            gnpi_val=gnpi, tranches=tranches_input,
+                            resultats_bc=st.session_state.get("resultats_bc",[]),
+                            resultats_sim=st.session_state.get("resultats_sim",[]),
+                            taux_mkt_final=st.session_state.get("taux_mkt_final",[]),
+                            df_rapport=st.session_state.get("df_rapport"),
+                            prime_totale=prime_totale, annee=2026)
+                    if pptx_bytes:
+                        st.download_button(
+                            "⬇️ Télécharger .pptx",
+                            data=pptx_bytes,
+                            file_name=f"atlantic_re_rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",
+                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                            use_container_width=True)
+                        st.success("✅ PPTX prêt — 6 slides")
+                    else:
+                        st.warning("PPTX non disponible (Node.js/pptxgenjs requis sur ce serveur)")
+                except Exception as e_pptx:
+                    st.warning(f"PPTX : {e_pptx}")
 
         with col_name:
             nom_session_input = st.text_input("💾 Nommer cette session",
@@ -5196,8 +5729,49 @@ with tab6:
                 try:
                     db_save_session(st.session_state.get("user_email",""), gnpi,
                                     tranches_input, nom=nom_session_input)
+                    db_audit(st.session_state.get("user_email",""), "session_named",
+                             nom_session_input, st.session_state.get("db_session_id"))
                     st.success(f"✅ Session nommée : {nom_session_input}")
                 except Exception as _e: st.error(str(_e))
+
+        # ── Envoi rapport par email ───────────────────────────────────────────
+        with st.expander("📧 Envoyer le rapport PDF par email", expanded=False):
+            col_em1, col_em2 = st.columns([2, 1])
+            with col_em1:
+                dest_rapport_email = st.text_input(
+                    "Destinataire(s)",
+                    placeholder="client@compagnie.ma, manager@atlanticre.ma",
+                    key="rapport_email_destinataires_tab6")
+                msg_rapport_email = st.text_area("Message (optionnel)", height=68,
+                    key="rapport_email_message_tab6",
+                    placeholder="Bonjour, veuillez trouver ci-joint le rapport de tarification.")
+            with col_em2:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("📨 Envoyer PDF", use_container_width=True, key="btn_email_rapport_tab6"):
+                    emails_ok = _normaliser_destinataires_email(dest_rapport_email)
+                    if not emails_ok:
+                        st.error("Email invalide")
+                    else:
+                        with st.spinner("Envoi..."):
+                            ok_m, msg_m = envoyer_rapport_pdf_email(
+                                destinataires=emails_ok, gnpi_val=gnpi,
+                                tranches=tranches_input, prime_totale_val=prime_totale,
+                                message_html=f"<p>{msg_rapport_email}</p>" if msg_rapport_email.strip() else "")
+                        if ok_m: st.success(f"✅ {msg_m}")
+                        else: st.error(f"❌ {msg_m}")
+                # Webhook Slack/Teams
+                wh_res = st.session_state.get("webhook_rapport_sent")
+                if st.button("📢 Notifier Slack/Teams", use_container_width=True, key="btn_wh_rapport"):
+                    wh_results = envoyer_webhook_notification(
+                        f"Rapport finalisé — {st.session_state.get('user_email','')}",
+                        f"Prime : {prime_totale:,.0f} MAD | Taux : {prime_totale/gnpi:.4%} | GNPI : {gnpi:,.0f} MAD",
+                        niveau="rapport_final")
+                    if wh_results:
+                        for svc, ok_w, msg_w in wh_results:
+                            (st.success if ok_w else st.error)(f"{svc} : {msg_w}")
+                    else:
+                        st.info("Configurez SLACK_WEBHOOK_URL ou TEAMS_WEBHOOK_URL dans les Secrets")
+                    st.session_state["webhook_rapport_sent"] = True
 
         st.divider()
         guide_prompt("Rapport Final",
@@ -5957,19 +6531,11 @@ class AgentLaboTarification:
         except Exception as e:
             return {"erreur":f"scikit-learn manquant : {e}"}
 
-        # Les taux calculés ne doivent jamais être utilisés comme variables explicatives.
-        # Ils sont réservés aux variables cibles : taux_retenu, taux_technique_bc,
-        # taux_technique_sim, taux_technique_mkt, etc.
-        taux_cols = {c for c in self.df_ml.columns if "taux" in str(c).lower()}
-        feats = [
-            f for f in self.FEATURES
-            if f in self.df_ml.columns
-            and f != target
-            and f not in taux_cols
-            and "taux" not in str(f).lower()
-        ]
-        if not feats:
-            return {"erreur":"Aucune variable explicative disponible après exclusion des taux."}
+        feats = [f for f in self.FEATURES if f in self.df_ml.columns]
+        extra = [c for c in ["taux_pur_bc","taux_technique_bc","taux_pur_sim",
+                              "taux_technique_sim","taux_technique_mkt"]
+                 if c in self.df_ml.columns and c != target]
+        feats += extra
         X = self.df_ml[feats].fillna(0); y = self.df_ml[target]
         mask = (y > 0) & np.isfinite(y); X = X[mask]; y = y[mask]
         if len(X) < 10: return {"erreur":"Trop peu de scenarios valides"}
@@ -5980,19 +6546,11 @@ class AgentLaboTarification:
             "Random Forest":     RandomForestRegressor(n_estimators=300,max_depth=10,
                                      min_samples_leaf=2,random_state=42,n_jobs=-1),
         }
-        modeles_indisponibles = {}
         try:
             from xgboost import XGBRegressor
             models["XGBoost"] = XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
                 subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=42)
-        except Exception as e:
-            modeles_indisponibles["XGBoost"] = {"erreur": f"Indisponible ou non importable : {e}"}
-        try:
-            from catboost import CatBoostRegressor
-            models["CatBoost"] = CatBoostRegressor(iterations=350,depth=5,learning_rate=0.05,
-                loss_function="RMSE",random_seed=42,verbose=False)
-        except Exception as e:
-            modeles_indisponibles["CatBoost"] = {"erreur": f"Indisponible ou non importable : {e}"}
+        except: pass
 
         resultats = {}; best_name = None; best_mae = None
         for nom, model in models.items():
@@ -6002,11 +6560,10 @@ class AgentLaboTarification:
                 rmse = float(np.sqrt(mean_squared_error(y_te, pred)))
                 r2   = float(r2_score(y_te, pred))
                 resultats[nom] = {"MAE":mae,"RMSE":rmse,"R2":r2,
-                                  "n_train":len(X_tr),"n_test":len(X_te),"statut":"OK"}
+                                  "n_train":len(X_tr),"n_test":len(X_te)}
                 self.modeles_entraines[nom] = model
                 if best_mae is None or mae < best_mae: best_mae=mae; best_name=nom
             except Exception as e: resultats[nom] = {"erreur":str(e)}
-        resultats.update(modeles_indisponibles)
 
         self.metriques_ml = resultats
         self._features_used  = feats
@@ -7165,6 +7722,7 @@ def _executer_burning_cost():
     return {"status": "ok", "resultats": [{k:v for k,v in r.items() if k!="detail_annuel"} for r in resultats]}
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
 def _executer_simulation(alpha, lambda_, seuil, n_sim):
     """Simulation Pareto/Poisson — utilisée par l'Agent LLM (tab_full)"""
     if "coeffs" not in st.session_state: return {"erreur": "coeffs manquants"}
@@ -8609,38 +9167,21 @@ with tab_agent:
 
     # ── Notification email manuelle ──
     st.markdown("---")
-    st.markdown("### 📧 Notification email")
-    c_notif0, c_notif1, c_notif2 = st.columns([2, 3, 1])
-    with c_notif0:
-        notif_dest = st.text_input(
-            "Destinataire(s)",
-            value=st.session_state.get("email_notifications_agent", st.session_state.get("user_email", "")),
-            key="notif_destinataires",
-            placeholder="ex: equipe@atlanticre.ma, manager@atlanticre.ma"
-        )
+    c_notif1, c_notif2 = st.columns([3, 1])
     with c_notif1:
-        notif_msg = st.text_input(
-            "Message",
-            key="notif_msg",
-            placeholder="Ex: Session terminée — taux global 3.24%, prime 5.9M MAD"
-        )
+        notif_msg = st.text_input("Message à envoyer à hervepagnangde@gmail.com", key="notif_msg",
+            placeholder="Ex: Session terminée — taux global 3.24%, prime 5.9M MAD")
     with c_notif2:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if st.button("📧 Envoyer", key="btn_notif", use_container_width=True):
-            emails_notif = _normaliser_destinataires_email(notif_dest)
-            if not emails_notif:
-                st.warning("⚠️ Renseignez au moins un destinataire valide.")
-            elif not notif_msg.strip():
-                st.warning("⚠️ Renseignez un message à envoyer.")
-            else:
-                user = st.session_state.get("user_email", "Agent")
+        if st.button("📧 Envoyer notification", key="btn_notif", use_container_width=True):
+            if notif_msg.strip():
+                user = st.session_state.get("user_email","Agent")
                 ok, msg = envoyer_notification_email(
                     f"Message de {user} — Atlantic Re IA",
                     f"<p><b>De :</b> {user}</p><p><b>Message :</b> {notif_msg}</p>",
-                    destinataire=emails_notif
-                )
-                if ok: st.success(f"✅ Email envoyé à {len(emails_notif)} destinataire(s)")
-                else:  st.warning(f"⚠️ {msg}")
+                    "hervepagnangde@gmail.com")
+                if ok: st.success("✅ Email envoyé")
+                else:   st.warning(f"⚠️ {msg}")
 
 
 with tab_full:
@@ -9351,11 +9892,10 @@ Répondre de façon concise et structurée (max 300 mots)."""
 <p><b>Modules complétés :</b> BC, Simulation, Market Curve, Rapport Final</p>
 """
         icone = {"info":"ℹ️","alerte":"⚠️","rapport_final":"📋"}.get(niveau,"📊")
-        dest_agent = get_destinataires_notifications_agent() or _normaliser_destinataires_email(user_email)
         ok, msg = envoyer_notification_email(
             f"{icone} {sujet}",
             contenu,
-            destinataire=dest_agent)
+            "hervepagnangde@gmail.com")
         return {"status": "ok" if ok else "non_configure",
                 "message": msg if ok else f"Email non envoyé ({msg}) — configurez SMTP_USER/SMTP_PASS dans Secrets Streamlit"}
 
@@ -9869,115 +10409,44 @@ with tab_hist:
 
 with tab_admin:
     st.header("🔐 Interface Administrateur")
-
-    if st.button("ℹ️ À propos de l’outil", use_container_width=True, key="admin_about_btn"):
-        st.session_state["show_about_tool"] = not st.session_state.get("show_about_tool", False)
-
-    if st.session_state.get("show_about_tool", False):
-        with st.expander("📌 À propos de Atlantic Re IA", expanded=True):
-            st.markdown('''
-### Atlantic Re IA — Assistant actuariel de tarification
-
-**Atlantic Re IA** est un assistant actuariel conçu pour accompagner la tarification des programmes de réassurance non-proportionnelle, notamment en automobile.
-
-L’outil centralise les principales méthodes utilisées dans l’étude d’un programme de réassurance :
-
-- **Burning Cost** avec As-If, stabilisation, Chain Ladder et règles de prudence ;
-- **Simulation fréquence/sévérité** avec calibration Pareto / Poisson ;
-- **Market Curve** par ajustement log-log ;
-- **Comparaison des méthodes** et sélection du taux final ;
-- **Optimisation de programme** selon différentes perspectives ;
-- **Agent LLM Claude** pour l’analyse, la justification et la recommandation ;
-- **Rapport PDF professionnel** avec synthèse, taux retenus et recommandations.
-
-L’IA ne remplace pas l’actuaire : elle propose, explique et contrôle. La décision finale reste sous responsabilité humaine.
-            ''')
-
     admin_pwd = st.text_input("Mot de passe admin", type="password", key="admin_pwd")
-
     if admin_pwd == get_admin_password():
         st.success("✅ Accès accordé")
-
-        users_details = get_users_details()
-
+        users = get_users()
         st.markdown("#### 👥 Utilisateurs autorisés")
-        df_users = pd.DataFrame([
-            {
-                "Email": email,
-                "Nom": info.get("nom", ""),
-                "Poste": info.get("poste", "Non renseigné"),
-                "Code": info.get("code", ""),
-                "Statut": info.get("statut", "Actif"),
-            }
-            for email, info in users_details.items()
-        ])
-        st.dataframe(df_users, use_container_width=True, hide_index=True)
-
+        st.dataframe(pd.DataFrame([{"Email": e, "Code": c, "Statut": "Actif"}
+                                    for e, c in users.items()]), use_container_width=True)
         st.divider()
-        st.markdown("#### ⚙️ Ajouter ou modifier un utilisateur")
-        st.info(
-            "Pour enregistrer définitivement un utilisateur, copiez le bloc généré dans "
-            "Streamlit Cloud → Settings → Secrets. Le format enrichi permet maintenant de renseigner le poste."
-        )
-
-        c1, c2 = st.columns(2)
-        with c1:
-            email_new = st.text_input("Email", placeholder="prenom.nom@entreprise.com", key="admin_new_email")
-            nom_new = st.text_input("Nom complet", placeholder="Ex: Hervé NONGPANGA", key="admin_new_nom")
-        with c2:
-            poste_new = st.text_input("Poste", placeholder="Ex: Actuaire tarificateur", key="admin_new_poste")
-            statut_new = st.selectbox("Statut", ["Actif", "Suspendu", "Lecture seule"], key="admin_new_statut")
-
-        col_code1, col_code2 = st.columns([1, 1])
-        with col_code1:
-            code_custom = st.text_input("Code d’accès manuel (optionnel)", key="admin_code_custom")
-        with col_code2:
-            if st.button("🎲 Générer un code", use_container_width=True, key="admin_generate_code"):
+        st.markdown("#### ⚙️ Gérer les utilisateurs")
+        st.info("Allez sur Streamlit Cloud -> Settings -> Secrets et ajoutez :\nadmin_password = 'VotreMDP'\n[users]\n'email@ex.com' = 'CODE'")
+        st.divider()
+        st.markdown("#### 🎲 Générateur de code")
+        col1, col2 = st.columns(2)
+        with col1:
+            email_new = st.text_input("Email du nouvel utilisateur", key="new_email")
+        with col2:
+            if st.button("Générer un code"):
                 st.session_state["generated_code"] = secrets_lib.token_hex(4).upper()
-
-        code_final = code_custom.strip() or st.session_state.get("generated_code", "")
-
-        if code_final:
-            st.success(f"Code actif : **{code_final}**")
-
-        if email_new and code_final:
-            email_clean = email_new.lower().strip()
-            st.markdown("##### Bloc Secrets à copier")
-            secrets_block = f'''[users."{email_clean}"]
-code = "{code_final}"
-nom = "{nom_new.strip()}"
-poste = "{poste_new.strip()}"
-statut = "{statut_new}"'''
-            st.code(secrets_block, language="toml")
-
-            st.caption("Ancien format encore compatible, mais sans poste :")
-            legacy_block = f'''[users]
-"{email_clean}" = "{code_final}"'''
-            st.code(legacy_block, language="toml")
-
+        if "generated_code" in st.session_state:
+            st.success(f"Code généré : **{st.session_state['generated_code']}**")
+            if email_new:
+                st.code(f'"{email_new}" = "{st.session_state["generated_code"]}"')
         st.divider()
-        st.markdown("#### 🧾 Exemple complet de configuration Secrets")
-        with st.expander("Voir un exemple", expanded=False):
-            st.code('''admin_password = "VotreMotDePasseAdmin"
-
-[users."actuaire@atlanticre.ia"]
-code = "ACT2026"
-nom = "Actuaire Senior"
-poste = "Actuaire tarificateur"
-statut = "Actif"
-
-[users."manager@atlanticre.ia"]
-code = "MNG2026"
-nom = "Manager Technique"
-poste = "Responsable Réassurance"
-statut = "Actif"''', language="toml")
-
-        st.divider()
-        st.markdown("#### 🧩 Informations session")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Utilisateur connecté", st.session_state.get("user_email", "—"))
-        c2.metric("Poste", st.session_state.get("user_poste", "—") or "—")
-        c3.metric("Sessions chargées", len(db_list_sessions(st.session_state.get("user_email", ""))) if st.session_state.get("user_email") else 0)
+        st.markdown("#### 📋 Journal d'audit (50 dernières actions)")
+        try:
+            con_adm, _ = _get_conn(); cur_adm = con_adm.cursor()
+            cur_adm.execute("SELECT user_email,action,details,ip_hash,created_at FROM audit_log ORDER BY id DESC LIMIT 50")
+            audit_rows = cur_adm.fetchall(); con_adm.close()
+            if audit_rows:
+                tableau_resultats([{
+                    "Utilisateur": r[0][:30], "Action": r[1],
+                    "Détails": (r[2] or "")[:60], "IP hash": r[3] or "—",
+                    "Date": str(r[4])[:16]
+                } for r in audit_rows])
+            else:
+                st.info("Aucune action enregistrée.")
+        except Exception as _ea:
+            st.caption(f"Journal non disponible (table peut nécessiter une migration) : {_ea}")
 
     elif admin_pwd:
         st.error("❌ Mot de passe incorrect")
