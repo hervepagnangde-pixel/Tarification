@@ -203,15 +203,17 @@ def afficher_integration_r():
 
     # Paramètres courants de la session pour R
     if "alpha_est" in st.session_state:
+        gnpi_r        = st.session_state.get('gnpi', 183_000_000)
+        tranches_r    = st.session_state.get('tranches_input', [])
         st.markdown("**Paramètres actuels de la session (à copier dans R) :**")
         params_r = f"""# ── Paramètres Atlantic Re IA — session courante ─────────────
 alpha  <- {st.session_state.get('alpha_est',  1.5):.6f}  # Indice Pareto
 lambda <- {st.session_state.get('lambda_est', 5.0):.6f}  # Fréquence Poisson
 seuil  <- {st.session_state.get('seuil_est',  1_600_000):.0f}     # Seuil modélisation (MAD)
-gnpi   <- {gnpi:.0f}                                # GNPI (MAD)
+gnpi   <- {gnpi_r:.0f}                                # GNPI (MAD)
 Pm     <- {st.session_state.get('Pm_proxy',   0):.0f}     # Pm proxy P99.5 (MAD)
 # Tranches
-{"".join([f"D_T{i+1} <- {t['priorite']:.0f}  # Priorité {t['nom']}\nL_T{i+1} <- {t['portee']:.0f}  # Portée {t['nom']}\n" for i,t in enumerate(tranches_input)])}
+{"".join([f"D_T{i+1} <- {t['priorite']:.0f}  # Priorité {t['nom']}\nL_T{i+1} <- {t['portee']:.0f}  # Portée {t['nom']}\n" for i,t in enumerate(tranches_r)])}
 """
         st.code(params_r, language="r")
         st.download_button(
