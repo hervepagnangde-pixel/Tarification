@@ -12,6 +12,19 @@ from modules.ui import tableau_resultats, card, section_header
 # MODULE OPTIMISATION PROGRAMME — 3 VARIANTES
 # ════════════════════════════════════════════
 
+
+def _json_safe(obj):
+    """Convertit les types numpy non-sérialisables en types Python natifs."""
+    import numpy as np
+    if isinstance(obj, dict):   return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):   return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.bool_):    return bool(obj)
+    if isinstance(obj, np.integer):  return int(obj)
+    if isinstance(obj, np.floating): return float(obj)
+    if isinstance(obj, np.ndarray):  return obj.tolist()
+    return obj
+
+
 def optimiser_programme_variantes(tranches, gnpi_val, resultats_sim, resultats_bc, taux_mkt_final):
     """Génère 3 variantes de programme optimal (A=cédante, B=réassureur, C=équilibre)."""
     from scipy.optimize import minimize
