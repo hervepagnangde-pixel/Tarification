@@ -221,8 +221,6 @@ st.markdown(f"<style>{CSS_ATLANTICRE}</style>", unsafe_allow_html=True)
 # SIDEBAR + ACCUEIL + TABS (UI principale)
 # ═══════════════════════════════════════════════════════════════════════════════
 st.title("Atlantic Re")
-# ── Stocker les variables runtime en session_state (accessibles depuis les modules) ──
-st.session_state['gnpi'] = gnpi
 st.caption(f"Connecté : {st.session_state.get('user_email','')} | Burning cost · Simulation · Market curve · IA")
 
 with st.sidebar:
@@ -236,6 +234,7 @@ with st.sidebar:
     if api_key:
         st.caption("⚡ Haiku pour analyses | 🔬 Opus pour agents autonomes uniquement")
     gnpi    = st.number_input("💰 GNPI (MAD)", value=183_000_000, step=1_000_000)
+    st.session_state['gnpi'] = gnpi
     st.divider()
     st.markdown("### 📊 Statut des étapes")
     for nom, key in [("Programme","df_prog"),("Données","df_liq"),
