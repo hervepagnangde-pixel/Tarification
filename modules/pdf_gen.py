@@ -3,6 +3,7 @@ Atlantic Re IA — PDF & PPTX generation module
 ReportLab pour les rapports PDF, PptxGenJS (Node.js) pour le PowerPoint.
 """
 import io as _io_db
+import streamlit as st
 import os, json, subprocess, tempfile
 from datetime import datetime
 import numpy as np
@@ -26,6 +27,7 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
     TableStyle, PageBreak, HRFlowable)
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 import io as _io_db
+import streamlit as st
 
 _VERT  = colors.HexColor("#2d8a4e")
 _NOIR  = colors.HexColor("#1a1a1a")
@@ -275,10 +277,3 @@ def envoyer_webhook_notification(sujet, corps_texte, niveau="info"):
             resultats.append(("Teams", False, str(e)[:80]))
 
     return resultats
-    if isinstance(obj, dict):  return {k: _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, list):  return [_json_safe(v) for v in obj]
-    if isinstance(obj, np.bool_):   return bool(obj)
-    if isinstance(obj, np.integer): return int(obj)
-    if isinstance(obj, np.floating):return float(obj)
-    if isinstance(obj, np.ndarray): return obj.tolist()
-    return obj
