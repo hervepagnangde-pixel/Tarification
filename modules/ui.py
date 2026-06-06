@@ -336,3 +336,45 @@ def progress_steps(steps, current):
         html += connector + '</div>'
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
+
+
+
+# ════════════════════════════════════════════
+# TOOLTIPS ACTUARIELS
+# ════════════════════════════════════════════
+
+def tooltip(terme, definition):
+    """Retourne un terme avec tooltip HTML inline."""
+    safe_def = definition.replace('"', '&quot;')
+    return f'<span class="ar-tooltip" data-tip="{safe_def}">{terme}</span>'
+
+
+GLOSSAIRE_ACTUARIEL = {
+    "τ_pur":        "Taux pur = Charge moyenne / GNPI. Coût moyen annuel avant chargements.",
+    "τ_risque":     "R1 : τ_risque = τ_pur + σ × 20%. Intègre un chargement de sécurité.",
+    "τ_technique":  "τ_tech = τ_risque × (1−Rec) / (1−Brokage−Frais−Marge−Rétro).",
+    "σ":            "Écart-type des charges annuelles non nulles / GNPI. Volatilité historique.",
+    "Rec":          "Facteur de reconstitution = Pr_Rec / (Pr_Rec + N).",
+    "BC":           "Burning Cost = Σ charges XL nettes / Σ GNPI. Méthode de référence.",
+    "ROL":          "Rate On Line = Prime XL / Portée. Indicateur standard de taux cat.",
+    "AAL":          "Annual Aggregate Limit. Plafond de la charge annuelle réassureur.",
+    "AAD":          "Annual Aggregate Deductible. Franchise annuelle agrégée.",
+    "Alpha (α)":    "Indice de queue Pareto. α faible = queue lourde. Plage normale [0.8 ; 4.0].",
+    "Lambda (λ)":   "Fréquence Poisson. Sinistres/an au-dessus du seuil de modélisation.",
+    "IBNR":         "Incurred But Not Reported. Sinistres survenus non encore déclarés.",
+    "IBNER":        "Incurred But Not Enough Reserved. Sinistres sous-réservés.",
+    "GPD":          "Generalized Pareto Distribution. Modélise les excédances au-dessus de u.",
+    "As-If":        "Revalorisation des sinistres historiques au niveau de l'année de cotation.",
+    "Pm":           "Niveau de retour T ans. Calculé par GPD.",
+    "Credibility":  "Bühlmann-Straub : τ = Z × BC + (1−Z) × μ_priori.",
+    "NSGA-II":      "Algorithme génétique multi-objectif (Deb 2002). τ min, Var min, Protection max.",
+    "TOPSIS":       "Compromis TOPSIS entre objectifs normalisés (Hwang & Yoon 1981).",
+    "Reconst.":     "Reconstitution : prime pour rétablir la capacité après sinistre.",
+}
+
+
+def html_glossaire_inline(texte):
+    """Remplace les termes du glossaire par des tooltips dans un texte HTML."""
+    for terme, definition in GLOSSAIRE_ACTUARIEL.items():
+        texte = texte.replace(terme, tooltip(terme, definition), 1)
+    return texte
