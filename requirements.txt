@@ -11,3 +11,4 @@ openpyxl
 xgboost
 catboost
 psycopg2-binary
+python-pptx
