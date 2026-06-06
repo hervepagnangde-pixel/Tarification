@@ -6,6 +6,31 @@ import streamlit as st
 import numpy as np
 from modules.ui import tableau_resultats, card
 
+
+RESSOURCES_ACTUARIELLES = {
+    "Réassurance & Marché": [
+        {"nom": "Swiss Re Sigma",         "url": "https://www.swissre.com/institute/research/sigma-research/", "desc": "Études Swiss Re"},
+        {"nom": "Munich Re Publications", "url": "https://www.munichre.com/en/solutions/reinsurance.html",    "desc": "Publications Munich Re"},
+        {"nom": "Atlantic Re",            "url": "https://www.atlantic-re.ma",                                 "desc": "Atlantic Re (ex SCR)"},
+        {"nom": "DAPS Maroc",             "url": "https://www.mays.gov.ma",                                    "desc": "Direction Assurances Maroc"},
+    ],
+    "Actuariat & Standards": [
+        {"nom": "IAA",                    "url": "https://www.actuaries.org",                                  "desc": "Association Actuarielle Internationale"},
+        {"nom": "CAS",                    "url": "https://www.casact.org",                                     "desc": "Casualty Actuarial Society"},
+        {"nom": "ASTIN Bulletin",         "url": "https://www.cambridge.org/core/journals/astin-bulletin",     "desc": "Journal ASTIN"},
+        {"nom": "Variance Journal",       "url": "https://www.variancemagazine.org",                           "desc": "Journal CAS tarification"},
+    ],
+    "Cours & Formations": [
+        {"nom": "Coursera Actuarial",     "url": "https://www.coursera.org/search?query=actuarial+science",   "desc": "MOOCs actuariat"},
+        {"nom": "R-Actuarial",            "url": "https://actuarialsciencewithr.com",                         "desc": "Actuariat avec R"},
+    ],
+    "Finance & Économie": [
+        {"nom": "NBER Working Papers",    "url": "https://www.nber.org/papers",                               "desc": "National Bureau Economic Research"},
+        {"nom": "BIS Publications",       "url": "https://www.bis.org/publications/",                         "desc": "Banque des Règlements Internationaux"},
+    ],
+}
+
+
 def afficher_ressources_actuarielles():
     """Panneau de ressources actuarielles web pour l'agent."""
     st.markdown("---")
