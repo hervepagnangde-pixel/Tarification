@@ -221,6 +221,8 @@ st.markdown(f"<style>{CSS_ATLANTICRE}</style>", unsafe_allow_html=True)
 # SIDEBAR + ACCUEIL + TABS (UI principale)
 # ═══════════════════════════════════════════════════════════════════════════════
 st.title("Atlantic Re")
+# ── Stocker les variables runtime en session_state (accessibles depuis les modules) ──
+st.session_state['gnpi'] = gnpi
 st.caption(f"Connecté : {st.session_state.get('user_email','')} | Burning cost · Simulation · Market curve · IA")
 
 with st.sidebar:
@@ -1568,6 +1570,7 @@ with tab1:
         })
     if st.button("💾 Valider le programme", type="primary"):
         st.session_state["tranches_input"] = tranches_input
+        st.session_state["gnpi"] = gnpi
         st.session_state["df_prog"] = pd.DataFrame([{
             "Tranche": t["nom"], "Type": t["type"],
             "Priorité": f"{t['priorite']:,.0f}", "Portée": f"{t['portee']:,.0f}",
@@ -3245,11 +3248,12 @@ with tab5:
             st.caption("Laisser vide = pas de filtre")
 
 
+        if f_mkt is None:
+            st.info("⬆️ Uploadez un fichier de données marché pour construire la Market Curve.")
+            st.stop()
+
         with st.spinner("📈 Construction en cours..."):
-            if f_mkt is None:
-                st.warning("Veuillez uploader un fichier Market Curve.")
-                st.stop()
-            df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xls')
+            df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
             df_mkt.columns = [c.strip() for c in df_mkt.columns]
             for col in ['ROLs', 'midpoints', 'Garantie en MAD', 'Priorité en MAD']:
                 if col in df_mkt.columns and df_mkt[col].dtype == object:
