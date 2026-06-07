@@ -801,17 +801,15 @@ def section_analyse_distributions():
 # ════════════════════════════════════════════════════════════════════════════
 
 
+
 def detecter_seuil_optimal_tve(data, label="Sinistres"):
     """
-    Détecte automatiquement le seuil TVE optimal via 3 méthodes distinctes :
-      1. Hill plot  — zone de stabilité minimisant le CV glissant
-      2. MEF        — point de linéarité (queue Pareto) via R² maximal
-      3. Gertensgarbe — croisement des statistiques progressives/régressives
-
-    Chaque méthode donne un seuil différent.
-    Retourne seuil_consensus (médiane), fig, dict diagnostics.
+    Détecte le seuil TVE via Hill (IC 95%), MEF (style meplot R), Gertensgarbe (U progressif/régressif).
+    Même style graphique que la section identification sinistres majeurs.
+    Retourne : seuil_consensus, fig, dict diagnostics.
     """
     import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
     from scipy import stats as _sp
 
     data_pos = np.array([x for x in data if x > 0 and np.isfinite(x)])
@@ -820,105 +818,150 @@ def detecter_seuil_optimal_tve(data, label="Sinistres"):
 
     sorted_desc = np.sort(data_pos)[::-1]
     n = len(sorted_desc)
+    k_max = min(n - 2, 150)
+    ks = np.arange(1, k_max + 1)
 
-    # ── 1. Hill — zone de stabilité (CV glissant minimal) ─────────────────
-    k_min, k_max = 5, min(n - 2, 150)
-    ks_arr, hills_arr = _hill_estimates(sorted_desc, k_max=k_max)
-    # Filtrer à partir de k_min
-    mask = ks_arr >= k_min
-    ks_f, hills_f = ks_arr[mask], hills_arr[mask]
-    # CV glissant sur fenêtre de 15 points
+    # ── Hill estimates + IC 95% ────────────────────────────────────────────
+    hills = np.array([
+        k / np.sum(np.log(sorted_desc[:k] / sorted_desc[k]))
+        if sorted_desc[k] > 0 and np.sum(np.log(sorted_desc[:k] / sorted_desc[k])) > 0
+        else np.nan
+        for k in ks
+    ])
+    with np.errstate(invalid='ignore'):
+        ci_up  = hills + 1.96 * hills / np.sqrt(ks)
+        ci_low = np.maximum(hills - 1.96 * hills / np.sqrt(ks), 0)
+
+    # ── Hill stabilité (CV glissant) ──────────────────────────────────────
+    ok = ~np.isnan(hills)
+    h_ok = hills[ok]; k_ok = ks[ok]
     win = 15
     cv_arr = np.array([
-        np.std(hills_f[max(0,i-win//2):i+win//2+1]) /
-        (np.abs(np.mean(hills_f[max(0,i-win//2):i+win//2+1])) + 1e-10)
-        for i in range(len(hills_f))
+        np.std(h_ok[max(0,i-win//2):i+win//2+1]) /
+        (np.abs(np.mean(h_ok[max(0,i-win//2):i+win//2+1])) + 1e-10)
+        for i in range(len(h_ok))
     ])
-    k_hill_best = int(ks_f[np.argmin(cv_arr)])
-    seuil_hill  = float(sorted_desc[min(k_hill_best, n-1)])
-    alpha_hill  = float(hills_f[np.argmin(cv_arr)])
+    k_hill_best  = int(k_ok[np.argmin(cv_arr)])
+    seuil_hill   = float(sorted_desc[min(k_hill_best, n-1)])
+    alpha_hill   = float(h_ok[np.argmin(cv_arr)])
 
-    # ── 2. Gertensgarbe — croisement progressif/régressif ─────────────────
-    k_gert_val  = _gertensgarbe_k(ks_arr, hills_arr)  # retourne un k (entier)
-    seuil_gert  = float(sorted_desc[min(k_gert_val, n-1)])
-    alpha_gert  = float(hills_arr[min(k_gert_val-1, len(hills_arr)-1)])
+    # ── Gertensgarbe — U progressif / régressif (Mann-Kendall normalisé) ──
+    nk = len(h_ok)
+    u_fwd = np.zeros(nk)
+    for i in range(2, nk):
+        s = sum(1 for j in range(i) if h_ok[j] < h_ok[i])
+        e_s = i * (i - 1) / 4
+        v_s = i * (i - 1) * (2 * i + 5) / 72
+        u_fwd[i] = (s - e_s) / np.sqrt(max(v_s, 1e-10))
 
-    # ── 3. MEF — point de linéarité (R² maximal avec slope > 0) ──────────
-    u_mef, e_mef = _mean_excess(data_pos, n_points=50)
-    valid_mef = ~np.isnan(e_mef)
-    u_v, e_v = u_mef[valid_mef], e_mef[valid_mef]
-    seuil_mef = float(np.percentile(data_pos, 75))  # défaut
+    h_rev = h_ok[::-1]
+    u_bwd_rev = np.zeros(nk)
+    for i in range(2, nk):
+        s = sum(1 for j in range(i) if h_rev[j] < h_rev[i])
+        e_s = i * (i - 1) / 4
+        v_s = i * (i - 1) * (2 * i + 5) / 72
+        u_bwd_rev[i] = (s - e_s) / np.sqrt(max(v_s, 1e-10))
+    u_bwd = u_bwd_rev[::-1]
+
+    diff_gb   = u_fwd - u_bwd
+    cross_idx = np.where(np.diff(np.sign(diff_gb)))[0]
+    k_gert    = int(k_ok[cross_idx[0]]) if len(cross_idx) > 0 else int(k_ok[nk // 2])
+    seuil_gert  = float(sorted_desc[min(k_gert - 1, n-1)])
+    alpha_gert  = float(hills[min(k_gert - 1, len(hills)-1)]) if not np.isnan(hills[min(k_gert-1,len(hills)-1)]) else alpha_hill
+
+    # ── MEF — cercles ouverts, style meplot R ─────────────────────────────
+    u_sorted = np.sort(np.unique(data_pos))
+    step  = max(1, len(u_sorted) // 80)
+    u_mef_pts = u_sorted[::step][:-1]
+    mef_vals  = np.array([
+        float(np.mean(data_pos[data_pos > u] - u))
+        if np.sum(data_pos > u) >= 3 else np.nan
+        for u in u_mef_pts
+    ])
+    valid_mef = ~np.isnan(mef_vals)
+
+    # MEF — linéarité R² maximal
+    seuil_mef = float(np.percentile(data_pos, 75))
     best_r2   = 0.0
+    u_v = u_mef_pts[valid_mef]; e_v = mef_vals[valid_mef]
     if len(u_v) >= 6:
         from scipy.stats import linregress
-        for i in range(3, len(u_v) - 3):
-            slope, intercept, r, p, _ = linregress(u_v[i:], e_v[i:])
-            if r ** 2 > best_r2 and slope > -0.1:  # MEF croissante ou quasi-plate
+        for i in range(3, len(u_v) - 2):
+            slope, _, r, _, _ = linregress(u_v[i:], e_v[i:])
+            if r ** 2 > best_r2 and slope > -0.1:
                 best_r2   = r ** 2
                 seuil_mef = float(u_v[i])
 
-    # ── Consensus ─────────────────────────────────────────────────────────
     seuil_consensus = float(np.median([seuil_hill, seuil_mef, seuil_gert]))
 
-    # ── Graphiques — même style que section données/triangle ──────────────
-    fig, axes = plt.subplots(1, 3, figsize=(15, 3.5))
-    fig.patch.set_facecolor("white")
+    # ── Graphiques — style identique à sinistres majeurs ──────────────────
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
     for ax in axes:
-        ax.tick_params(labelsize=8)
-        ax.grid(alpha=0.25, lw=0.5)
-        for spine in ax.spines.values():
-            spine.set_linewidth(0.5)
+        ax.set_facecolor("white")
+        ax.spines[["top", "right"]].set_visible(False)
+    fig.patch.set_facecolor("white")
 
-    # — Hill plot —
-    axes[0].plot(ks_arr, hills_arr, color="#1a1a1a", lw=1.5, label="α Hill(k)")
-    axes[0].axvline(k_hill_best, color="#ef4444", ls="--", lw=1.8,
-                    label=f"Stabilité k={k_hill_best}\nU={seuil_hill:,.0f} MAD")
-    axes[0].axvline(k_gert_val, color="#f59e0b", ls=":", lw=1.8,
-                    label=f"Gertensgarbe k={k_gert_val}\nU={seuil_gert:,.0f} MAD")
-    axes[0].set_xlabel("k (ordre statistique)", fontsize=8)
-    axes[0].set_ylabel("α(k)", fontsize=8)
-    axes[0].set_title("Hill Plot", fontsize=10, fontweight="bold", color="#0d2b3e")
-    axes[0].legend(fontsize=7, loc="upper right")
+    # (1) Hill plot avec IC 95%
+    ax1 = axes[0]
+    ax1.plot(k_ok, h_ok, color="black", lw=1.2)
+    ax1.fill_between(ks[ok], ci_low[ok], ci_up[ok],
+                     color="steelblue", alpha=0.25, label="IC 95 %")
+    ax1.axvline(k_gert, color="red", ls="--", lw=2,
+                label=f"Gertensgarbe k={k_gert}")
+    ax1.axvline(k_hill_best, color="orange", ls=":", lw=2,
+                label=f"Stabilité CV k={k_hill_best}")
+    ax1.set_xlabel("Order Statistics")
+    ax1.set_ylabel("Tail Index α(k)")
+    ax1.set_title("Hill Plot")
+    ax1.legend(fontsize=8)
+    ax1.grid(alpha=0.2, linestyle="--")
 
-    # — MEF —
-    axes[1].plot(u_v, e_v, color="#2d8a4e", lw=2, label="e(u)")
-    axes[1].axvline(seuil_mef, color="#ef4444", ls="--", lw=1.8,
-                    label=f"Linéarité MEF\n{seuil_mef:,.0f} MAD (R²={best_r2:.2f})")
-    axes[1].axvline(seuil_hill, color="#f59e0b", ls=":", lw=1.5, alpha=0.7,
-                    label=f"Hill {seuil_hill:,.0f}")
-    axes[1].set_xlabel("Seuil u (MAD)", fontsize=8)
-    axes[1].set_ylabel("Espérance excédentaire e(u)", fontsize=8)
-    axes[1].set_title("Mean Excess Function", fontsize=10, fontweight="bold", color="#0d2b3e")
-    axes[1].legend(fontsize=7)
+    # (2) MEF — cercles ouverts style meplot R
+    ax2 = axes[1]
+    ax2.scatter(u_mef_pts[valid_mef], mef_vals[valid_mef],
+                s=30, facecolors="none", edgecolors="black", linewidths=0.8)
+    ax2.axvline(seuil_mef, color="red", ls="--", lw=2,
+                label=f"Linéarité = {seuil_mef:,.0f}")
+    ax2.axvline(seuil_consensus, color="orange", ls=":", lw=1.5,
+                label=f"Consensus = {seuil_consensus:,.0f}")
+    ax2.set_xlabel("Threshold")
+    ax2.set_ylabel("Mean Excess")
+    ax2.set_title("Mean Excess Function")
+    ax2.xaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+    ax2.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+    ax2.ticklabel_format(axis="both", style="sci", scilimits=(0, 0))
+    ax2.legend(fontsize=8)
+    ax2.grid(alpha=0.2, linestyle="--")
 
-    # — Synthèse barres horizontales —
-    methodes  = ["Hill\n(stabilité CV)", "MEF\n(linéarité R²)", "Gertensgarbe\n(progressif/régressif)"]
-    seuils    = [seuil_hill, seuil_mef, seuil_gert]
-    couleurs  = ["#0d2b3e", "#2d8a4e", "#f59e0b"]
-    bars = axes[2].barh(methodes, seuils, color=couleurs, height=0.5, edgecolor="white")
-    axes[2].axvline(seuil_consensus, color="#ef4444", ls="--", lw=2,
-                    label=f"Consensus (médiane)\n{seuil_consensus:,.0f} MAD")
-    for bar, val in zip(bars, seuils):
-        axes[2].text(val * 1.01, bar.get_y() + bar.get_height()/2,
-                     f"{val:,.0f}", va="center", fontsize=8, color="#1a1a1a")
-    axes[2].set_xlabel("Seuil (MAD)", fontsize=8)
-    axes[2].set_title("Synthèse des 3 méthodes", fontsize=10, fontweight="bold", color="#0d2b3e")
-    axes[2].legend(fontsize=7)
-    axes[2].set_xlim(0, max(seuils) * 1.25)
+    # (3) Gertensgarbe — U progressif / régressif
+    ax3 = axes[2]
+    ax3.plot(k_ok, u_fwd, color="black", lw=1.5, label="U progressif")
+    ax3.plot(k_ok, u_bwd, color="black", lw=1.5, ls="--", label="U régressif")
+    ax3.axhline(0, color="black", lw=0.6, alpha=0.4)
+    ax3.axvline(k_gert, color="red", ls="--", lw=2,
+                label=f"k* = {k_gert}  (u ≈ {seuil_gert:,.0f})")
+    ax3.set_xlabel("Order Statistics")
+    ax3.set_ylabel("Statistique U(k)")
+    ax3.set_title("Gertensgarbe-Werner")
+    ax3.legend(fontsize=8)
+    ax3.grid(alpha=0.2, linestyle="--")
 
-    plt.tight_layout(pad=1.5)
+    plt.tight_layout()
 
     diag = {
-        "seuil_hill":      round(seuil_hill),
-        "seuil_mef":       round(seuil_mef),
-        "seuil_gert":      round(seuil_gert),
-        "seuil_optimal":   round(seuil_consensus),
-        "k_hill":          k_hill_best,
-        "k_gert":          k_gert_val,
-        "alpha_hill":      round(alpha_hill, 4),
-        "alpha_gert":      round(alpha_gert, 4),
-        "mef_r2":          round(best_r2, 3),
-        "n_obs":           n,
+        "seuil_hill":    round(seuil_hill),
+        "seuil_mef":     round(seuil_mef),
+        "seuil_gert":    round(seuil_gert),
+        "seuil_optimal": round(seuil_consensus),
+        "k_hill":        k_hill_best,
+        "k_gert":        k_gert,
+        "alpha_hill":    round(alpha_hill, 4),
+        "alpha_gert":    round(alpha_gert, 4),
+        "mef_r2":        round(best_r2, 3),
+        "n_obs":         n,
+        # Pour le slider interactif
+        "data_min":      round(float(np.percentile(data_pos, 50))),
+        "data_max":      round(float(np.percentile(data_pos, 99))),
     }
     return seuil_consensus, fig, diag
 
