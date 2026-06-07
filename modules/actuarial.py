@@ -589,14 +589,30 @@ def _threshold_table(data, thresholds_pct):
                          "Alpha Hill": "—", "KS stat": "—", "p-val KS": "—", "AD stat": "—", "Qualite": "Insuf."})
             continue
         alpha_h = n_exc / np.sum(np.log(exc / u))
-        ks_s, pval_ks = stats.kstest(exc, lambda v: 1-(v/u)**(-alpha_h))
+
+        # KS test correct : utiliser les excédances (exc - u) vs Pareto(alpha, scale=u)
+        # scipy.stats.pareto : F(x) = 1 - (b/x)^alpha pour x >= b
+        # Pour excédances y = exc - u ~ Pareto(alpha, scale=u) décalée :
+        # on utilise la formule analytique sur exc directement
+        exc_sorted = np.sort(exc)
+        empirical  = np.arange(1, n_exc + 1) / n_exc
+        theoretical = 1 - (u / exc_sorted) ** alpha_h
+        ks_s = float(np.max(np.abs(empirical - theoretical)))
+        # p-value via distribution de Kolmogorov (approximation asymptotique)
+        # Note : paramètres estimés → p-value légèrement optimiste (comme en R)
+        ks_lambda = (np.sqrt(n_exc) + 0.12 + 0.11 / np.sqrt(n_exc)) * ks_s
+        from scipy.special import kolmogorov as _kolmogorov
+        pval_ks = float(_kolmogorov(ks_lambda))
+        pval_ks = min(max(pval_ks, 0.0), 1.0)
+
         try:
             cdf_v = np.sort(1-(np.sort(exc)/u)**(-alpha_h))
             nn = len(cdf_v); i_a = np.arange(1, nn+1)
             ad_stat = -nn - np.mean((2*i_a-1)*(np.log(np.clip(cdf_v,1e-10,1-1e-10))+
                                                np.log(np.clip(1-cdf_v[::-1],1e-10,1-1e-10))))
         except: ad_stat = np.nan
-        qual = "Bon" if pval_ks>0.05 and not np.isnan(ad_stat) and ad_stat<2.5 else                "Acceptable" if pval_ks>0.01 else "Rejeté"
+        qual = "Bon" if pval_ks>0.05 and not np.isnan(ad_stat) and ad_stat<2.5 else \
+               "Acceptable" if pval_ks>0.01 else "Rejeté"
         rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
                      "Alpha Hill": f"{alpha_h:.4f}", "KS stat": f"{ks_s:.4f}",
                      "p-val KS": f"{pval_ks:.4f}",
@@ -777,3 +793,291 @@ def section_analyse_distributions():
             "alpha_gert": alpha_gert,
         }
     except: pass
+
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SÉLECTION AUTOMATIQUE DU SEUIL TVE (Hill + MEF + Gertensgarbe)
+# ════════════════════════════════════════════════════════════════════════════
+
+def detecter_seuil_optimal_tve(data, label="Sinistres"):
+    """
+    Détecte automatiquement le seuil optimal TVE via 3 méthodes :
+    1. Hill plot : zone de stabilité de l'estimateur de Hill
+    2. Mean Excess Function (MEF) : linéarité = queue Pareto
+    3. Gertensgarbe : point de changement statistique
+
+    Retourne : seuil_optimal (float), figure matplotlib, diagnostics dict
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from scipy import stats
+
+    data_pos = np.array([x for x in data if x > 0])
+    if len(data_pos) < 20:
+        return None, None, {"erreur": "Moins de 20 observations positives"}
+
+    data_sorted = np.sort(data_pos)[::-1]  # Décroissant
+    n = len(data_sorted)
+
+    # ── 1. Hill estimates ──────────────────────────────────────────────────
+    k_vals  = np.arange(5, min(n//2, 150))
+    hills   = np.array([np.mean(np.log(data_sorted[:k])) - np.log(data_sorted[k])
+                        for k in k_vals])
+    # Zone de stabilité : fenêtre glissante de 15 points, CV minimal
+    cv_vals = np.array([np.std(hills[max(0,i-7):i+8]) / (np.mean(hills[max(0,i-7):i+8]) + 1e-10)
+                        for i in range(len(hills))])
+    k_stable_hill = k_vals[np.argmin(cv_vals)]
+    seuil_hill = float(data_sorted[k_stable_hill])
+
+    # ── 2. MEF : pente linéaire = Pareto, pente nulle = Exp ───────────────
+    quantiles_pct = np.linspace(0.60, 0.95, 30)
+    thresholds_mef = np.quantile(data_pos, quantiles_pct)
+    mef_vals = np.array([np.mean(data_pos[data_pos > u] - u)
+                         for u in thresholds_mef if np.sum(data_pos > u) >= 10])
+    thresholds_mef_ok = np.array([u for u in thresholds_mef if np.sum(data_pos > u) >= 10])
+
+    seuil_mef = float(np.quantile(data_pos, 0.75))  # défaut
+    if len(thresholds_mef_ok) >= 5:
+        # Chercher le point où la MEF devient linéaire (R² maximal)
+        best_r2 = 0
+        for i in range(3, len(thresholds_mef_ok)-2):
+            x = thresholds_mef_ok[i:]
+            y = mef_vals[i:]
+            if len(x) < 3: continue
+            slope, intercept, r, p, se = stats.linregress(x, y)
+            if r**2 > best_r2 and slope > 0:
+                best_r2 = r**2
+                seuil_mef = float(thresholds_mef_ok[i])
+
+    # ── 3. Gertensgarbe ───────────────────────────────────────────────────
+    seuil_gert = seuil_hill  # fallback
+    if len(k_vals) >= 10:
+        seuil_gert = float(_gertensgarbe_k(k_vals, hills))
+        if seuil_gert == k_vals[0]:
+            seuil_gert = seuil_hill
+
+    # ── Seuil consensus ───────────────────────────────────────────────────
+    seuils_trio = [seuil_hill, seuil_mef, seuil_gert]
+    seuil_optimal = float(np.median(seuils_trio))
+
+    # ── Figure ─────────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4))
+    fig.suptitle(f"Détection automatique du seuil TVE — {label}", fontsize=12, fontweight='bold')
+
+    # Hill plot
+    axes[0].plot(k_vals, hills, color='#0d2b3e', linewidth=1.5, label='Estimateur Hill')
+    axes[0].axvline(k_stable_hill, color='red', linestyle='--', linewidth=2,
+                    label=f'Seuil optimal k={k_stable_hill}\nU={seuil_hill:,.0f}')
+    axes[0].set_xlabel('k (nombre ordre statistique)'); axes[0].set_ylabel('α Hill')
+    axes[0].set_title('Hill Plot — Zone de stabilité')
+    axes[0].legend(fontsize=8); axes[0].grid(alpha=0.3)
+
+    # MEF
+    if len(thresholds_mef_ok) > 0:
+        axes[1].plot(thresholds_mef_ok, mef_vals, color='#00b5a5', linewidth=1.5, marker='o', markersize=3)
+        axes[1].axvline(seuil_mef, color='red', linestyle='--', linewidth=2,
+                        label=f'Seuil MEF\n{seuil_mef:,.0f}')
+        axes[1].set_xlabel('Seuil u'); axes[1].set_ylabel('Espérance excédentaire e(u)')
+        axes[1].set_title('Mean Excess Function')
+        axes[1].legend(fontsize=8); axes[1].grid(alpha=0.3)
+
+    # Distribution des 3 seuils
+    axes[2].barh(['Hill', 'MEF', 'Gertensgarbe'],
+                 [seuil_hill, seuil_mef, seuil_gert],
+                 color=['#0d2b3e', '#00b5a5', '#f59e0b'])
+    axes[2].axvline(seuil_optimal, color='red', linestyle='--', linewidth=2,
+                    label=f'Consensus\n{seuil_optimal:,.0f}')
+    axes[2].set_xlabel('Seuil (MAD)'); axes[2].set_title('Synthèse des 3 méthodes')
+    axes[2].legend(fontsize=8); axes[2].grid(alpha=0.3)
+
+    plt.tight_layout()
+
+    diag = {
+        "seuil_hill":     round(seuil_hill),
+        "seuil_mef":      round(seuil_mef),
+        "seuil_gert":     round(seuil_gert),
+        "seuil_optimal":  round(seuil_optimal),
+        "k_stable":       int(k_stable_hill),
+        "alpha_hill":     round(float(hills[np.where(k_vals == k_stable_hill)[0][0]]), 4),
+        "n_obs":          n,
+    }
+    return seuil_optimal, fig, diag
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# AJUSTEMENT MULTI-LOIS (Pareto, Lognormal, GPD) + INDICATEURS D'ADÉQUATION
+# ════════════════════════════════════════════════════════════════════════════
+
+def comparer_lois_ajustement(data, seuil, label="Sinistres"):
+    """
+    Ajuste Pareto, Lognormale et GPD aux excédances au-dessus du seuil.
+    Retourne un DataFrame d'indicateurs (KS, AD, AIC, BIC, α/μ/σ) pour chaque loi.
+
+    La loi avec le plus petit AIC est recommandée.
+    """
+    import numpy as np
+    from scipy import stats
+    from scipy.special import kolmogorov
+
+    exceedances = data[data > seuil] - seuil
+    exceedances = exceedances[exceedances > 0]
+    n = len(exceedances)
+
+    if n < 10:
+        return None, "Moins de 10 excédances au-dessus du seuil"
+
+    resultats = []
+
+    # ── Pareto (GPD avec ξ > 0) ──────────────────────────────────────────
+    try:
+        # Estimation MLE Pareto : α = n / Σ log(1 + x/seuil)
+        log_sum = np.sum(np.log(1 + exceedances / seuil)) if seuil > 0 else np.sum(np.log(exceedances))
+        alpha_p = n / log_sum if log_sum > 0 else 1.5
+        sigma_p = seuil / alpha_p if alpha_p > 0 else seuil
+
+        # CDF Pareto : F(x) = 1 - (1 + x/sigma)^(-alpha)
+        cdf_pareto = lambda x: 1 - (1 + x / max(sigma_p, 1e-10)) ** (-alpha_p)
+        observed_sorted = np.sort(exceedances)
+        theoretical_cdf = cdf_pareto(observed_sorted)
+        empirical_cdf   = np.arange(1, n+1) / n
+
+        ks_stat = np.max(np.abs(empirical_cdf - theoretical_cdf))
+        ks_pval = float(stats.kstest(exceedances, lambda x: cdf_pareto(x)).pvalue)
+
+        # Log-vraisemblance Pareto
+        ll_p = n * np.log(alpha_p / max(sigma_p, 1e-10)) - (alpha_p + 1) * np.sum(np.log(1 + exceedances / max(sigma_p, 1e-10)))
+        aic_p = -2 * ll_p + 2 * 2  # 2 paramètres
+        bic_p = -2 * ll_p + np.log(n) * 2
+
+        resultats.append({
+            "Loi": "Pareto", "Params": f"α={alpha_p:.4f}, σ={sigma_p:,.0f}",
+            "KS stat": round(ks_stat, 4), "p-value KS": round(ks_pval, 4),
+            "AIC": round(aic_p, 2), "BIC": round(bic_p, 2),
+            "α (Pareto)": round(alpha_p, 4), "Recommandée": "",
+            "_ll": ll_p, "_aic": aic_p,
+        })
+    except Exception as e:
+        resultats.append({"Loi": "Pareto", "Erreur": str(e)[:50],
+                          "_aic": 1e10, "_ll": -1e10})
+
+    # ── Lognormale ──────────────────────────────────────────────────────
+    try:
+        log_exc  = np.log(exceedances + 1e-10)
+        mu_ln    = np.mean(log_exc)
+        sigma_ln = np.std(log_exc, ddof=1)
+
+        ks_res   = stats.kstest(exceedances, 'lognorm', args=(sigma_ln, 0, np.exp(mu_ln)))
+        ll_ln    = np.sum(stats.lognorm.logpdf(exceedances, sigma_ln, 0, np.exp(mu_ln)))
+        aic_ln   = -2 * ll_ln + 2 * 2
+        bic_ln   = -2 * ll_ln + np.log(n) * 2
+
+        resultats.append({
+            "Loi": "Lognormale", "Params": f"μ={mu_ln:.4f}, σ={sigma_ln:.4f}",
+            "KS stat": round(ks_res.statistic, 4), "p-value KS": round(ks_res.pvalue, 4),
+            "AIC": round(aic_ln, 2), "BIC": round(bic_ln, 2),
+            "α (Pareto)": "—", "Recommandée": "",
+            "_ll": ll_ln, "_aic": aic_ln,
+        })
+    except Exception as e:
+        resultats.append({"Loi": "Lognormale", "Erreur": str(e)[:50],
+                          "_aic": 1e10, "_ll": -1e10})
+
+    # ── GPD (Pickands-Balkema-de Haan) ──────────────────────────────────
+    try:
+        # Estimation MLE GPD
+        from scipy.optimize import minimize
+
+        def neg_ll_gpd(params):
+            xi, beta = params
+            if beta <= 0: return 1e10
+            if xi >= 0:
+                return -np.sum(stats.genpareto.logpdf(exceedances, xi, 0, beta))
+            elif xi < 0:
+                if np.any(exceedances > -beta/xi): return 1e10
+                return -np.sum(stats.genpareto.logpdf(exceedances, xi, 0, beta))
+
+        res = minimize(neg_ll_gpd, [0.3, np.mean(exceedances)],
+                      method='Nelder-Mead', options={'maxiter': 2000, 'xatol': 1e-6})
+        xi_gpd, beta_gpd = res.x
+
+        ks_res_gpd = stats.kstest(exceedances, 'genpareto',
+                                  args=(xi_gpd, 0, beta_gpd))
+        ll_gpd   = -res.fun
+        aic_gpd  = -2 * ll_gpd + 2 * 2
+        bic_gpd  = -2 * ll_gpd + np.log(n) * 2
+
+        resultats.append({
+            "Loi": "GPD", "Params": f"ξ={xi_gpd:.4f}, β={beta_gpd:,.0f}",
+            "KS stat": round(ks_res_gpd.statistic, 4), "p-value KS": round(ks_res_gpd.pvalue, 4),
+            "AIC": round(aic_gpd, 2), "BIC": round(bic_gpd, 2),
+            "α (Pareto)": f"1/ξ={1/xi_gpd:.3f}" if xi_gpd != 0 else "∞",
+            "Recommandée": "",
+            "_ll": ll_gpd, "_aic": aic_gpd,
+            "_xi": xi_gpd, "_beta": beta_gpd,
+        })
+    except Exception as e:
+        resultats.append({"Loi": "GPD", "Erreur": str(e)[:50],
+                          "_aic": 1e10, "_ll": -1e10})
+
+    # ── Recommandation : AIC minimal ──────────────────────────────────────
+    valid = [r for r in resultats if "_aic" in r and r["_aic"] < 1e9]
+    if valid:
+        best = min(valid, key=lambda r: r["_aic"])
+        best["Recommandée"] = "✅ AIC min"
+
+    # Nettoyer les clés internes avant affichage
+    for r in resultats:
+        for k in ["_ll", "_aic", "_xi", "_beta"]:
+            r.pop(k, None)
+
+    return resultats, None
+
+
+def afficher_selection_loi(data, seuil, key_prefix="loi"):
+    """
+    Affiche le comparateur de lois et retourne la loi choisie par l'utilisateur.
+    Appelé depuis Tab 4 (Simulation) avant de lancer la simulation.
+    """
+    st.markdown("#### 📊 Sélection de la loi de sévérité")
+    st.caption("Ajustement Pareto / Lognormale / GPD aux excédances. "
+               "Choisissez la loi en fonction des indicateurs ci-dessous.")
+
+    with st.spinner("Ajustement des lois..."):
+        resultats_lois, err = comparer_lois_ajustement(data, seuil, "Excédances")
+
+    if err or not resultats_lois:
+        st.warning(err or "Pas assez de données")
+        return "pareto"
+
+    # Affichage tableau
+    import streamlit as st
+    cols_aff = ["Loi","Params","KS stat","p-value KS","AIC","BIC","Recommandée"]
+    rows_aff = [{k: r.get(k,"") for k in cols_aff} for r in resultats_lois]
+
+    # Colorier la ligne recommandée
+    df_lois = __import__('pandas').DataFrame(rows_aff)
+    st.dataframe(df_lois, use_container_width=True, hide_index=True)
+
+    st.markdown("""
+    <div style="background:#f2f8f7;border-left:4px solid #00b5a5;padding:10px 14px;font-size:12px">
+    <b>Guide de lecture :</b><br>
+    • <b>KS p-value</b> : > 0.05 = bonne adéquation | < 0.05 = loi rejetée<br>
+    • <b>AIC</b> : plus petit = meilleur ajustement (pénalise la complexité)<br>
+    • <b>BIC</b> : idem AIC, pénalité plus forte sur n<br>
+    • <b>ξ GPD</b> : > 0 = queue lourde (Fréchet) | ξ ≈ 0 = Gumbel (légère) | ξ < 0 = Weibull (bornée)
+    </div>""", unsafe_allow_html=True)
+
+    loi_choisie = st.selectbox(
+        "🔬 Loi retenue pour la simulation",
+        options=["pareto", "lognormale", "gpd"],
+        format_func={"pareto":"Pareto (Extrapolation classique XL)",
+                     "lognormale":"Lognormale (Sinistres moyens)",
+                     "gpd":"GPD (Extreme Value Theory — TVE)"}.get,
+        key=f"{key_prefix}_loi_choisie",
+        help="La loi avec ✅ AIC min est statistiquement recommandée, "
+             "mais vous pouvez choisir selon le contexte actuariel."
+    )
+
+    st.info(f"✅ Loi retenue : **{loi_choisie.upper()}** — les simulations utiliseront cette loi.")
+    return loi_choisie
