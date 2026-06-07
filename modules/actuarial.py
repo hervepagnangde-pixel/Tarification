@@ -800,114 +800,127 @@ def section_analyse_distributions():
 # SÉLECTION AUTOMATIQUE DU SEUIL TVE (Hill + MEF + Gertensgarbe)
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def detecter_seuil_optimal_tve(data, label="Sinistres"):
     """
-    Détecte automatiquement le seuil optimal TVE via 3 méthodes :
-    1. Hill plot : zone de stabilité de l'estimateur de Hill
-    2. Mean Excess Function (MEF) : linéarité = queue Pareto
-    3. Gertensgarbe : point de changement statistique
+    Détecte automatiquement le seuil TVE optimal via 3 méthodes distinctes :
+      1. Hill plot  — zone de stabilité minimisant le CV glissant
+      2. MEF        — point de linéarité (queue Pareto) via R² maximal
+      3. Gertensgarbe — croisement des statistiques progressives/régressives
 
-    Retourne : seuil_optimal (float), figure matplotlib, diagnostics dict
+    Chaque méthode donne un seuil différent.
+    Retourne seuil_consensus (médiane), fig, dict diagnostics.
     """
-    import numpy as np
     import matplotlib.pyplot as plt
-    from scipy import stats
+    from scipy import stats as _sp
 
-    data_pos = np.array([x for x in data if x > 0])
+    data_pos = np.array([x for x in data if x > 0 and np.isfinite(x)])
     if len(data_pos) < 20:
         return None, None, {"erreur": "Moins de 20 observations positives"}
 
-    data_sorted = np.sort(data_pos)[::-1]  # Décroissant
-    n = len(data_sorted)
+    sorted_desc = np.sort(data_pos)[::-1]
+    n = len(sorted_desc)
 
-    # ── 1. Hill estimates ──────────────────────────────────────────────────
-    k_vals  = np.arange(5, min(n//2, 150))
-    hills   = np.array([np.mean(np.log(data_sorted[:k])) - np.log(data_sorted[k])
-                        for k in k_vals])
-    # Zone de stabilité : fenêtre glissante de 15 points, CV minimal
-    cv_vals = np.array([np.std(hills[max(0,i-7):i+8]) / (np.mean(hills[max(0,i-7):i+8]) + 1e-10)
-                        for i in range(len(hills))])
-    k_stable_hill = k_vals[np.argmin(cv_vals)]
-    seuil_hill = float(data_sorted[k_stable_hill])
+    # ── 1. Hill — zone de stabilité (CV glissant minimal) ─────────────────
+    k_min, k_max = 5, min(n - 2, 150)
+    ks_arr, hills_arr = _hill_estimates(sorted_desc, k_max=k_max)
+    # Filtrer à partir de k_min
+    mask = ks_arr >= k_min
+    ks_f, hills_f = ks_arr[mask], hills_arr[mask]
+    # CV glissant sur fenêtre de 15 points
+    win = 15
+    cv_arr = np.array([
+        np.std(hills_f[max(0,i-win//2):i+win//2+1]) /
+        (np.abs(np.mean(hills_f[max(0,i-win//2):i+win//2+1])) + 1e-10)
+        for i in range(len(hills_f))
+    ])
+    k_hill_best = int(ks_f[np.argmin(cv_arr)])
+    seuil_hill  = float(sorted_desc[min(k_hill_best, n-1)])
+    alpha_hill  = float(hills_f[np.argmin(cv_arr)])
 
-    # ── 2. MEF : pente linéaire = Pareto, pente nulle = Exp ───────────────
-    quantiles_pct = np.linspace(0.60, 0.95, 30)
-    thresholds_mef = np.quantile(data_pos, quantiles_pct)
-    mef_vals = np.array([np.mean(data_pos[data_pos > u] - u)
-                         for u in thresholds_mef if np.sum(data_pos > u) >= 10])
-    thresholds_mef_ok = np.array([u for u in thresholds_mef if np.sum(data_pos > u) >= 10])
+    # ── 2. Gertensgarbe — croisement progressif/régressif ─────────────────
+    k_gert_val  = _gertensgarbe_k(ks_arr, hills_arr)  # retourne un k (entier)
+    seuil_gert  = float(sorted_desc[min(k_gert_val, n-1)])
+    alpha_gert  = float(hills_arr[min(k_gert_val-1, len(hills_arr)-1)])
 
-    seuil_mef = float(np.quantile(data_pos, 0.75))  # défaut
-    if len(thresholds_mef_ok) >= 5:
-        # Chercher le point où la MEF devient linéaire (R² maximal)
-        best_r2 = 0
-        for i in range(3, len(thresholds_mef_ok)-2):
-            x = thresholds_mef_ok[i:]
-            y = mef_vals[i:]
-            if len(x) < 3: continue
-            slope, intercept, r, p, se = stats.linregress(x, y)
-            if r**2 > best_r2 and slope > 0:
-                best_r2 = r**2
-                seuil_mef = float(thresholds_mef_ok[i])
+    # ── 3. MEF — point de linéarité (R² maximal avec slope > 0) ──────────
+    u_mef, e_mef = _mean_excess(data_pos, n_points=50)
+    valid_mef = ~np.isnan(e_mef)
+    u_v, e_v = u_mef[valid_mef], e_mef[valid_mef]
+    seuil_mef = float(np.percentile(data_pos, 75))  # défaut
+    best_r2   = 0.0
+    if len(u_v) >= 6:
+        from scipy.stats import linregress
+        for i in range(3, len(u_v) - 3):
+            slope, intercept, r, p, _ = linregress(u_v[i:], e_v[i:])
+            if r ** 2 > best_r2 and slope > -0.1:  # MEF croissante ou quasi-plate
+                best_r2   = r ** 2
+                seuil_mef = float(u_v[i])
 
-    # ── 3. Gertensgarbe ───────────────────────────────────────────────────
-    seuil_gert = seuil_hill  # fallback
-    if len(k_vals) >= 10:
-        seuil_gert = float(_gertensgarbe_k(k_vals, hills))
-        if seuil_gert == k_vals[0]:
-            seuil_gert = seuil_hill
+    # ── Consensus ─────────────────────────────────────────────────────────
+    seuil_consensus = float(np.median([seuil_hill, seuil_mef, seuil_gert]))
 
-    # ── Seuil consensus ───────────────────────────────────────────────────
-    seuils_trio = [seuil_hill, seuil_mef, seuil_gert]
-    seuil_optimal = float(np.median(seuils_trio))
+    # ── Graphiques — même style que section données/triangle ──────────────
+    fig, axes = plt.subplots(1, 3, figsize=(15, 3.5))
+    fig.patch.set_facecolor("white")
+    for ax in axes:
+        ax.tick_params(labelsize=8)
+        ax.grid(alpha=0.25, lw=0.5)
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.5)
 
-    # ── Figure ─────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4))
-    fig.suptitle(f"Détection automatique du seuil TVE — {label}", fontsize=12, fontweight='bold')
+    # — Hill plot —
+    axes[0].plot(ks_arr, hills_arr, color="#1a1a1a", lw=1.5, label="α Hill(k)")
+    axes[0].axvline(k_hill_best, color="#ef4444", ls="--", lw=1.8,
+                    label=f"Stabilité k={k_hill_best}\nU={seuil_hill:,.0f} MAD")
+    axes[0].axvline(k_gert_val, color="#f59e0b", ls=":", lw=1.8,
+                    label=f"Gertensgarbe k={k_gert_val}\nU={seuil_gert:,.0f} MAD")
+    axes[0].set_xlabel("k (ordre statistique)", fontsize=8)
+    axes[0].set_ylabel("α(k)", fontsize=8)
+    axes[0].set_title("Hill Plot", fontsize=10, fontweight="bold", color="#0d2b3e")
+    axes[0].legend(fontsize=7, loc="upper right")
 
-    # Hill plot
-    axes[0].plot(k_vals, hills, color='#0d2b3e', linewidth=1.5, label='Estimateur Hill')
-    axes[0].axvline(k_stable_hill, color='red', linestyle='--', linewidth=2,
-                    label=f'Seuil optimal k={k_stable_hill}\nU={seuil_hill:,.0f}')
-    axes[0].set_xlabel('k (nombre ordre statistique)'); axes[0].set_ylabel('α Hill')
-    axes[0].set_title('Hill Plot — Zone de stabilité')
-    axes[0].legend(fontsize=8); axes[0].grid(alpha=0.3)
+    # — MEF —
+    axes[1].plot(u_v, e_v, color="#2d8a4e", lw=2, label="e(u)")
+    axes[1].axvline(seuil_mef, color="#ef4444", ls="--", lw=1.8,
+                    label=f"Linéarité MEF\n{seuil_mef:,.0f} MAD (R²={best_r2:.2f})")
+    axes[1].axvline(seuil_hill, color="#f59e0b", ls=":", lw=1.5, alpha=0.7,
+                    label=f"Hill {seuil_hill:,.0f}")
+    axes[1].set_xlabel("Seuil u (MAD)", fontsize=8)
+    axes[1].set_ylabel("Espérance excédentaire e(u)", fontsize=8)
+    axes[1].set_title("Mean Excess Function", fontsize=10, fontweight="bold", color="#0d2b3e")
+    axes[1].legend(fontsize=7)
 
-    # MEF
-    if len(thresholds_mef_ok) > 0:
-        axes[1].plot(thresholds_mef_ok, mef_vals, color='#00b5a5', linewidth=1.5, marker='o', markersize=3)
-        axes[1].axvline(seuil_mef, color='red', linestyle='--', linewidth=2,
-                        label=f'Seuil MEF\n{seuil_mef:,.0f}')
-        axes[1].set_xlabel('Seuil u'); axes[1].set_ylabel('Espérance excédentaire e(u)')
-        axes[1].set_title('Mean Excess Function')
-        axes[1].legend(fontsize=8); axes[1].grid(alpha=0.3)
+    # — Synthèse barres horizontales —
+    methodes  = ["Hill\n(stabilité CV)", "MEF\n(linéarité R²)", "Gertensgarbe\n(progressif/régressif)"]
+    seuils    = [seuil_hill, seuil_mef, seuil_gert]
+    couleurs  = ["#0d2b3e", "#2d8a4e", "#f59e0b"]
+    bars = axes[2].barh(methodes, seuils, color=couleurs, height=0.5, edgecolor="white")
+    axes[2].axvline(seuil_consensus, color="#ef4444", ls="--", lw=2,
+                    label=f"Consensus (médiane)\n{seuil_consensus:,.0f} MAD")
+    for bar, val in zip(bars, seuils):
+        axes[2].text(val * 1.01, bar.get_y() + bar.get_height()/2,
+                     f"{val:,.0f}", va="center", fontsize=8, color="#1a1a1a")
+    axes[2].set_xlabel("Seuil (MAD)", fontsize=8)
+    axes[2].set_title("Synthèse des 3 méthodes", fontsize=10, fontweight="bold", color="#0d2b3e")
+    axes[2].legend(fontsize=7)
+    axes[2].set_xlim(0, max(seuils) * 1.25)
 
-    # Distribution des 3 seuils
-    axes[2].barh(['Hill', 'MEF', 'Gertensgarbe'],
-                 [seuil_hill, seuil_mef, seuil_gert],
-                 color=['#0d2b3e', '#00b5a5', '#f59e0b'])
-    axes[2].axvline(seuil_optimal, color='red', linestyle='--', linewidth=2,
-                    label=f'Consensus\n{seuil_optimal:,.0f}')
-    axes[2].set_xlabel('Seuil (MAD)'); axes[2].set_title('Synthèse des 3 méthodes')
-    axes[2].legend(fontsize=8); axes[2].grid(alpha=0.3)
-
-    plt.tight_layout()
+    plt.tight_layout(pad=1.5)
 
     diag = {
-        "seuil_hill":     round(seuil_hill),
-        "seuil_mef":      round(seuil_mef),
-        "seuil_gert":     round(seuil_gert),
-        "seuil_optimal":  round(seuil_optimal),
-        "k_stable":       int(k_stable_hill),
-        "alpha_hill":     round(float(hills[np.where(k_vals == k_stable_hill)[0][0]]), 4),
-        "n_obs":          n,
+        "seuil_hill":      round(seuil_hill),
+        "seuil_mef":       round(seuil_mef),
+        "seuil_gert":      round(seuil_gert),
+        "seuil_optimal":   round(seuil_consensus),
+        "k_hill":          k_hill_best,
+        "k_gert":          k_gert_val,
+        "alpha_hill":      round(alpha_hill, 4),
+        "alpha_gert":      round(alpha_gert, 4),
+        "mef_r2":          round(best_r2, 3),
+        "n_obs":           n,
     }
-    return seuil_optimal, fig, diag
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# AJUSTEMENT MULTI-LOIS (Pareto, Lognormal, GPD) + INDICATEURS D'ADÉQUATION
-# ════════════════════════════════════════════════════════════════════════════
+    return seuil_consensus, fig, diag
 
 def comparer_lois_ajustement(data, seuil, label="Sinistres"):
     """
