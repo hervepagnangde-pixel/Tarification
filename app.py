@@ -3107,46 +3107,145 @@ with tab4:
             if "diag_tve" in st.session_state:
                 diag = st.session_state["diag_tve"]
                 cols_diag = st.columns(4)
-                cols_diag[0].metric("Seuil Hill",          f"{diag.get('seuil_hill',0):,.0f} MAD",
+                cols_diag[0].metric("Hill (stabilité CV)",
+                                    f"{diag.get('seuil_hill',0):,.0f} MAD",
                                     delta=f"α={diag.get('alpha_hill',0):.4f} · k={diag.get('k_hill',0)}")
-                cols_diag[1].metric("Seuil MEF",           f"{diag.get('seuil_mef',0):,.0f} MAD",
+                cols_diag[1].metric("MEF (linéarité R²)",
+                                    f"{diag.get('seuil_mef',0):,.0f} MAD",
                                     delta=f"R²={diag.get('mef_r2',0):.3f}")
-                cols_diag[2].metric("Seuil Gertensgarbe",  f"{diag.get('seuil_gert',0):,.0f} MAD",
-                                    delta=f"α={diag.get('alpha_gert',0):.4f} · k={diag.get('k_gert',0)}")
-                cols_diag[3].metric("Consensus (médiane)", f"{diag.get('seuil_optimal',0):,.0f} MAD",
-                                    delta="✅ Recommandé")
+                cols_diag[2].metric("Gertensgarbe-Werner",
+                                    f"{diag.get('seuil_gert',0):,.0f} MAD",
+                                    delta=f"α={diag.get('alpha_gert',0):.4f} · k*={diag.get('k_gert',0)}")
+                cols_diag[3].metric("Consensus (médiane)",
+                                    f"{diag.get('seuil_optimal',0):,.0f} MAD",
+                                    delta="⭐ Recommandé")
 
-            # Seuil de modélisation — choix utilisateur
-            seuil_default = st.session_state.get("seuil_tve_detecte", st.session_state["seuil_est"])
-            seuil_choices_pct = [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.92, 0.95]
+                st.info(
+                    f"Gertensgarbe k*={diag.get('k_gert',0)} · "
+                    f"Hill stabilité k={diag.get('k_hill',0)} · "
+                    f"MEF linéarité R²={diag.get('mef_r2',0):.3f} · "
+                    "Cherchez la zone stable du Hill et la linéarité du MEF pour confirmer u."
+                )
+
+            # ── Slider interactif pour positionner la droite verticale ────────
+            st.markdown("**🎚️ Positionnement interactif du seuil**")
             data_pctiles = st.session_state.get("df_proj", None)
             if data_pctiles is not None:
                 X_ch = data_pctiles["Sprime_ultime"].dropna().values
                 X_ch = X_ch[X_ch > 0]
-                # Construire les options
+                s_min = float(np.percentile(X_ch, 50))
+                s_max = float(np.percentile(X_ch, 99))
+                seuil_slider = st.slider(
+                    "Glissez pour positionner le seuil (droite rouge verticale)",
+                    min_value=int(s_min), max_value=int(s_max),
+                    value=int(st.session_state.get("seuil_est", np.percentile(X_ch, 80))),
+                    step=max(1, int((s_max - s_min) / 200)),
+                    format="%d MAD",
+                    key="seuil_slider_interactif"
+                )
+                n_exc_slider = int(np.sum(X_ch > seuil_slider))
+
+                # Graphiques avec droite verticale interactive
+                import matplotlib.pyplot as plt
+                import matplotlib.ticker as mticker
+                sorted_desc_sl = np.sort(X_ch)[::-1]
+                u_sorted_sl    = np.sort(np.unique(X_ch))
+                step_sl = max(1, len(u_sorted_sl) // 80)
+                u_mef_sl = u_sorted_sl[::step_sl][:-1]
+                mef_sl   = np.array([
+                    float(np.mean(X_ch[X_ch > u] - u)) if np.sum(X_ch > u) >= 2 else np.nan
+                    for u in u_mef_sl
+                ])
+                valid_sl = ~np.isnan(mef_sl)
+
+                fig_sl, (ax_sl1, ax_sl2) = plt.subplots(1, 2, figsize=(14, 4))
+                for ax in (ax_sl1, ax_sl2):
+                    ax.set_facecolor("white")
+                    ax.spines[["top","right"]].set_visible(False)
+                fig_sl.patch.set_facecolor("white")
+
+                # Hill interactif
+                k_max_sl = min(len(sorted_desc_sl)-2, 150)
+                ks_sl = np.arange(1, k_max_sl+1)
+                hills_sl = np.array([
+                    k / np.sum(np.log(sorted_desc_sl[:k]/sorted_desc_sl[k]))
+                    if sorted_desc_sl[k]>0 and np.sum(np.log(sorted_desc_sl[:k]/sorted_desc_sl[k]))>0
+                    else np.nan for k in ks_sl
+                ])
+                ok_sl = ~np.isnan(hills_sl)
+                ci_up_sl  = hills_sl + 1.96*hills_sl/np.sqrt(ks_sl)
+                ci_low_sl = np.maximum(hills_sl - 1.96*hills_sl/np.sqrt(ks_sl), 0)
+                # Convertir seuil_slider → k
+                k_slider = int(np.sum(sorted_desc_sl > seuil_slider))
+                k_slider = max(1, min(k_slider, k_max_sl))
+
+                ax_sl1.plot(ks_sl[ok_sl], hills_sl[ok_sl], color="black", lw=1.2)
+                ax_sl1.fill_between(ks_sl[ok_sl], ci_low_sl[ok_sl], ci_up_sl[ok_sl],
+                                    color="steelblue", alpha=0.25, label="IC 95 %")
+                ax_sl1.axvline(k_slider, color="red", ls="--", lw=2,
+                               label=f"k={k_slider} → α={hills_sl[min(k_slider-1,len(hills_sl)-1)]:.4f}")
+                ax_sl1.set_xlabel("Order Statistics"); ax_sl1.set_ylabel("Tail Index α(k)")
+                ax_sl1.set_title(f"Hill Plot — seuil {seuil_slider:,.0f} MAD")
+                ax_sl1.legend(fontsize=8); ax_sl1.grid(alpha=0.2, linestyle="--")
+
+                ax_sl2.scatter(u_mef_sl[valid_sl], mef_sl[valid_sl],
+                               s=30, facecolors="none", edgecolors="black", linewidths=0.8)
+                ax_sl2.axvline(seuil_slider, color="red", ls="--", lw=2,
+                               label=f"Seuil = {seuil_slider:,.0f} MAD")
+                ax_sl2.set_xlabel("Threshold"); ax_sl2.set_ylabel("Mean Excess")
+                ax_sl2.set_title("Mean Excess Function")
+                ax_sl2.xaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+                ax_sl2.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+                ax_sl2.ticklabel_format(axis="both", style="sci", scilimits=(0,0))
+                ax_sl2.legend(fontsize=8); ax_sl2.grid(alpha=0.2, linestyle="--")
+
+                plt.tight_layout()
+                st.pyplot(fig_sl); plt.close(fig_sl)
+
+                col_a, col_b = st.columns(2)
+                col_a.metric("Excédances au-dessus du seuil", f"{n_exc_slider}",
+                             delta=f"{n_exc_slider/len(X_ch)*100:.1f}% des sinistres")
+                alpha_at_slider = float(hills_sl[min(k_slider-1, len(hills_sl)-1)]) if not np.isnan(hills_sl[min(k_slider-1,len(hills_sl)-1)]) else 1.5
+                col_b.metric("α Hill estimé à ce seuil", f"{alpha_at_slider:.4f}")
+
+                if st.button("✅ Appliquer ce seuil", key="btn_apply_slider_seuil", type="primary"):
+                    st.session_state["seuil_est"] = float(seuil_slider)
+                    st.session_state["alpha_est"] = alpha_at_slider
+                    lambda_new = float(n_exc_slider / len(
+                        data_pctiles["annee_surv"].unique()))
+                    st.session_state["lambda_est"] = lambda_new
+                    st.success(f"✅ Seuil = {seuil_slider:,.0f} MAD | α = {alpha_at_slider:.4f} | λ = {lambda_new:.4f}")
+                    st.rerun()
+
+            # Seuil de modélisation — choix par liste
+            st.markdown("**Ou choisir parmi les seuils proposés :**")
+            seuil_default = st.session_state.get("seuil_tve_detecte", st.session_state["seuil_est"])
+            if data_pctiles is not None:
                 seuil_options = {}
-                # 1. Seuils TVE détectés automatiquement
                 if "diag_tve" in st.session_state:
                     d = st.session_state["diag_tve"]
                     seuil_options[f"🔴 Hill (k={d.get('k_hill',0)}) = {d.get('seuil_hill',0):,.0f} MAD"] = float(d.get('seuil_hill', seuil_default))
                     seuil_options[f"🟢 MEF (R²={d.get('mef_r2',0):.2f}) = {d.get('seuil_mef',0):,.0f} MAD"] = float(d.get('seuil_mef', seuil_default))
-                    seuil_options[f"🟡 Gertensgarbe (k={d.get('k_gert',0)}) = {d.get('seuil_gert',0):,.0f} MAD"] = float(d.get('seuil_gert', seuil_default))
-                    seuil_options[f"⭐ Consensus TVE (médiane) = {d.get('seuil_optimal',0):,.0f} MAD"] = float(d.get('seuil_optimal', seuil_default))
-                # 2. Quantiles
-                for p in seuil_choices_pct:
+                    seuil_options[f"🟡 Gertensgarbe (k*={d.get('k_gert',0)}) = {d.get('seuil_gert',0):,.0f} MAD"] = float(d.get('seuil_gert', seuil_default))
+                    seuil_options[f"⭐ Consensus TVE = {d.get('seuil_optimal',0):,.0f} MAD"] = float(d.get('seuil_optimal', seuil_default))
+                for p in [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]:
                     seuil_options[f"Q{int(p*100)} = {np.quantile(X_ch, p):,.0f} MAD"] = float(np.quantile(X_ch, p))
-                # 3. Manuel
                 seuil_options["✏️ Saisie manuelle"] = -1.0
-
-                seuil_label = st.selectbox("Seuil de modélisation", list(seuil_options.keys()),
-                                           key="seuil_select_label")
+                seuil_label  = st.selectbox("Seuil de modélisation", list(seuil_options.keys()), key="seuil_select_label")
                 seuil_choisi = seuil_options[seuil_label]
                 if seuil_choisi < 0:
                     seuil_choisi = st.number_input("Seuil manuel (MAD)", value=float(seuil_default),
                                                    step=50_000.0, format="%.0f", key="seuil_manuel_input")
-                st.session_state["seuil_est"] = seuil_choisi
-                st.caption(f"Seuil retenu : **{seuil_choisi:,.0f} MAD** | "
-                           f"Excédances : {int(np.sum(X_ch > seuil_choisi))} sinistres")
+                if st.button("✅ Appliquer ce seuil (liste)", key="btn_apply_list_seuil"):
+                    st.session_state["seuil_est"] = seuil_choisi
+                    n_exc_new = int(np.sum(X_ch > seuil_choisi))
+                    if n_exc_new > 1:
+                        exc_new = X_ch[X_ch > seuil_choisi]
+                        st.session_state["alpha_est"] = float(n_exc_new / np.sum(np.log(exc_new / seuil_choisi)))
+                        st.session_state["lambda_est"] = float(n_exc_new / len(
+                            data_pctiles["annee_surv"].unique()))
+                    st.success(f"✅ Seuil = {seuil_choisi:,.0f} MAD | Excédances : {n_exc_new}")
+                    st.rerun()
 
         # ══ Section B : Choix de la loi de sévérité ══════════════════════
         with st.expander("🔬 Sélection de la loi de sévérité (Pareto / Lognormale / GPD)", expanded=True):
@@ -3187,7 +3286,45 @@ with tab4:
                     help="Choisissez selon les indicateurs AIC/KS ci-dessus"
                 )
                 st.session_state["loi_sim"] = loi_retenue
-                st.info(f"✅ Loi retenue : **{loi_retenue.upper()}** — les simulations utiliseront cette loi.")
+
+                # Mise à jour dynamique des paramètres selon la loi
+                if "comparaison_lois" in st.session_state:
+                    loi_data = next((r for r in st.session_state["comparaison_lois"]
+                                     if r["Loi"].lower() == loi_retenue), None)
+                    if loi_data:
+                        params_str = loi_data.get("Params", "")
+                        st.markdown(f"**Paramètres {loi_retenue.upper()} :** `{params_str}`")
+                        # Extraire et stocker les paramètres pour la simulation
+                        import re as _re
+                        if loi_retenue == "pareto":
+                            m = _re.search(r"α=([\d.]+)", params_str)
+                            if m: st.session_state["alpha_est"] = float(m.group(1))
+                        elif loi_retenue == "lognormale":
+                            m_mu = _re.search(r"μ=([-\d.]+)", params_str)
+                            m_si = _re.search(r"σ=([\d.]+)", params_str)
+                            if m_mu: st.session_state["loi_mu"]    = float(m_mu.group(1))
+                            if m_si: st.session_state["loi_sigma"] = float(m_si.group(1))
+                        elif loi_retenue == "gpd":
+                            m_xi   = _re.search(r"ξ=([-\d.]+)", params_str)
+                            m_beta = _re.search(r"β=([\d.,]+)", params_str)
+                            if m_xi:   st.session_state["gpd_xi"]   = float(m_xi.group(1))
+                            if m_beta: st.session_state["gpd_beta"] = float(m_beta.group(1).replace(",",""))
+
+                # Afficher les paramètres actifs selon la loi
+                if loi_retenue == "pareto":
+                    st.info(f"✅ **Pareto** | α = {st.session_state.get('alpha_est',1.5):.4f} | "
+                            f"λ = {st.session_state.get('lambda_est',5.0):.4f} | "
+                            f"Seuil = {st.session_state.get('seuil_est',0):,.0f} MAD")
+                elif loi_retenue == "lognormale":
+                    st.info(f"✅ **Lognormale** | μ = {st.session_state.get('loi_mu', 0):.4f} | "
+                            f"σ = {st.session_state.get('loi_sigma', 0):.4f} | "
+                            f"λ = {st.session_state.get('lambda_est',5.0):.4f} | "
+                            f"Seuil = {st.session_state.get('seuil_est',0):,.0f} MAD")
+                elif loi_retenue == "gpd":
+                    st.info(f"✅ **GPD** | ξ = {st.session_state.get('gpd_xi', 0):.4f} | "
+                            f"β = {st.session_state.get('gpd_beta', 0):,.0f} | "
+                            f"λ = {st.session_state.get('lambda_est',5.0):.4f} | "
+                            f"Seuil = {st.session_state.get('seuil_est',0):,.0f} MAD")
 
         is_long_sim = st.session_state.get("is_long", True)
         st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | Seuil : {st.session_state['seuil_est']:,.0f} | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f} | Loi : {st.session_state.get('loi_sim','pareto').upper()}")
