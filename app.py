@@ -3107,10 +3107,14 @@ with tab4:
             if "diag_tve" in st.session_state:
                 diag = st.session_state["diag_tve"]
                 cols_diag = st.columns(4)
-                cols_diag[0].metric("Seuil Hill",         f"{diag.get('seuil_hill',0):,.0f} MAD")
-                cols_diag[1].metric("Seuil MEF",          f"{diag.get('seuil_mef',0):,.0f} MAD")
-                cols_diag[2].metric("Seuil Gertensgarbe", f"{diag.get('seuil_gert',0):,.0f} MAD")
-                cols_diag[3].metric("Consensus (médiane)", f"{diag.get('seuil_optimal',0):,.0f} MAD", delta="Recommandé")
+                cols_diag[0].metric("Seuil Hill",          f"{diag.get('seuil_hill',0):,.0f} MAD",
+                                    delta=f"α={diag.get('alpha_hill',0):.4f} · k={diag.get('k_hill',0)}")
+                cols_diag[1].metric("Seuil MEF",           f"{diag.get('seuil_mef',0):,.0f} MAD",
+                                    delta=f"R²={diag.get('mef_r2',0):.3f}")
+                cols_diag[2].metric("Seuil Gertensgarbe",  f"{diag.get('seuil_gert',0):,.0f} MAD",
+                                    delta=f"α={diag.get('alpha_gert',0):.4f} · k={diag.get('k_gert',0)}")
+                cols_diag[3].metric("Consensus (médiane)", f"{diag.get('seuil_optimal',0):,.0f} MAD",
+                                    delta="✅ Recommandé")
 
             # Seuil de modélisation — choix utilisateur
             seuil_default = st.session_state.get("seuil_tve_detecte", st.session_state["seuil_est"])
@@ -3119,19 +3123,30 @@ with tab4:
             if data_pctiles is not None:
                 X_ch = data_pctiles["Sprime_ultime"].dropna().values
                 X_ch = X_ch[X_ch > 0]
-                seuil_options = {
-                    f"Q{int(p*100)} = {np.quantile(X_ch, p):,.0f} MAD": float(np.quantile(X_ch, p))
-                    for p in seuil_choices_pct
-                }
-                seuil_options[f"🎯 Détecté auto = {seuil_default:,.0f} MAD"] = float(seuil_default)
+                # Construire les options
+                seuil_options = {}
+                # 1. Seuils TVE détectés automatiquement
+                if "diag_tve" in st.session_state:
+                    d = st.session_state["diag_tve"]
+                    seuil_options[f"🔴 Hill (k={d.get('k_hill',0)}) = {d.get('seuil_hill',0):,.0f} MAD"] = float(d.get('seuil_hill', seuil_default))
+                    seuil_options[f"🟢 MEF (R²={d.get('mef_r2',0):.2f}) = {d.get('seuil_mef',0):,.0f} MAD"] = float(d.get('seuil_mef', seuil_default))
+                    seuil_options[f"🟡 Gertensgarbe (k={d.get('k_gert',0)}) = {d.get('seuil_gert',0):,.0f} MAD"] = float(d.get('seuil_gert', seuil_default))
+                    seuil_options[f"⭐ Consensus TVE (médiane) = {d.get('seuil_optimal',0):,.0f} MAD"] = float(d.get('seuil_optimal', seuil_default))
+                # 2. Quantiles
+                for p in seuil_choices_pct:
+                    seuil_options[f"Q{int(p*100)} = {np.quantile(X_ch, p):,.0f} MAD"] = float(np.quantile(X_ch, p))
+                # 3. Manuel
                 seuil_options["✏️ Saisie manuelle"] = -1.0
-                seuil_label = st.selectbox("Seuil de modélisation", list(seuil_options.keys()), key="seuil_select_label")
+
+                seuil_label = st.selectbox("Seuil de modélisation", list(seuil_options.keys()),
+                                           key="seuil_select_label")
                 seuil_choisi = seuil_options[seuil_label]
                 if seuil_choisi < 0:
                     seuil_choisi = st.number_input("Seuil manuel (MAD)", value=float(seuil_default),
                                                    step=50_000.0, format="%.0f", key="seuil_manuel_input")
                 st.session_state["seuil_est"] = seuil_choisi
-                st.caption(f"Seuil retenu : **{seuil_choisi:,.0f} MAD**")
+                st.caption(f"Seuil retenu : **{seuil_choisi:,.0f} MAD** | "
+                           f"Excédances : {int(np.sum(X_ch > seuil_choisi))} sinistres")
 
         # ══ Section B : Choix de la loi de sévérité ══════════════════════
         with st.expander("🔬 Sélection de la loi de sévérité (Pareto / Lognormale / GPD)", expanded=True):
@@ -3344,95 +3359,77 @@ with tab5:
 
         if st.button("🔨 Construire la Market Curve", type="primary",
                      key="btn_construire_mkt_main", use_container_width=False):
-         with st.spinner("📈 Construction en cours..."):
-            df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
-            df_mkt.columns = [c.strip() for c in df_mkt.columns]
-            for col in ['ROLs', 'midpoints', 'Garantie en MAD', 'Priorité en MAD']:
-                if col in df_mkt.columns and df_mkt[col].dtype == object:
-                    df_mkt[col] = (df_mkt[col].astype(str).str.replace('%','').str.replace(' ','').str.replace(',','.')
-                                   .apply(lambda x: float(x)/100 if x not in ['nan',''] and float(x) > 1.5
-                                          else (float(x) if x not in ['nan',''] else np.nan)))
-            df_mkt = df_mkt.dropna(subset=['ROLs', 'midpoints'])
-            n_avant = len(df_mkt)
-            if filtre_branche.strip():
-                col_business = next((c for c in df_mkt.columns if 'BUSINESS' in c.upper()), None)
-                if col_business:
-                    df_mkt = df_mkt[df_mkt[col_business].astype(str).str.strip().str.upper()
-                                    .str.contains(filtre_branche.strip().upper(), regex=False, na=False)]
-            n_filtre = n_avant - len(df_mkt)
-            mask_rol = (df_mkt['ROLs'] >= rol_min) & (df_mkt['ROLs'] <= rol_max)
-            df_excl_rol = df_mkt[~mask_rol].copy(); df_mkt = df_mkt[mask_rol].copy(); n_rol = len(df_excl_rol)
-            df_mkt['diff_rel'] = np.where(df_mkt['midpoints'] != 0,
-                np.abs(df_mkt['ROLs'] - df_mkt['midpoints']) / np.abs(df_mkt['midpoints']), 1.0)
-            df_excl_prox = df_mkt[df_mkt['diff_rel'] < tolerance].copy()
-            df_mkt = df_mkt[df_mkt['diff_rel'] >= tolerance].copy(); n_prox = len(df_excl_prox)
-            df_mkt = df_mkt[df_mkt['midpoints'] > 0].copy()
-            st.markdown(f"""<div style="background:#f0fff4;border-left:4px solid #2d8a4e;border-radius:0 8px 8px 0;padding:12px 16px;margin:8px 0">
-                ✅ <b>{len(df_mkt)} points retenus</b> sur {n_avant} | Filtre branche : {n_filtre} | ROL hors bornes : {n_rol} | ROL≈Midpoint : {n_prox}
-                </div>""", unsafe_allow_html=True)
-            if len(df_mkt) < 5:
-                st.error("❌ Moins de 5 points retenus."); st.stop()
+            with st.spinner("📈 Construction en cours..."):
+                df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
+                df_mkt.columns = [c.strip() for c in df_mkt.columns]
+                for col in ['ROLs', 'midpoints', 'Garantie en MAD', 'Priorité en MAD']:
+                    if col in df_mkt.columns and df_mkt[col].dtype == object:
+                        df_mkt[col] = (df_mkt[col].astype(str).str.replace('%','').str.replace(' ','').str.replace(',','.')
+                                       .apply(lambda x: float(x)/100 if x not in ['nan',''] and float(x) > 1.5
+                                              else (float(x) if x not in ['nan',''] else np.nan)))
+                df_mkt = df_mkt.dropna(subset=['ROLs', 'midpoints'])
+                n_avant = len(df_mkt)
+                if filtre_branche.strip():
+                    col_business = next((c for c in df_mkt.columns if 'BUSINESS' in c.upper()), None)
+                    if col_business:
+                        df_mkt = df_mkt[df_mkt[col_business].astype(str).str.strip().str.upper()
+                                        .str.contains(filtre_branche.strip().upper(), regex=False, na=False)]
+                n_filtre = n_avant - len(df_mkt)
+                mask_rol = (df_mkt['ROLs'] >= rol_min) & (df_mkt['ROLs'] <= rol_max)
+                df_excl_rol = df_mkt[~mask_rol].copy(); df_mkt = df_mkt[mask_rol].copy(); n_rol = len(df_excl_rol)
+                df_mkt['diff_rel'] = np.where(df_mkt['midpoints'] != 0,
+                    np.abs(df_mkt['ROLs'] - df_mkt['midpoints']) / np.abs(df_mkt['midpoints']), 1.0)
+                df_excl_prox = df_mkt[df_mkt['diff_rel'] < tolerance].copy()
+                df_mkt = df_mkt[df_mkt['diff_rel'] >= tolerance].copy(); n_prox = len(df_excl_prox)
+                df_mkt = df_mkt[df_mkt['midpoints'] > 0].copy()
+                st.markdown(f"""<div style="background:#f0fff4;border-left:4px solid #2d8a4e;border-radius:0 8px 8px 0;padding:12px 16px;margin:8px 0">
+                    ✅ <b>{len(df_mkt)} points retenus</b> sur {n_avant} | Filtre branche : {n_filtre} | ROL hors bornes : {n_rol} | ROL≈Midpoint : {n_prox}
+                    </div>""", unsafe_allow_html=True)
+                if len(df_mkt) < 5:
+                    st.error("❌ Moins de 5 points retenus."); st.stop()
 
-            def fit_power(x, y):
-                log_x = np.log(x); log_y = np.log(y)
-                coeffs = np.polyfit(log_x, log_y, 1)
-                a = np.exp(coeffs[1]); b = -coeffs[0]
-                log_y_pred = np.polyval(coeffs, log_x)
-                r2 = 1 - np.sum((log_y-log_y_pred)**2) / np.sum((log_y-log_y.mean())**2)
-                return a, b, r2
+                def fit_power(x, y):
+                    log_x = np.log(x); log_y = np.log(y)
+                    coeffs = np.polyfit(log_x, log_y, 1)
+                    a = np.exp(coeffs[1]); b = -coeffs[0]
+                    log_y_pred = np.polyval(coeffs, log_x)
+                    r2 = 1 - np.sum((log_y-log_y_pred)**2) / np.sum((log_y-log_y.mean())**2)
+                    return a, b, r2
 
-            def predict_rol(x_norm, a, b): return a * (x_norm ** (-b))
+                def predict_rol(x_norm, a, b): return a * (x_norm ** (-b))
 
-            def calc_taux_tranche(t, a, b):
-                x_norm = (t['priorite'] + t['portee'] / 2) / gnpi
-                rol = predict_rol(x_norm, a, b)
-                taux_pur = rol * (t['portee'] / gnpi)
-                taux_risque = taux_pur * 1.002
-                taux_tech = taux_risque / (1 - t['brokage'] - t['frais'] - t['marge'] - t['retrocession'])
-                n_rec = t['nb_reconstitutions']; t_r = t['taux_reconstitution'] / 100; L = t['portee']
-                C_rep = taux_pur * gnpi
-                Pr_Rec = sum(t_r * min(L, max(C_rep - (r-1)*L, 0)) for r in range(1, n_rec+1))
-                Pr_Rec /= L if L > 0 else 1
-                Rec = Pr_Rec / (Pr_Rec + 10) if (Pr_Rec + 10) > 0 else 0
-                charg_maj_mkt = st.session_state.get("chargement_majeurs", 0.0)
-                return {"tranche": t["nom"], "type": t["type"], "x_norm": x_norm,
-                        "rol": rol, "taux_pur": taux_pur, "taux_tech": taux_tech,
-                        "chargement_majeurs": charg_maj_mkt, "taux": taux_tech}
+                def calc_taux_tranche(t, a, b):
+                    x_norm = (t['priorite'] + t['portee'] / 2) / gnpi
+                    rol = predict_rol(x_norm, a, b)
+                    taux_pur = rol * (t['portee'] / gnpi)
+                    taux_risque = taux_pur * 1.002
+                    taux_tech = taux_risque / (1 - t['brokage'] - t['frais'] - t['marge'] - t['retrocession'])
+                    n_rec = t['nb_reconstitutions']; t_r = t['taux_reconstitution'] / 100; L = t['portee']
+                    C_rep = taux_pur * gnpi
+                    Pr_Rec = sum(t_r * min(L, max(C_rep - (r-1)*L, 0)) for r in range(1, n_rec+1))
+                    Pr_Rec /= L if L > 0 else 1
+                    Rec = Pr_Rec / (Pr_Rec + 10) if (Pr_Rec + 10) > 0 else 0
+                    charg_maj_mkt = st.session_state.get("chargement_majeurs", 0.0)
+                    return {"tranche": t["nom"], "type": t["type"], "x_norm": x_norm,
+                            "rol": rol, "taux_pur": taux_pur, "taux_tech": taux_tech,
+                            "chargement_majeurs": charg_maj_mkt, "taux": taux_tech}
 
-            resultats_mkt = []
-            for q in [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]:
-                mid_max = np.quantile(df_mkt['midpoints'], q)
-                port_max = np.quantile(df_mkt['Garantie en MAD'], q) if 'Garantie en MAD' in df_mkt.columns else np.inf
-                df_q = df_mkt[(df_mkt['midpoints'] <= mid_max) &
-                               (df_mkt['Garantie en MAD'] <= port_max if 'Garantie en MAD' in df_mkt.columns else True)]
-                if len(df_q) < 5: continue
-                try:
-                    a, b, r2 = fit_power(df_q['midpoints'].values, df_q['ROLs'].values)
-                    if b <= 0: continue
-                    taux_tranches = []; taux_nuls = 0
-                    for t in tranches_input:
-                        tt = calc_taux_tranche(t, a, b)
-                        if tt['taux'] <= 0 or np.isnan(tt['taux']) or np.isinf(tt['taux']): taux_nuls += 1
-                        taux_tranches.append(tt)
-                    if taux_nuls > 0: continue
-                    taux_vals = [tt["taux"] for tt in taux_tranches]
-                    median_taux = np.median(taux_vals)
-                    cv_taux = np.std(taux_vals) / median_taux if median_taux > 0 else 99
-                    resultats_mkt.append({"quantile": q, "n_points": len(df_q), "a": a, "b": b,
-                                          "r2": r2, "cv_taux": cv_taux, "taux_tranches": taux_tranches,
-                                          "r2_ok": r2 >= r2_min})
-                except: continue
-
-            if not resultats_mkt:
-                st.warning("⚠️ Relâchement contrainte.")
+                resultats_mkt = []
                 for q in [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]:
                     mid_max = np.quantile(df_mkt['midpoints'], q)
-                    df_q = df_mkt[df_mkt['midpoints'] <= mid_max]
+                    port_max = np.quantile(df_mkt['Garantie en MAD'], q) if 'Garantie en MAD' in df_mkt.columns else np.inf
+                    df_q = df_mkt[(df_mkt['midpoints'] <= mid_max) &
+                                   (df_mkt['Garantie en MAD'] <= port_max if 'Garantie en MAD' in df_mkt.columns else True)]
                     if len(df_q) < 5: continue
                     try:
                         a, b, r2 = fit_power(df_q['midpoints'].values, df_q['ROLs'].values)
                         if b <= 0: continue
-                        taux_tranches = [calc_taux_tranche(t, a, b) for t in tranches_input]
+                        taux_tranches = []; taux_nuls = 0
+                        for t in tranches_input:
+                            tt = calc_taux_tranche(t, a, b)
+                            if tt['taux'] <= 0 or np.isnan(tt['taux']) or np.isinf(tt['taux']): taux_nuls += 1
+                            taux_tranches.append(tt)
+                        if taux_nuls > 0: continue
                         taux_vals = [tt["taux"] for tt in taux_tranches]
                         median_taux = np.median(taux_vals)
                         cv_taux = np.std(taux_vals) / median_taux if median_taux > 0 else 99
@@ -3441,28 +3438,46 @@ with tab5:
                                               "r2_ok": r2 >= r2_min})
                     except: continue
 
-            if not resultats_mkt:
-                st.error("❌ Impossible d'ajuster la courbe."); st.stop()
+                if not resultats_mkt:
+                    st.warning("⚠️ Relâchement contrainte.")
+                    for q in [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]:
+                        mid_max = np.quantile(df_mkt['midpoints'], q)
+                        df_q = df_mkt[df_mkt['midpoints'] <= mid_max]
+                        if len(df_q) < 5: continue
+                        try:
+                            a, b, r2 = fit_power(df_q['midpoints'].values, df_q['ROLs'].values)
+                            if b <= 0: continue
+                            taux_tranches = [calc_taux_tranche(t, a, b) for t in tranches_input]
+                            taux_vals = [tt["taux"] for tt in taux_tranches]
+                            median_taux = np.median(taux_vals)
+                            cv_taux = np.std(taux_vals) / median_taux if median_taux > 0 else 99
+                            resultats_mkt.append({"quantile": q, "n_points": len(df_q), "a": a, "b": b,
+                                                  "r2": r2, "cv_taux": cv_taux, "taux_tranches": taux_tranches,
+                                                  "r2_ok": r2 >= r2_min})
+                        except: continue
 
-            all_t = [tt["taux"] for r in resultats_mkt for tt in r.get("taux_tranches",[])]
-            med_g = np.median([t for t in all_t if t > 0]) if any(t > 0 for t in all_t) else 1
-            r2v = [r["r2"] for r in resultats_mkt]; r2min_v, r2max_v = min(r2v), max(r2v)
-            for r in resultats_mkt:
-                tm = np.mean([tt["taux"] for tt in r.get("taux_tranches",[])])
-                r2_norm = (r["r2"] - r2min_v) / (r2max_v - r2min_v + 1e-10)
-                ecart_med = abs(tm - med_g) / (med_g + 1e-10)
-                taux_nuls = sum(1 for tt in r.get("taux_tranches",[]) if tt.get("taux",0) <= 0)
-                r["score"] = 0.5*r2_norm - 0.3*ecart_med - 0.2*r["cv_taux"] - taux_nuls*10.0 + (0.5 if r["r2_ok"] else 0)
-            resultats_mkt = sorted(resultats_mkt, key=lambda x: x['score'], reverse=True)
-            st.session_state["resultats_mkt"] = resultats_mkt
-            st.session_state["df_mkt_clean"]  = df_mkt
-            # ── Auto-save ──
-            try:
-                db_save_etape("mkt", {"resultats_mkt": [{k:v for k,v in r.items() if k!="taux_tranches"} for r in resultats_mkt],
-                                      "taux_mkt_final": resultats_mkt[0]["taux_tranches"] if resultats_mkt else []})
-                st.toast("💾 Market Curve sauvegardée", icon="✅")
-            except Exception as _e:
-                st.toast(f"⚠️ Sauvegarde DB : {_e}", icon="⚠️")
+                if not resultats_mkt:
+                    st.error("❌ Impossible d'ajuster la courbe."); st.stop()
+
+                all_t = [tt["taux"] for r in resultats_mkt for tt in r.get("taux_tranches",[])]
+                med_g = np.median([t for t in all_t if t > 0]) if any(t > 0 for t in all_t) else 1
+                r2v = [r["r2"] for r in resultats_mkt]; r2min_v, r2max_v = min(r2v), max(r2v)
+                for r in resultats_mkt:
+                    tm = np.mean([tt["taux"] for tt in r.get("taux_tranches",[])])
+                    r2_norm = (r["r2"] - r2min_v) / (r2max_v - r2min_v + 1e-10)
+                    ecart_med = abs(tm - med_g) / (med_g + 1e-10)
+                    taux_nuls = sum(1 for tt in r.get("taux_tranches",[]) if tt.get("taux",0) <= 0)
+                    r["score"] = 0.5*r2_norm - 0.3*ecart_med - 0.2*r["cv_taux"] - taux_nuls*10.0 + (0.5 if r["r2_ok"] else 0)
+                resultats_mkt = sorted(resultats_mkt, key=lambda x: x['score'], reverse=True)
+                st.session_state["resultats_mkt"] = resultats_mkt
+                st.session_state["df_mkt_clean"]  = df_mkt
+                # ── Auto-save ──
+                try:
+                    db_save_etape("mkt", {"resultats_mkt": [{k:v for k,v in r.items() if k!="taux_tranches"} for r in resultats_mkt],
+                                          "taux_mkt_final": resultats_mkt[0]["taux_tranches"] if resultats_mkt else []})
+                    st.toast("💾 Market Curve sauvegardée", icon="✅")
+                except Exception as _e:
+                    st.toast(f"⚠️ Sauvegarde DB : {_e}", icon="⚠️")
 
     if "resultats_mkt" in st.session_state and "df_mkt_clean" in st.session_state:
         rmt = st.session_state.get("resultats_mkt", [])
