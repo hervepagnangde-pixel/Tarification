@@ -50,6 +50,7 @@ from modules.actuarial import (
     buehlmann_straub_credibility, bootstrap_ci_bc,
     _hill_estimates, _mean_excess, _gertensgarbe_k,
     _fit_severity, _fit_frequency, _threshold_table,
+    detecter_seuil_optimal_tve, comparer_lois_ajustement, afficher_selection_loi,
 )
 from modules.optimization import (
     _json_safe, optimiser_programme_variantes, afficher_variantes_optimisation,
@@ -3075,7 +3076,7 @@ with tab3:
 
 with tab4:
     st.header("Simulation Pareto / Poisson")
-    st.caption("Simule S'0 sur Pareto — applique coeff Sk/S'k pour charge réassurance")
+    st.caption("Simule S'0 sur la loi choisie — applique coeff Sk/S'k pour charge réassurance")
 
     if "alpha_est" not in st.session_state:
         st.warning("⚠️ Transformez d'abord le triangle")
@@ -3083,8 +3084,98 @@ with tab4:
         # ══ Section 0 : Analyse distributions (Hill, MEF, CDF, fits) ══
         with st.expander("Analyse des distributions — Seuil · Hill · MEF · Gertensgarbe · Fits · CDF", expanded=False):
             section_analyse_distributions()
+
+        # ══ Section A : Détection automatique du seuil TVE ══════════════
+        with st.expander("🎯 Détection automatique du seuil TVE (Hill + MEF + Gertensgarbe)", expanded=True):
+            st.caption("Les 3 méthodes détectent le seuil optimal. Une droite rouge indique le seuil recommandé. Choisissez ensuite votre seuil.")
+
+            if st.button("🔍 Détecter le seuil optimal automatiquement", key="btn_detect_seuil"):
+                data_sim_tve = st.session_state.get("df_proj", None)
+                if data_sim_tve is not None:
+                    with st.spinner("Analyse TVE en cours..."):
+                        X_tve = data_sim_tve["Sprime_ultime"].dropna().values
+                        X_tve = X_tve[X_tve > 0]
+                        seuil_opt, fig_tve, diag_tve = detecter_seuil_optimal_tve(X_tve, "Sinistres projetés")
+                        if fig_tve:
+                            st.pyplot(fig_tve, use_container_width=True)
+                            plt.close(fig_tve)
+                            st.session_state["seuil_tve_detecte"] = seuil_opt
+                            st.session_state["diag_tve"] = diag_tve
+                else:
+                    st.warning("Données non disponibles — transformez d'abord le triangle")
+
+            if "diag_tve" in st.session_state:
+                diag = st.session_state["diag_tve"]
+                cols_diag = st.columns(4)
+                cols_diag[0].metric("Seuil Hill",         f"{diag.get('seuil_hill',0):,.0f} MAD")
+                cols_diag[1].metric("Seuil MEF",          f"{diag.get('seuil_mef',0):,.0f} MAD")
+                cols_diag[2].metric("Seuil Gertensgarbe", f"{diag.get('seuil_gert',0):,.0f} MAD")
+                cols_diag[3].metric("Consensus (médiane)", f"{diag.get('seuil_optimal',0):,.0f} MAD", delta="Recommandé")
+
+            # Seuil de modélisation — choix utilisateur
+            seuil_default = st.session_state.get("seuil_tve_detecte", st.session_state["seuil_est"])
+            seuil_choices_pct = [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.92, 0.95]
+            data_pctiles = st.session_state.get("df_proj", None)
+            if data_pctiles is not None:
+                X_ch = data_pctiles["Sprime_ultime"].dropna().values
+                X_ch = X_ch[X_ch > 0]
+                seuil_options = {
+                    f"Q{int(p*100)} = {np.quantile(X_ch, p):,.0f} MAD": float(np.quantile(X_ch, p))
+                    for p in seuil_choices_pct
+                }
+                seuil_options[f"🎯 Détecté auto = {seuil_default:,.0f} MAD"] = float(seuil_default)
+                seuil_options["✏️ Saisie manuelle"] = -1.0
+                seuil_label = st.selectbox("Seuil de modélisation", list(seuil_options.keys()), key="seuil_select_label")
+                seuil_choisi = seuil_options[seuil_label]
+                if seuil_choisi < 0:
+                    seuil_choisi = st.number_input("Seuil manuel (MAD)", value=float(seuil_default),
+                                                   step=50_000.0, format="%.0f", key="seuil_manuel_input")
+                st.session_state["seuil_est"] = seuil_choisi
+                st.caption(f"Seuil retenu : **{seuil_choisi:,.0f} MAD**")
+
+        # ══ Section B : Choix de la loi de sévérité ══════════════════════
+        with st.expander("🔬 Sélection de la loi de sévérité (Pareto / Lognormale / GPD)", expanded=True):
+            if st.session_state.get("df_proj") is not None:
+                X_fit = st.session_state["df_proj"]["Sprime_ultime"].dropna().values
+                X_fit = X_fit[X_fit > 0]
+                seuil_fit = st.session_state.get("seuil_est", st.session_state["seuil_est"])
+
+                if st.button("📊 Comparer les lois et choisir", key="btn_comparer_lois"):
+                    with st.spinner("Ajustement des 3 lois..."):
+                        res_lois, err_lois = comparer_lois_ajustement(X_fit, seuil_fit)
+                    if err_lois:
+                        st.warning(err_lois)
+                    else:
+                        st.session_state["comparaison_lois"] = res_lois
+
+                if "comparaison_lois" in st.session_state:
+                    cols_aff = ["Loi","Params","KS stat","p-value KS","AIC","BIC","Recommandée"]
+                    tableau_resultats(
+                        [{k: r.get(k,"") for k in cols_aff}
+                         for r in st.session_state["comparaison_lois"]],
+                        "Comparaison des lois d'ajustement")
+                    st.markdown("""<div style="background:#f2f8f7;border-left:4px solid #00b5a5;
+                        padding:10px 14px;font-size:12px">
+                        <b>Guide :</b> p-value KS > 0.05 = bonne adéquation · AIC minimal = meilleur fit ·
+                        ξ GPD > 0 = queue lourde (Fréchet) · ξ ≈ 0 = Gumbel · ξ < 0 = Weibull bornée
+                        </div>""", unsafe_allow_html=True)
+
+                loi_retenue = st.selectbox(
+                    "📌 Loi retenue pour la simulation",
+                    options=["pareto", "lognormale", "gpd"],
+                    format_func=lambda x: {
+                        "pareto": "Pareto — Extrapolation classique XL",
+                        "lognormale": "Lognormale — Sinistres moyens / branche mixte",
+                        "gpd": "GPD — Extreme Value Theory (TVE recommandée cat)"
+                    }[x],
+                    key="loi_simulation_choisie",
+                    help="Choisissez selon les indicateurs AIC/KS ci-dessus"
+                )
+                st.session_state["loi_sim"] = loi_retenue
+                st.info(f"✅ Loi retenue : **{loi_retenue.upper()}** — les simulations utiliseront cette loi.")
+
         is_long_sim = st.session_state.get("is_long", True)
-        st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | Seuil : {st.session_state['seuil_est']:,.0f} | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f}")
+        st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | Seuil : {st.session_state['seuil_est']:,.0f} | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f} | Loi : {st.session_state.get('loi_sim','pareto').upper()}")
         c1, c2, c3, c4 = st.columns(4)
         with c1: st.number_input("Alpha",         value=st.session_state["alpha_est"],  step=0.01,     format="%.4f", key="alpha_input")
         with c2: st.number_input("Lambda",        value=st.session_state["lambda_est"], step=0.1,      format="%.4f", key="lambda_input")
@@ -3251,7 +3342,9 @@ with tab5:
             st.info("⬆️ Uploadez un fichier de données marché pour construire la Market Curve.")
             st.stop()
 
-        with st.spinner("📈 Construction en cours..."):
+        if st.button("🔨 Construire la Market Curve", type="primary",
+                     key="btn_construire_mkt_main", use_container_width=False):
+         with st.spinner("📈 Construction en cours..."):
             df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
             df_mkt.columns = [c.strip() for c in df_mkt.columns]
             for col in ['ROLs', 'midpoints', 'Garantie en MAD', 'Priorité en MAD']:
