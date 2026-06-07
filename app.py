@@ -3158,11 +3158,12 @@ with tab4:
                 ])
                 valid_sl = ~np.isnan(mef_sl)
 
-                fig_sl, (ax_sl1, ax_sl2) = plt.subplots(1, 2, figsize=(14, 4))
-                for ax in (ax_sl1, ax_sl2):
+                fig_sl, axes_sl = plt.subplots(1, 3, figsize=(16, 5))
+                for ax in axes_sl:
                     ax.set_facecolor("white")
                     ax.spines[["top","right"]].set_visible(False)
                 fig_sl.patch.set_facecolor("white")
+                ax_sl1, ax_sl2, ax_sl3 = axes_sl
 
                 # Hill interactif
                 k_max_sl = min(len(sorted_desc_sl)-2, 150)
@@ -3173,31 +3174,66 @@ with tab4:
                     else np.nan for k in ks_sl
                 ])
                 ok_sl = ~np.isnan(hills_sl)
-                ci_up_sl  = hills_sl + 1.96*hills_sl/np.sqrt(ks_sl)
-                ci_low_sl = np.maximum(hills_sl - 1.96*hills_sl/np.sqrt(ks_sl), 0)
-                # Convertir seuil_slider → k
+                with np.errstate(invalid='ignore'):
+                    ci_up_sl  = hills_sl + 1.96*hills_sl/np.sqrt(ks_sl)
+                    ci_low_sl = np.maximum(hills_sl - 1.96*hills_sl/np.sqrt(ks_sl), 0)
                 k_slider = int(np.sum(sorted_desc_sl > seuil_slider))
                 k_slider = max(1, min(k_slider, k_max_sl))
 
+                # (1) Hill
                 ax_sl1.plot(ks_sl[ok_sl], hills_sl[ok_sl], color="black", lw=1.2)
                 ax_sl1.fill_between(ks_sl[ok_sl], ci_low_sl[ok_sl], ci_up_sl[ok_sl],
                                     color="steelblue", alpha=0.25, label="IC 95 %")
                 ax_sl1.axvline(k_slider, color="red", ls="--", lw=2,
                                label=f"k={k_slider} → α={hills_sl[min(k_slider-1,len(hills_sl)-1)]:.4f}")
-                ax_sl1.set_xlabel("Order Statistics"); ax_sl1.set_ylabel("Tail Index α(k)")
+                ax_sl1.set_xlabel("Order Statistics")
+                ax_sl1.set_ylabel("Tail Index α(k)")
                 ax_sl1.set_title(f"Hill Plot — seuil {seuil_slider:,.0f} MAD")
-                ax_sl1.legend(fontsize=8); ax_sl1.grid(alpha=0.2, linestyle="--")
+                ax_sl1.legend(fontsize=8)
+                ax_sl1.grid(alpha=0.2, linestyle="--")
 
+                # (2) MEF — cercles ouverts style meplot R
                 ax_sl2.scatter(u_mef_sl[valid_sl], mef_sl[valid_sl],
                                s=30, facecolors="none", edgecolors="black", linewidths=0.8)
                 ax_sl2.axvline(seuil_slider, color="red", ls="--", lw=2,
-                               label=f"Seuil = {seuil_slider:,.0f} MAD")
-                ax_sl2.set_xlabel("Threshold"); ax_sl2.set_ylabel("Mean Excess")
+                               label=f"Seuil = {seuil_slider:,.0f}")
+                ax_sl2.set_xlabel("Threshold")
+                ax_sl2.set_ylabel("Mean Excess")
                 ax_sl2.set_title("Mean Excess Function")
                 ax_sl2.xaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
                 ax_sl2.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
                 ax_sl2.ticklabel_format(axis="both", style="sci", scilimits=(0,0))
-                ax_sl2.legend(fontsize=8); ax_sl2.grid(alpha=0.2, linestyle="--")
+                ax_sl2.legend(fontsize=8)
+                ax_sl2.grid(alpha=0.2, linestyle="--")
+
+                # (3) Gertensgarbe — U progressif / régressif
+                h_ok_sl = hills_sl[ok_sl]; k_ok_sl = ks_sl[ok_sl]; nk_sl = len(h_ok_sl)
+                u_fwd_sl = np.zeros(nk_sl); u_bwd_rev_sl = np.zeros(nk_sl)
+                for i in range(2, nk_sl):
+                    s_f = sum(1 for j in range(i) if h_ok_sl[j] < h_ok_sl[i])
+                    e_f = i*(i-1)/4; v_f = i*(i-1)*(2*i+5)/72
+                    u_fwd_sl[i] = (s_f-e_f)/np.sqrt(max(v_f,1e-10))
+                h_rev_sl = h_ok_sl[::-1]
+                for i in range(2, nk_sl):
+                    s_b = sum(1 for j in range(i) if h_rev_sl[j] < h_rev_sl[i])
+                    e_b = i*(i-1)/4; v_b = i*(i-1)*(2*i+5)/72
+                    u_bwd_rev_sl[i] = (s_b-e_b)/np.sqrt(max(v_b,1e-10))
+                u_bwd_sl = u_bwd_rev_sl[::-1]
+                cross_sl = np.where(np.diff(np.sign(u_fwd_sl - u_bwd_sl)))[0]
+                k_gert_sl = int(k_ok_sl[cross_sl[0]]) if len(cross_sl)>0 else int(k_ok_sl[nk_sl//2])
+
+                ax_sl3.plot(k_ok_sl, u_fwd_sl, color="black", lw=1.5, label="U progressif")
+                ax_sl3.plot(k_ok_sl, u_bwd_sl, color="black", lw=1.5, ls="--", label="U régressif")
+                ax_sl3.axhline(0, color="black", lw=0.6, alpha=0.4)
+                ax_sl3.axvline(k_slider, color="red", ls="--", lw=2,
+                               label=f"k={k_slider}  (u≈{seuil_slider:,.0f})")
+                ax_sl3.axvline(k_gert_sl, color="orange", ls=":", lw=1.5,
+                               label=f"Gertensgarbe k*={k_gert_sl}")
+                ax_sl3.set_xlabel("Order Statistics")
+                ax_sl3.set_ylabel("Statistique U(k)")
+                ax_sl3.set_title("Gertensgarbe-Werner")
+                ax_sl3.legend(fontsize=8)
+                ax_sl3.grid(alpha=0.2, linestyle="--")
 
                 plt.tight_layout()
                 st.pyplot(fig_sl); plt.close(fig_sl)
