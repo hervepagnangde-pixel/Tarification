@@ -3327,19 +3327,64 @@ with tab4:
                             f"Seuil = {st.session_state.get('seuil_est',0):,.0f} MAD")
 
         is_long_sim = st.session_state.get("is_long", True)
-        st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | Seuil : {st.session_state['seuil_est']:,.0f} | Alpha: {st.session_state['alpha_est']:.4f} | Lambda: {st.session_state['lambda_est']:.4f} | Loi : {st.session_state.get('loi_sim','pareto').upper()}")
+        loi_active  = st.session_state.get("loi_sim", "pareto")
+
+        # ── Paramètres dynamiques selon la loi ───────────────────────────────
+        st.markdown("#### ⚙️ Paramètres de simulation")
         c1, c2, c3, c4 = st.columns(4)
-        with c1: st.number_input("Alpha",         value=st.session_state["alpha_est"],  step=0.01,     format="%.4f", key="alpha_input")
-        with c2: st.number_input("Lambda",        value=st.session_state["lambda_est"], step=0.1,      format="%.4f", key="lambda_input")
-        with c3: st.number_input("Seuil (MAD)",   value=st.session_state["seuil_est"],  step=50_000.0, format="%.0f", key="seuil_input")
-        with c4: st.number_input("Nb simulations", value=10000, step=1000,               key="nsim_input")
+        with c4: n_sim_v = st.number_input("Nb simulations", value=10000, step=1000, key="nsim_input")
+
+        if loi_active == "pareto":
+            st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | **Pareto** | "
+                    f"Seuil={st.session_state['seuil_est']:,.0f} | α={st.session_state['alpha_est']:.4f} | λ={st.session_state['lambda_est']:.4f}")
+            with c1: st.number_input("α (Alpha Pareto)",  value=float(st.session_state["alpha_est"]),  step=0.01,     format="%.4f", key="alpha_input")
+            with c2: st.number_input("λ (Lambda Poisson)", value=float(st.session_state["lambda_est"]), step=0.1,      format="%.4f", key="lambda_input")
+            with c3: st.number_input("Seuil (MAD)",        value=float(st.session_state["seuil_est"]),  step=50_000.0, format="%.0f", key="seuil_input")
+            # Alias pour la simulation
+            xi_v = None; beta_v = None
+            mu_ln_v = None; sigma_ln_v = None
+
+        elif loi_active == "lognormale":
+            mu_default    = float(st.session_state.get("loi_mu",    np.log(max(st.session_state.get("seuil_est",1e6), 1))))
+            sigma_default = float(st.session_state.get("loi_sigma", 1.0))
+            st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | **Lognormale** | "
+                    f"Seuil={st.session_state['seuil_est']:,.0f} | μ={mu_default:.4f} | σ={sigma_default:.4f} | λ={st.session_state['lambda_est']:.4f}")
+            with c1: st.number_input("μ (mu log-space)",   value=mu_default,    step=0.05, format="%.4f", key="mu_ln_input")
+            with c2: st.number_input("σ (sigma log-space)", value=sigma_default, step=0.05, format="%.4f", key="sigma_ln_input")
+            with c3: st.number_input("λ (Lambda Poisson)",  value=float(st.session_state["lambda_est"]), step=0.1, format="%.4f", key="lambda_input")
+            # Alias
+            alpha_v = None; xi_v = None; beta_v = None
+            mu_ln_v = None; sigma_ln_v = None
+
+        elif loi_active == "gpd":
+            xi_default   = float(st.session_state.get("gpd_xi",   0.3))
+            beta_default = float(st.session_state.get("gpd_beta",  max(st.session_state.get("seuil_est",1e6)*0.5, 1)))
+            st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | **GPD** | "
+                    f"Seuil={st.session_state['seuil_est']:,.0f} | ξ={xi_default:.4f} | β={beta_default:,.0f} | λ={st.session_state['lambda_est']:.4f}")
+            with c1: st.number_input("ξ (xi — indice de queue)", value=xi_default,   step=0.01, format="%.4f", key="gpd_xi_input")
+            with c2: st.number_input("β (beta — échelle GPD)",   value=beta_default, step=10_000.0, format="%.0f", key="gpd_beta_input")
+            with c3: st.number_input("λ (Lambda Poisson)",       value=float(st.session_state["lambda_est"]), step=0.1, format="%.4f", key="lambda_input")
+            xi_v = None; beta_v = None; mu_ln_v = None; sigma_ln_v = None
 
         if st.button("▶ Lancer la simulation", type="primary"):
             with st.spinner("🎲 Simulation en cours..."):
                 progress_sim = st.progress(0, text="Initialisation...")
-                alpha_f = st.session_state["alpha_input"]; lambda_f = st.session_state["lambda_input"]
-                seuil_f = st.session_state["seuil_input"]; n_s = int(st.session_state["nsim_input"])
-                coeffs  = st.session_state["coeffs"]
+                loi_sim  = st.session_state.get("loi_sim", "pareto")
+                seuil_f  = float(st.session_state.get("seuil_input", st.session_state["seuil_est"]))
+                lambda_f = float(st.session_state.get("lambda_input", st.session_state["lambda_est"]))
+                n_s      = int(st.session_state.get("nsim_input", 10000))
+                coeffs   = st.session_state["coeffs"]
+
+                # Paramètres spécifiques à la loi
+                if loi_sim == "pareto":
+                    alpha_f = float(st.session_state.get("alpha_input", st.session_state["alpha_est"]))
+                elif loi_sim == "lognormale":
+                    mu_f    = float(st.session_state.get("mu_ln_input",    st.session_state.get("loi_mu", 13.0)))
+                    sigma_f = float(st.session_state.get("sigma_ln_input", st.session_state.get("loi_sigma", 1.0)))
+                elif loi_sim == "gpd":
+                    xi_f   = float(st.session_state.get("gpd_xi_input",   st.session_state.get("gpd_xi",   0.3)))
+                    beta_f = float(st.session_state.get("gpd_beta_input",  st.session_state.get("gpd_beta", 500_000.0)))
+
                 np.random.seed(42)
                 resultats_sim = []
                 for idx_t, t_info in enumerate(tranches_input):
@@ -3353,8 +3398,23 @@ with tab4:
                         for _ in range(n_s):
                             N = np.random.poisson(lambda_f); S_total = 0
                             if N > 0:
-                                U = np.random.uniform(size=N)
-                                Sprime_sim = seuil_f * (U ** (-1/alpha_f))
+                                # ── Génération selon la loi choisie ──────────
+                                if loi_sim == "pareto":
+                                    U = np.random.uniform(size=N)
+                                    Sprime_sim = seuil_f * (U ** (-1/alpha_f))
+                                elif loi_sim == "lognormale":
+                                    Sprime_sim = np.random.lognormal(mu_f, sigma_f, size=N)
+                                    Sprime_sim = np.maximum(Sprime_sim, seuil_f)
+                                elif loi_sim == "gpd":
+                                    U = np.random.uniform(size=N)
+                                    if xi_f != 0:
+                                        Sprime_sim = seuil_f + beta_f / xi_f * ((1 - U) ** (-xi_f) - 1)
+                                    else:
+                                        Sprime_sim = seuil_f - beta_f * np.log(U)
+                                else:
+                                    U = np.random.uniform(size=N)
+                                    Sprime_sim = seuil_f * (U ** (-1/1.5))
+
                                 idx_c = np.random.choice(len(coeffs), size=N, replace=True)
                                 for i in range(N):
                                     S_prime = Sprime_sim[i]; c = coeffs[idx_c[i]]
