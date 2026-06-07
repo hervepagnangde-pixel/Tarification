@@ -8,6 +8,7 @@ import pandas as pd
 import json
 from datetime import datetime
 from modules.db import db_save_session, db_save_etape
+from modules.optimization import _json_safe
 
 
 def _get_runtime(key, default=None):
