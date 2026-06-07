@@ -645,29 +645,108 @@ def section_analyse_distributions():
 
     # ── Onglet A : seuil ──
     with tabs_d[0]:
+        import matplotlib.ticker as mticker
         sorted_desc = np.sort(all_sev)[::-1]
-        ks_arr, hills_arr = _hill_estimates(sorted_desc, k_max=min(len(sorted_desc)-1, 150))
-        k_gert = _gertensgarbe_k(ks_arr, hills_arr)
-        alpha_gert = float(hills_arr[k_gert-1]) if k_gert <= len(hills_arr) else alpha_0
+        n_sd = len(sorted_desc)
+        k_max_sd = min(n_sd - 2, 200)
+        ks_sd = np.arange(1, k_max_sd + 1)
 
-        col_h, col_m = st.columns(2)
-        with col_h:
-            fig_h, ax_h = plt.subplots(figsize=(6,3))
-            ax_h.plot(ks_arr, hills_arr, color="#1a1a1a", lw=1.5)
-            ax_h.axvline(k_gert, color="#ef4444", ls="--", lw=1.5,
-                         label=f"Gertensgarbe k={k_gert} → α={alpha_gert:.3f}")
-            ax_h.axhline(alpha_0, color="#2d8a4e", ls=":", lw=1.2, label=f"α actuel={alpha_0:.3f}")
-            ax_h.set_xlabel("k"); ax_h.set_ylabel("α(k)"); ax_h.set_title("Hill Plot")
-            ax_h.legend(fontsize=8); ax_h.grid(alpha=0.3)
-            st.pyplot(fig_h); plt.close()
-        with col_m:
-            u_mef, e_mef = _mean_excess(all_sev)
-            fig_m, ax_m = plt.subplots(figsize=(6,3))
-            ax_m.plot(u_mef, e_mef, color="#2d8a4e", lw=2)
-            ax_m.axvline(seuil_0, color="#ef4444", ls="--", lw=1.5, label=f"Seuil={seuil_0:,.0f}")
-            ax_m.set_xlabel("u"); ax_m.set_ylabel("e(u)"); ax_m.set_title("Mean Excess Function")
-            ax_m.legend(fontsize=8); ax_m.grid(alpha=0.3)
-            st.pyplot(fig_m); plt.close()
+        # Hill estimates + IC 95%
+        hills_sd = np.array([
+            k / np.sum(np.log(sorted_desc[:k] / sorted_desc[k]))
+            if sorted_desc[k] > 0 and np.sum(np.log(sorted_desc[:k] / sorted_desc[k])) > 0
+            else np.nan for k in ks_sd
+        ])
+        with np.errstate(invalid='ignore'):
+            ci_up_sd  = hills_sd + 1.96 * hills_sd / np.sqrt(ks_sd)
+            ci_low_sd = np.maximum(hills_sd - 1.96 * hills_sd / np.sqrt(ks_sd), 0)
+        ok_sd = ~np.isnan(hills_sd)
+
+        # Gertensgarbe — U progressif / régressif (Mann-Kendall normalisé)
+        h_ok_sd = hills_sd[ok_sd]; k_ok_sd = ks_sd[ok_sd]; nk_sd = len(h_ok_sd)
+        u_fwd_sd = np.zeros(nk_sd)
+        for i in range(2, nk_sd):
+            s = sum(1 for j in range(i) if h_ok_sd[j] < h_ok_sd[i])
+            e_s = i*(i-1)/4; v_s = i*(i-1)*(2*i+5)/72
+            u_fwd_sd[i] = (s - e_s) / np.sqrt(max(v_s, 1e-10))
+        h_rev_sd = h_ok_sd[::-1]
+        u_bwd_rev_sd = np.zeros(nk_sd)
+        for i in range(2, nk_sd):
+            s = sum(1 for j in range(i) if h_rev_sd[j] < h_rev_sd[i])
+            e_s = i*(i-1)/4; v_s = i*(i-1)*(2*i+5)/72
+            u_bwd_rev_sd[i] = (s - e_s) / np.sqrt(max(v_s, 1e-10))
+        u_bwd_sd = u_bwd_rev_sd[::-1]
+        cross_sd = np.where(np.diff(np.sign(u_fwd_sd - u_bwd_sd)))[0]
+        k_gert = int(k_ok_sd[cross_sd[0]]) if len(cross_sd) > 0 else int(k_ok_sd[nk_sd // 2])
+        alpha_gert = float(hills_sd[min(k_gert-1, len(hills_sd)-1)])
+        u_gert = float(sorted_desc[min(k_gert-1, n_sd-1)])
+
+        # MEF — cercles ouverts, style meplot R
+        u_sorted_sd = np.sort(np.unique(all_sev))
+        step_sd = max(1, len(u_sorted_sd) // 80)
+        u_mef_sd = u_sorted_sd[::step_sd][:-1]
+        mef_sd = np.array([
+            float(np.mean(all_sev[all_sev > u] - u)) if np.sum(all_sev > u) >= 2 else np.nan
+            for u in u_mef_sd
+        ])
+        valid_mef_sd = ~np.isnan(mef_sd)
+
+        # ── Figure 1×3 identique à sinistres majeurs ─────────────────────
+        fig_sd, axes_sd = plt.subplots(1, 3, figsize=(16, 5))
+        for ax in axes_sd:
+            ax.set_facecolor("white")
+            ax.spines[["top", "right"]].set_visible(False)
+        fig_sd.patch.set_facecolor("white")
+
+        # (1) Hill plot
+        ax_sd1 = axes_sd[0]
+        ax_sd1.plot(k_ok_sd, h_ok_sd, color="black", lw=1.2)
+        ax_sd1.fill_between(ks_sd[ok_sd], ci_low_sd[ok_sd], ci_up_sd[ok_sd],
+                            color="steelblue", alpha=0.25, label="IC 95 %")
+        ax_sd1.axvline(k_gert, color="red", ls="--", lw=2,
+                       label=f"k* = {k_gert}")
+        ax_sd1.set_xlabel("Order Statistics")
+        ax_sd1.set_ylabel("Tail Index α(k)")
+        ax_sd1.set_title("Hill Plot")
+        ax_sd1.legend(fontsize=8)
+        ax_sd1.grid(alpha=0.2, linestyle="--")
+
+        # (2) MEF — cercles ouverts
+        ax_sd2 = axes_sd[1]
+        ax_sd2.scatter(u_mef_sd[valid_mef_sd], mef_sd[valid_mef_sd],
+                       s=30, facecolors="none", edgecolors="black", linewidths=0.8)
+        ax_sd2.axvline(seuil_0, color="red", ls="--", lw=2,
+                       label=f"s = {seuil_0:,.0f}")
+        ax_sd2.set_xlabel("Threshold")
+        ax_sd2.set_ylabel("Mean Excess")
+        ax_sd2.set_title("Mean Excess Function")
+        ax_sd2.xaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+        ax_sd2.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+        ax_sd2.ticklabel_format(axis="both", style="sci", scilimits=(0, 0))
+        ax_sd2.legend(fontsize=8)
+        ax_sd2.grid(alpha=0.2, linestyle="--")
+
+        # (3) Gertensgarbe — U progressif / régressif
+        ax_sd3 = axes_sd[2]
+        ax_sd3.plot(k_ok_sd, u_fwd_sd, color="black", lw=1.5, label="U progressif")
+        ax_sd3.plot(k_ok_sd, u_bwd_sd, color="black", lw=1.5, ls="--", label="U régressif")
+        ax_sd3.axhline(0, color="black", lw=0.6, alpha=0.4)
+        ax_sd3.axvline(k_gert, color="red", ls="--", lw=2,
+                       label=f"k* = {k_gert}  (u ≈ {u_gert:,.0f})")
+        ax_sd3.set_xlabel("Order Statistics")
+        ax_sd3.set_ylabel("Statistique U(k)")
+        ax_sd3.set_title("Gertensgarbe-Werner")
+        ax_sd3.legend(fontsize=8)
+        ax_sd3.grid(alpha=0.2, linestyle="--")
+
+        plt.tight_layout()
+        st.pyplot(fig_sd, use_container_width=True); plt.close(fig_sd)
+
+        st.info(
+            f"Gertensgarbe → k* = {k_gert}  |  u suggéré = {u_gert:,.0f} MAD  |  "
+            f"α = {alpha_gert:.4f}  |  "
+            "Cherchez la zone stable du Hill et la linéarité du MEF pour confirmer u."
+        )
 
         pcts = [50, 60, 70, 75, 80, 85, 90, 95]
         rows_s = _threshold_table(all_sev, pcts)
