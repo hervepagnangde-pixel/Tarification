@@ -6,6 +6,7 @@ AgentActuarielPython : pipeline complet BC→Sim→Mkt→Rapport→Variantes,
 import numpy as np
 import pandas as pd
 from datetime import datetime
+from modules.optimization import _lookup_taux, _lookup_result, _json_safe
 
 # ════════════════════════════════════════════
 # AGENT PYTHON PUR — LOGIQUE ACTUARIELLE CODÉE
