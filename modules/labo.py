@@ -328,56 +328,145 @@ class AgentLaboTarification:
 
     def entrainer_modeles(self, target=None):
         target = target or self.TARGET
+
         if self.df_ml is None or len(self.df_ml) < 10:
-            return {"erreur":"Dataset insuffisant (min 10 lignes)"}
+            return {"erreur": "Dataset insuffisant (min 10 lignes)"}
+
+        if target not in self.df_ml.columns:
+            return {"erreur": f"Variable cible introuvable : {target}"}
+
         try:
             from sklearn.model_selection import train_test_split
-            from sklearn.metrics import mean_absolute_error,mean_squared_error,r2_score
+            from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
             from sklearn.tree import DecisionTreeRegressor
             from sklearn.ensemble import RandomForestRegressor
         except Exception as e:
-            return {"erreur":f"scikit-learn manquant : {e}"}
+            return {"erreur": f"scikit-learn manquant : {e}"}
 
-        feats = [f for f in self.FEATURES if f in self.df_ml.columns]
-        extra = [c for c in ["taux_pur_bc","taux_technique_bc","taux_pur_sim",
-                              "taux_technique_sim","taux_technique_mkt"]
-                 if c in self.df_ml.columns and c != target]
-        feats += extra
-        X = self.df_ml[feats].fillna(0); y = self.df_ml[target]
-        mask = (y > 0) & np.isfinite(y); X = X[mask]; y = y[mask]
-        if len(X) < 10: return {"erreur":"Trop peu de scenarios valides"}
-
-        X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.25, random_state=42)
-        models = {
-            "Arbre de decision": DecisionTreeRegressor(max_depth=6,min_samples_leaf=3,random_state=42),
-            "Random Forest":     RandomForestRegressor(n_estimators=300,max_depth=10,
-                                     min_samples_leaf=2,random_state=42,n_jobs=-1),
+        # IMPORTANT :
+        # Les colonnes de taux sont des résultats actuariels calculés.
+        # Elles ne doivent jamais être utilisées comme variables explicatives,
+        # sinon le modèle "prédit" un taux à partir d'autres taux déjà calculés.
+        # On conserve les taux uniquement comme variables cibles possibles.
+        colonnes_exclues = {
+            "taux_pur_bc",
+            "taux_technique_bc",
+            "taux_pur_sim",
+            "taux_technique_sim",
+            "taux_technique_mkt",
+            "taux_retenu",
         }
+
+        feats = [
+            f for f in self.FEATURES
+            if f in self.df_ml.columns
+            and f != target
+            and f not in colonnes_exclues
+            and "taux" not in f.lower()
+        ]
+
+        if not feats:
+            return {"erreur": "Aucune variable explicative disponible après exclusion des taux."}
+
+        X = self.df_ml[feats].fillna(0)
+        y = self.df_ml[target]
+
+        mask = (y > 0) & np.isfinite(y)
+        X = X[mask]
+        y = y[mask]
+
+        if len(X) < 10:
+            return {"erreur": "Trop peu de scenarios valides"}
+
+        X_tr, X_te, y_tr, y_te = train_test_split(
+            X, y, test_size=0.25, random_state=42
+        )
+
+        models = {
+            "Arbre de decision": DecisionTreeRegressor(
+                max_depth=6,
+                min_samples_leaf=3,
+                random_state=42,
+            ),
+            "Random Forest": RandomForestRegressor(
+                n_estimators=300,
+                max_depth=10,
+                min_samples_leaf=2,
+                random_state=42,
+                n_jobs=-1,
+            ),
+        }
+
         try:
             from xgboost import XGBRegressor
-            models["XGBoost"] = XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,
-                subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=42)
-        except: pass
+            models["XGBoost"] = XGBRegressor(
+                n_estimators=300,
+                max_depth=4,
+                learning_rate=0.05,
+                subsample=0.85,
+                colsample_bytree=0.85,
+                objective="reg:squarederror",
+                random_state=42,
+            )
+        except Exception as e:
+            self.metriques_ml["XGBoost"] = {"erreur": f"XGBoost indisponible : {e}"}
 
-        resultats = {}; best_name = None; best_mae = None
+        try:
+            from catboost import CatBoostRegressor
+            models["CatBoost"] = CatBoostRegressor(
+                iterations=300,
+                depth=5,
+                learning_rate=0.05,
+                loss_function="RMSE",
+                random_seed=42,
+                verbose=False,
+            )
+        except Exception as e:
+            self.metriques_ml["CatBoost"] = {"erreur": f"CatBoost indisponible : {e}"}
+
+        resultats = dict(self.metriques_ml) if isinstance(self.metriques_ml, dict) else {}
+        best_name = None
+        best_mae = None
+
         for nom, model in models.items():
             try:
-                model.fit(X_tr, y_tr); pred = model.predict(X_te)
-                mae  = float(mean_absolute_error(y_te, pred))
+                model.fit(X_tr, y_tr)
+                pred = model.predict(X_te)
+
+                mae = float(mean_absolute_error(y_te, pred))
                 rmse = float(np.sqrt(mean_squared_error(y_te, pred)))
-                r2   = float(r2_score(y_te, pred))
-                resultats[nom] = {"MAE":mae,"RMSE":rmse,"R2":r2,
-                                  "n_train":len(X_tr),"n_test":len(X_te)}
+                r2 = float(r2_score(y_te, pred))
+
+                resultats[nom] = {
+                    "MAE": mae,
+                    "RMSE": rmse,
+                    "R2": r2,
+                    "n_train": len(X_tr),
+                    "n_test": len(X_te),
+                    "features": len(feats),
+                    "taux_en_features": "Non",
+                }
+
                 self.modeles_entraines[nom] = model
-                if best_mae is None or mae < best_mae: best_mae=mae; best_name=nom
-            except Exception as e: resultats[nom] = {"erreur":str(e)}
+
+                if best_mae is None or mae < best_mae:
+                    best_mae = mae
+                    best_name = nom
+
+            except Exception as e:
+                resultats[nom] = {"erreur": str(e)}
 
         self.metriques_ml = resultats
-        self._features_used  = feats
+        self._features_used = feats
         self._best_model_name = best_name
-        if best_name and hasattr(self.modeles_entraines.get(best_name),"feature_importances_"):
-            imp = pd.Series(self.modeles_entraines[best_name].feature_importances_, index=feats)
+
+        if best_name and hasattr(self.modeles_entraines.get(best_name), "feature_importances_"):
+            imp = pd.Series(
+                self.modeles_entraines[best_name].feature_importances_,
+                index=feats
+            )
             self.importance_vars[best_name] = imp.sort_values(ascending=False)
+
         return resultats
 
     # ── 8. PRÉDICTION ───────────────────────────────────────────────
