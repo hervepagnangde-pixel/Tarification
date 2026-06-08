@@ -1,4 +1,4 @@
-"""
+""" 
 Atlantic Re IA — Agent Python pur
 AgentActuarielPython : pipeline complet BC→Sim→Mkt→Rapport→Variantes,
 100%% Python sans LLM, fonctionne hors ligne.
