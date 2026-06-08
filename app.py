@@ -1622,29 +1622,96 @@ with tab2:
             df_idx_df.columns   = [str(c).strip() for c in df_idx_df.columns]
 
             progress.progress(10, text="Nettoyage indices...")
+            
             df_idx_df['Annee'] = pd.to_numeric(
-                df_idx_df['Annee'].astype(str).str.strip().str.replace('.0','',regex=False), errors='coerce')
+                df_idx_df['Annee'].astype(str).str.strip().str.replace('.0', '', regex=False),
+                errors='coerce'
+            )
+            
             df_idx_df['Coefficients'] = pd.to_numeric(
-                df_idx_df['Coefficients'].astype(str).str.strip()
-                .str.replace(',','.',regex=False).str.replace(' ','',regex=False), errors='coerce')
-            df_idx_df = df_idx_df.dropna(subset=['Annee','Coefficients'])
+                df_idx_df['Coefficients']
+                .astype(str)
+                .str.strip()
+                .str.replace(',', '.', regex=False)
+                .str.replace(' ', '', regex=False),
+                errors='coerce'
+            )
+            
+            df_idx_df = df_idx_df.dropna(subset=['Annee', 'Coefficients'])
             df_idx_df['Annee'] = df_idx_df['Annee'].astype(int)
             df_idx_df = df_idx_df.sort_values('Annee')
+            
+            # ─────────────────────────────────────────────
+            # Projection future des indices
+            # ─────────────────────────────────────────────
+            inflation_future = st.number_input(
+                "Inflation future annuelle des indices (%)",
+                value=3.0,
+                min_value=0.0,
+                max_value=30.0,
+                step=0.5,
+                help=(
+                    "Taux utilisé pour projeter les indices futurs. "
+                    "Exemple : si le dernier indice connu est 2025, "
+                    "l'outil projette 2026, 2027, ..., 2035."
+                )
+            ) / 100
+            
+            horizon_projection_indices = 10
+            
             df_idx_set = df_idx_df.set_index('Annee')['Coefficients']
-
+            
+            annee_min_indice = int(df_idx_set.index.min())
+            annee_max_connue = int(df_idx_set.index.max())
+            
+            indices_proj = {
+                int(a): float(v)
+                for a, v in df_idx_set.items()
+            }
+            
+            for annee in range(annee_max_connue + 1, annee_max_connue + horizon_projection_indices + 1):
+                indices_proj[annee] = indices_proj[annee - 1] * (1 + inflation_future)
+            
+            annees_indices_proj = np.array(sorted(indices_proj.keys()), dtype=int)
+            valeurs_indices_proj = np.array([indices_proj[a] for a in annees_indices_proj], dtype=float)
+            
             def get_indice(annee):
                 annee = int(annee)
-                annees = df_idx_set.index.values.astype(int)
-                valeurs = df_idx_set.values.astype(float)
-                if annee in annees: return float(df_idx_set.loc[annee])
-                if annee < annees[0]:
-                    return float(valeurs[0] - (valeurs[1]-valeurs[0]) * (annees[0]-annee))
-                if annee > annees[-1]:
-                    return float(valeurs[-1] + (valeurs[-1]-valeurs[-2]) * (annee-annees[-1]))
-                return float(np.interp(annee, annees, valeurs))
-
+            
+                if annee in indices_proj:
+                    return float(indices_proj[annee])
+            
+                if annee < annee_min_indice:
+                    annees_hist = df_idx_set.index.values.astype(int)
+                    valeurs_hist = df_idx_set.values.astype(float)
+            
+                    if len(annees_hist) >= 2:
+                        return float(
+                            valeurs_hist[0]
+                            - (valeurs_hist[1] - valeurs_hist[0])
+                            * (annees_hist[0] - annee)
+                        )
+            
+                    return float(valeurs_hist[0])
+            
+                return np.nan
+            
             I_cotation_val = get_indice(annee_cotation)
-            st.info(f"📐 I_cotation({annee_cotation}) = {I_cotation_val:.4f}")
+            
+            if pd.isna(I_cotation_val):
+                st.error(
+                    f"L'indice de l'année de cotation {annee_cotation} est indisponible. "
+                    f"Dernière année projetée : {annee_max_connue + horizon_projection_indices}."
+                )
+                st.stop()
+            
+            st.info(
+                f"📐 I_cotation({annee_cotation}) = {I_cotation_val:.4f} | "
+                f"Dernière année connue : {annee_max_connue} | "
+                f"Projection jusqu'à : {annee_max_connue + horizon_projection_indices} | "
+                f"Inflation future : {inflation_future:.2%}"
+            )
+
 
             progress.progress(20, text="Parsing triangle...")
             df_raw = pd.read_excel(f_triangle, header=None)
@@ -1771,48 +1838,121 @@ with tab2:
             df_liq = df_liq.sort_values(['sinistre_id', 'dev']).reset_index(drop=True)
 
             progress.progress(48, text="Indices...")
-            df_liq['I_reg']  = df_liq['annee_reg'].apply(get_indice)
+            
+            df_liq['I_reg'] = df_liq['annee_reg'].apply(get_indice)
             df_liq['I_surv'] = df_liq['annee_surv'].apply(get_indice)
+            
+            # Délai historique de règlement :
+            # exemple : survenance 2016, règlement 2018 → délai = 2 ans
+            df_liq['delai_reglement'] = df_liq['annee_reg'] - df_liq['annee_surv']
+            
+            # Année de règlement projetée dans le scénario AS-IF :
+            # exemple : année AS-IF 2026 + délai 2 = règlement projeté 2028
+            df_liq['annee_reg_asif'] = annee_cotation + df_liq['delai_reglement']
+            
+            # Indice futur correspondant à l'année de règlement projetée
+            df_liq['I_reg_asif'] = df_liq['annee_reg_asif'].apply(get_indice)
+            
+            # Indice de survenance dans le scénario AS-IF
+            df_liq['I_surv_asif'] = I_cotation_val
+            
             # I_ultime gardé pour affichage / compatibilité
             df_liq['annee_ultime'] = df_liq['annee_surv'] + 9
-            df_liq['I_ultime']     = df_liq['annee_ultime'].apply(get_indice)
-
+            df_liq['I_ultime'] = df_liq['annee_ultime'].apply(get_indice)
+            
+            if df_liq[['I_reg', 'I_surv', 'I_reg_asif']].isna().any().any():
+                annees_manquantes = sorted(
+                    set(
+                        df_liq.loc[df_liq['I_reg'].isna(), 'annee_reg'].dropna().astype(int).tolist()
+                        + df_liq.loc[df_liq['I_surv'].isna(), 'annee_surv'].dropna().astype(int).tolist()
+                        + df_liq.loc[df_liq['I_reg_asif'].isna(), 'annee_reg_asif'].dropna().astype(int).tolist()
+                    )
+                )
+            
+                st.error(
+                    "Indices manquants pour certaines années : "
+                    f"{annees_manquantes}. "
+                    "Augmentez l'horizon de projection ou vérifiez la table des indices."
+                )
+                st.stop()
+            
             progress.progress(50, text="Décumul → As-If sur incréments...")
+            
             # ── ÉTAPE 1 : DÉCUMULER ──
-            # Le triangle est cumulatif : total[dev] = PAID+OS cumulés jusqu'à dev
-            # On calcule l'incrément entre deux périodes consécutives
-            df_liq['prev_total'] = df_liq.groupby('sinistre_id')['total'].shift(1).fillna(0)
-            df_liq['increment']  = (df_liq['total'] - df_liq['prev_total']).clip(lower=0)
-            # Note : clip(lower=0) — un incrément négatif (réduction de réserve) → 0
-            # pour éviter les montants négatifs dans la modélisation
-
-            # ── ÉTAPE 2 : AS-IF SUR L'INCRÉMENT ──
-            # Chaque paiement/variation de réserve est revalué à l'année de cotation
-            # inc_asif = inc × (I_cotation / I_reg_au_moment_du_paiement)
-            df_liq['inc_asif'] = df_liq['increment'] * (I_cotation_val / df_liq['I_reg'])
-
+            df_liq['prev_total'] = (
+                df_liq
+                .groupby('sinistre_id')['total']
+                .shift(1)
+                .fillna(0)
+            )
+            
+            df_liq['increment'] = (
+                df_liq['total'] - df_liq['prev_total']
+            ).clip(lower=0)
+            
+            # ── ÉTAPE 2 : AS-IF SUR L'INCRÉMENT AVEC DÉLAI DE RÈGLEMENT ──
+            # Formule :
+            # inc_asif = increment × I_(année_cotation + délai_règlement) / I_règlement_historique
+            #
+            # Exemple :
+            # Survenance 2016, règlement 2018, année AS-IF 2026
+            # délai = 2018 - 2016 = 2
+            # année de règlement AS-IF = 2026 + 2 = 2028
+            # inc_asif = increment × I_2028 / I_2018
+            
+            df_liq['inc_asif'] = df_liq['increment'] * (
+                df_liq['I_reg_asif'] / df_liq['I_reg']
+            )
+            
             progress.progress(55, text="Stabilisation sur incréments...")
+            
             # ── ÉTAPE 3 : STABILISATION SUR L'INCRÉMENT ──
-            # Si I_reg/I_surv ≥ 1+seuil → le réassureur peut ajuster sa priorité
-            # On neutralise cette inflation en appliquant I_surv/I_reg
-            df_liq['ratio_check'] = df_liq['I_reg'] / df_liq['I_surv']
+            # La stabilisation doit maintenant être testée dans le scénario AS-IF :
+            # ratio = I_règlement_ASIF / I_survenance_ASIF
+            #
+            # Comme la survenance AS-IF est l'année de cotation :
+            # I_survenance_ASIF = I_cotation
+            
+            df_liq['ratio_check'] = df_liq['I_reg_asif'] / df_liq['I_surv_asif']
+            
             mask_stab = df_liq['ratio_check'] >= (1.0 + seuil_stabilisation)
+            
             df_liq['inc_stab'] = np.where(
                 mask_stab,
-                df_liq['inc_asif'] * (df_liq['I_surv'] / df_liq['I_reg']),
+                df_liq['inc_asif'] * (df_liq['I_surv_asif'] / df_liq['I_reg_asif']),
                 df_liq['inc_asif']
             )
-            n_stab = mask_stab.sum()
-            annees_reg_stab = sorted(df_liq[mask_stab]['annee_reg'].unique().tolist())
-            st.info(f"📊 Décumul + Stab | Seuil : {seuil_stabilisation*100:.0f}% | Incréments stab. : {n_stab} | Années règlement : {annees_reg_stab}")
-
+            
+            n_stab = int(mask_stab.sum())
+            
+            annees_reg_stab = sorted(
+                df_liq.loc[mask_stab, 'annee_reg_asif']
+                .dropna()
+                .astype(int)
+                .unique()
+                .tolist()
+            )
+            
+            st.info(
+                f"📊 Décumul + Stab | "
+                f"Seuil : {seuil_stabilisation*100:.0f}% | "
+                f"Incréments stab. : {n_stab} | "
+                f"Années règlement AS-IF : {annees_reg_stab}"
+            )
+            
             # ── ÉTAPE 4 : RECUMULER ──
-            # Sk      = cumul des incréments As-If
-            # S_prime_k = cumul des incréments stabilisés
-            df_liq['Sk']        = df_liq.groupby('sinistre_id')['inc_asif'].cumsum()
-            df_liq['S_prime_k'] = df_liq.groupby('sinistre_id')['inc_stab'].cumsum()
-
-            # coeff_stab = Sk / S_prime_k : utilisé dans le BC pour convertir S'ultime → Sk
+            df_liq['Sk'] = (
+                df_liq
+                .groupby('sinistre_id')['inc_asif']
+                .cumsum()
+            )
+            
+            df_liq['S_prime_k'] = (
+                df_liq
+                .groupby('sinistre_id')['inc_stab']
+                .cumsum()
+            )
+            
             df_liq['coeff_stab'] = np.where(
                 df_liq['S_prime_k'] > 0,
                 df_liq['Sk'] / df_liq['S_prime_k'],
