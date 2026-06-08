@@ -2,7 +2,7 @@
 Atlantic Re IA — Application principale (app.py)
 Point d'entrée Streamlit. Tous les modules métier sont dans modules/.
 
-Structure :
+Structure : 
   modules/db.py, pdf_gen.py, notifications.py, auth.py, ui.py
   modules/prompts.py, actuarial.py, optimization.py, resources.py 
   modules/agents_v2.py, labo.py, agent_python.py, tools_exec.py
