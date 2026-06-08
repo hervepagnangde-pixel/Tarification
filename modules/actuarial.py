@@ -2,7 +2,7 @@
 Atlantic Re IA — Actuarial computations module
 Tooltips, glossaire, Hill/MEF/GPD, Bühlmann-Straub, Bootstrap CI,
 selectionner_seuil_pareto, identifier_sinistres_majeurs, 
-section_analyse_distributions.
+section_analyse_distributions. 
 """
 import streamlit as st
 import numpy as np
