@@ -424,6 +424,10 @@ class AgentLaboTarification:
         except Exception as e:
             self.metriques_ml["XGBoost"] = {"erreur": f"XGBoost indisponible : {e}"}
 
+       
+    
+
+
         try:
             from catboost import CatBoostRegressor
             models["CatBoost"] = CatBoostRegressor(
@@ -470,6 +474,68 @@ class AgentLaboTarification:
                 resultats[nom] = {"erreur": str(e)}
 
         self.metriques_ml = resultats
+        SIGMA_COL = "sigma_sim"
+        self.modele_sigma    = None
+        self.metriques_sigma = {}
+    
+        if SIGMA_COL in self.df_ml.columns and best_name is not None:
+            y_sig  = self.df_ml[SIGMA_COL]
+            # Aligner sur les mêmes lignes que X (mask validité)
+            mask_s = (y_sig > 0) & np.isfinite(y_sig) & mask
+            X_s    = X[mask_s.values[:len(X)]]
+            y_s    = y_sig[mask_s]
+    
+            if len(X_s) >= 10:
+                X_tr_s, X_te_s, y_tr_s, y_te_s = train_test_split(
+                    X_s, y_s, test_size=0.25, random_state=42
+                    )
+                # Même architecture que le meilleur modèle tau
+                if "XGBoost" in best_name:
+                    try:
+                        from xgboost import XGBRegressor
+                        sigma_model = XGBRegressor(
+                            n_estimators=300, max_depth=4,
+                            learning_rate=0.05, subsample=0.85,
+                            colsample_bytree=0.85,
+                            objective="reg:squarederror", random_state=42
+                            )
+                    except Exception:
+                        sigma_model = RandomForestRegressor(
+                            n_estimators=300, random_state=42, n_jobs=-1
+                            )
+                elif "CatBoost" in best_name:
+                    try:
+                        from catboost import CatBoostRegressor
+                        sigma_model = CatBoostRegressor(
+                            iterations=300, depth=5, learning_rate=0.05,
+                            loss_function="RMSE", random_seed=42, verbose=False
+                            )
+                    except Exception:
+                        sigma_model = RandomForestRegressor(
+                            n_estimators=300, random_state=42, n_jobs=-1
+                            )
+                else:
+                    sigma_model = RandomForestRegressor(
+                        n_estimators=300, max_depth=10,
+                        min_samples_leaf=2, random_state=42, n_jobs=-1
+                        )
+    
+                sigma_model.fit(X_tr_s, y_tr_s)
+                self.modele_sigma = sigma_model
+    
+                pred_s = sigma_model.predict(X_te_s)
+                self.metriques_sigma = {
+                    "MAE":      float(mean_absolute_error(y_te_s, pred_s)),
+                    "RMSE":     float(np.sqrt(mean_squared_error(y_te_s, pred_s))),
+                    "R2":       float(r2_score(y_te_s, pred_s)),
+                    "n_train":  len(X_tr_s),
+                    "n_test":   len(X_te_s),
+                    "cible":    SIGMA_COL,
+                    }
+                resultats["Modèle σ"] = self.metriques_sigma
+    
+        return resultats
+  
         self._features_used = feats
         self._best_model_name = best_name
 
@@ -653,90 +719,256 @@ def predire_taux(self, conditions):
     # Approche : balayer (D,C) et calculer Var(perte retenue) vs prime cédée
     # La frontière efficiente = courbe Pareto-optimale dans l'espace (prime, variance)
 
-    def frontiere_de_finetti(self, t_base, budget_prime_pct=None, n_points=40):
-        """
-        Calcule la frontière efficiente De Finetti pour une tranche.
-        Retourne les couples (prime_cedee_pct, variance_retenue_normalisee)
-        et identifie le programme optimal selon le critère de De Finetti.
+# ═══════════════════════════════════════════════════════════════
+# HELPER PARTAGÉ
+# ═══════════════════════════════════════════════════════════════
 
-        Le programme optimal minimise Var(retenu) pour un niveau de prime donné.
-        Équivalent à : maximiser l'utilité quadratique E[R] - lambda*Var(R).
-        """
-        if not self.modeles_entraines or self.df_ml is None:
-            return []
+def _build_feature_row(self, conditions: dict) -> dict:
+    """
+    Construit le vecteur de features à partir d'un dict de conditions.
+    Features légitimes uniquement — alpha/lambda_/seuil_modelisation exclus
+    (variance nulle sur la grille actuelle, absents de _features_used).
+    Utilisé par predire_taux ET predire_sigma.
+    """
+    D     = conditions.get("priorite",       2_000_000)
+    C     = conditions.get("portee",        13_000_000)
+    aad_v = conditions.get("AAD")  or 0.0
+    aal_v = conditions.get("AAL")  or 0.0
+    bk    = conditions.get("brokage",        0.10)
+    fg    = conditions.get("frais",          0.05)
+    mg    = conditions.get("marge",          0.10)
+    rt    = conditions.get("retrocession",   0.00)
+    t     = conditions.get("type",           "travaillante")
+    n_rec = int(conditions.get("nb_reconstitutions", 1))
+    tr1   = conditions.get("taux_recon_1",  100.0)
+    tr2   = conditions.get("taux_recon_2",    0.0)
+    k_sec = conditions.get("k_securite",      0.20)
+    s_stb = conditions.get("seuil_stab",      0.0)
+    return {
+        "priorite":           D,
+        "portee":             C,
+        "AAD_val":            aad_v,
+        "AAL_val":            aal_v,
+        "nb_reconstitutions": n_rec,
+        "taux_recon_1":       tr1,
+        "taux_recon_2":       tr2,
+        "taux_recon_moy":     (tr1 + tr2) / 2 if n_rec > 1 else tr1,
+        "brokage":            bk,
+        "frais":              fg,
+        "marge":              mg,
+        "retrocession":       rt,
+        "k_securite":         k_sec,
+        "seuil_stab":         s_stb,
+        "type_travaillante":  1 if t == "travaillante"    else 0,
+        "type_cat":           1 if t == "cat"              else 0,
+        "type_non_trav":      1 if t == "non_travaillante" else 0,
+        "ratio_D_GNPI":       D     / max(self.gnpi, 1),
+        "ratio_C_GNPI":       C     / max(self.gnpi, 1),
+        "ratio_aad_C":        aad_v / max(C, 1),
+        "ratio_aal_C":        aal_v / max(C, 1),
+        "levier_frais":       1 - bk - fg - mg - rt,
+        "cap_sur_GNPI":       (n_rec + 1) * C / max(self.gnpi, 1),
+    }
 
-        D0 = t_base["priorite"]; C0 = t_base["portee"]
-        # Grille de (D,C) à évaluer
-        D_vals = np.linspace(D0 * 0.4, D0 * 2.5, n_points)
-        C_vals = [C0 * m for m in [0.7, 1.0, 1.3]]
 
-        # Calcul de la prime et de la variance pour chaque (D,C)
-        # On utilise les simulations disponibles dans df_ml
-        results = []
-        model = self.modeles_entraines.get(self._best_model_name)
-        if model is None: return []
+# ═══════════════════════════════════════════════════════════════
+# PRÉDICTIONS — tau ET sigma
+# ═══════════════════════════════════════════════════════════════
 
-        for C in C_vals:
-            for D in D_vals:
-                cond = {
-                    "type":t_base["type"],"priorite":D,"portee":C,
-                    "AAD":None,"nb_reconstitutions":1,
-                    "taux_recon_1":100.0,"taux_recon_2":0.0,"taux_recon_moy":100.0,
-                    "brokage":t_base["brokage"],"frais":t_base["frais"],
-                    "marge":t_base["marge"],"retrocession":t_base["retrocession"],
-                    "k_securite":0.20,"seuil_stab":0.0,
-                    "alpha":self.alpha,"lambda_":self.lambda_,
-                    "seuil_modelisation":self.seuil,
-                }
-                tau_pred = self.predire_taux(cond)
-                if tau_pred is None or tau_pred <= 0: continue
+def predire_taux(self, conditions: dict) -> float | None:
+    model = self.modeles_entraines.get(self._best_model_name)
+    if model is None or not getattr(self, "_features_used", None):
+        return None
+    row = self._build_feature_row(conditions)
+    X   = pd.DataFrame([{f: row.get(f, 0) for f in self._features_used}])
+    try:
+        return float(model.predict(X)[0])
+    except Exception:
+        return None
 
-                # Variance retenue approchée (var(X) - 2*Cov(X, ceded) + var(ceded))
-                # Simplification : var_retenu ~ var_total * (1 - tau_pred/tau_total)^2
-                # tau_total = tau sans aucune rétrocession
-                cond_libre = dict(cond); cond_libre["marge"] = 0.0; cond_libre["brokage"] = 0.0
-                tau_libre = self.predire_taux(cond_libre) or tau_pred
 
-                prime_pct = tau_pred
-                # Approx variance normalisée basée sur le chargement de sécurité
-                k_sec = cond["k_securite"]
-                sigma_approx = tau_libre / (1 + k_sec) * k_sec  # sigma ≈ tau_pur * k
-                var_retenue = max(0, sigma_approx * (1 - prime_pct) ** 2)
+def predire_sigma(self, conditions: dict) -> float | None:
+    """
+    Prédit σ/GNPI pour une structure donnée.
+    Modèle entraîné sur sigma_sim (écart-type réel issu de _sim_scenario).
+    Retourne None si le modèle sigma n'a pas été entraîné.
+    """
+    if self.modele_sigma is None or not getattr(self, "_features_used", None):
+        return None
+    row = self._build_feature_row(conditions)
+    X   = pd.DataFrame([{f: row.get(f, 0) for f in self._features_used}])
+    try:
+        return max(float(self.modele_sigma.predict(X)[0]), 0.0)
+    except Exception:
+        return None
 
-                results.append({
-                    "D":D,"C":C,"prime_pct":prime_pct,
-                    "var_retenue":var_retenue,"tau_pred":tau_pred
-                })
 
-        if not results: return []
+# ═══════════════════════════════════════════════════════════════
+# FRONTIÈRE EFFICIENTE — vraie variance + double perspective
+# ═══════════════════════════════════════════════════════════════
 
-        # Frontière efficiente : pour chaque niveau de prime, garder le min variance
-        df_r = pd.DataFrame(results).sort_values("prime_pct")
-        # Pareto frontier
-        pareto(De Finetti)
-        frontier = []
-        min_var = float("inf")
-        for _, row in df_r.sort_values("prime_pct", ascending=True).iterrows():
-            if row["var_retenue"] < min_var:
-                min_var = row["var_retenue"]
-                frontier.append(row.to_dict())
+def frontiere_de_finetti(self, t_base, budget_prime_pct=None, n_points=40):
+    """
+    Frontière efficiente dans l'espace (prime cédée, variance retenue).
 
-        # Programme optimal = meilleur ratio amélioration_variance / prime
-        if len(frontier) > 1:
-            frontier_df = pd.DataFrame(frontier)
-            frontier_df["score_finetti"] = (
-                frontier_df["var_retenue"].max() - frontier_df["var_retenue"]
-            ) / (frontier_df["prime_pct"] + 1e-10)
-            best_idx = frontier_df["score_finetti"].idxmax()
-            best     = frontier_df.iloc[best_idx]
-        else:
-            best = pd.Series(frontier[0]) if frontier else None
+    Deux scores complémentaires :
 
-        return {
-            "frontier": frontier,
-            "optimal":  best.to_dict() if best is not None else None,
-            "n_points": len(results),
-        }
+    Score De Finetti (vision CÉDANTE) :
+        ΔVar / prime  — réduction de variance achetée par euro de prime.
+        Mesure l'attractivité de la protection pour la cédante.
+
+    Score ROC (vision RÉASSUREUR) :
+        marge_espérée / VaR_995
+        = k × σ / (τ_pur + 2.576 × σ)
+        Mesure le rendement du capital mobilisé par le réassureur.
+        Varie d'une couche à l'autre car τ_pur/σ (CV) change avec D et C.
+
+    σ est prédit par le modèle sigma (écart-type réel de la simulation),
+    pas approximé. Si modele_sigma absent, fallback sur proxy k×τ_pur.
+    """
+    if not self.modeles_entraines or self.df_ml is None:
+        return {}
+    if not getattr(self, "_features_used", None):
+        return {}
+
+    D0 = t_base["priorite"]
+    C0 = t_base["portee"]
+    bk = t_base["brokage"]
+    fg = t_base["frais"]
+    mg = t_base["marge"]
+    rt = t_base["retrocession"]
+    levier = max(1 - bk - fg - mg - rt, 0.01)
+
+    # Grille (D, C) — 5 valeurs de C pour une frontière bien tracée
+    D_vals = np.linspace(D0 * 0.4, D0 * 2.5, n_points)
+    C_vals = [C0 * m for m in [0.6, 0.8, 1.0, 1.2, 1.5]]
+
+    results = []
+    sigma_from_model = (self.modele_sigma is not None)
+
+    for C in C_vals:
+        for D in D_vals:
+            cond = {
+                "type":               t_base["type"],
+                "priorite":           D,
+                "portee":             C,
+                "AAD":                None,
+                "AAL":                None,
+                "nb_reconstitutions": t_base.get("nb_reconstitutions", 1),
+                "taux_recon_1":       t_base.get("taux_recon_1", 100.0),
+                "taux_recon_2":       t_base.get("taux_recon_2",   0.0),
+                "brokage":            bk,
+                "frais":              fg,
+                "marge":              mg,
+                "retrocession":       rt,
+                "k_securite":         t_base.get("k_securite", 0.20),
+                "seuil_stab":         t_base.get("seuil_stab",  0.0),
+            }
+
+            tau_pred = self.predire_taux(cond)
+            if tau_pred is None or tau_pred <= 0:
+                continue
+
+            k_sec = cond["k_securite"]
+
+            # ── Écart-type σ/GNPI ────────────────────────────────────
+            if sigma_from_model:
+                sigma_pred = self.predire_sigma(cond) or 0.0
+            else:
+                # Fallback proxy si modele_sigma absent
+                tau_pur_proxy = tau_pred * levier / (1 + k_sec)
+                sigma_pred    = tau_pur_proxy * k_sec
+            sigma_pred = max(sigma_pred, 1e-10)
+
+            # ── τ_pur reconstruit depuis τ_technique et σ ────────────
+            # τ_technique = (τ_pur + k×σ) / levier
+            # → τ_pur = τ_technique × levier - k × σ
+            tau_pur = max(tau_pred * levier - k_sec * sigma_pred, 0.0)
+
+            # ── Coordonnées de la frontière ──────────────────────────
+            prime_pct   = tau_pred
+            var_retenue = sigma_pred ** 2   # vraie variance normalisée
+
+            # ── Score ROC (vision réassureur) ────────────────────────
+            # Marge espérée = k × σ  (chargement de sécurité)
+            # Capital mobilisé ≈ VaR 99.5% de la charge normalisée
+            #   = τ_pur + z_99.5 × σ  (approximation gaussienne)
+            # ROC = marge / capital → varie car τ_pur/σ change avec D,C
+            Z_995       = 2.576
+            marge_pct   = k_sec * sigma_pred
+            capital_pct = tau_pur + Z_995 * sigma_pred
+            roc         = marge_pct / max(capital_pct, 1e-10)
+
+            results.append({
+                "D":           D,
+                "C":           C,
+                "prime_pct":   prime_pct,
+                "var_retenue": var_retenue,
+                "sigma_pred":  sigma_pred,
+                "tau_pur":     tau_pur,
+                "roc":         roc,
+                "tau_pred":    tau_pred,
+            })
+
+    if not results:
+        return {}
+
+    df_r = pd.DataFrame(results)
+
+    # ── Frontière de Pareto dans (prime, variance) ───────────────────
+    # Point retenu si aucun autre n'a prime < ET variance < simultanément
+    df_r   = df_r.sort_values("prime_pct").reset_index(drop=True)
+    frontier, min_var = [], float("inf")
+    for _, row in df_r.iterrows():
+        if row["var_retenue"] < min_var:
+            min_var = row["var_retenue"]
+            frontier.append(row.to_dict())
+
+    # ── Filtre budget ────────────────────────────────────────────────
+    if budget_prime_pct is not None:
+        filtre = [p for p in frontier if p["prime_pct"] <= budget_prime_pct]
+        if filtre:
+            frontier = filtre
+
+    if not frontier:
+        return {}
+
+    frontier_df = pd.DataFrame(frontier)
+    var_max     = frontier_df["var_retenue"].max()
+
+    # ── Score De Finetti (vision cédante) ────────────────────────────
+    frontier_df["score_finetti"] = (
+        (var_max - frontier_df["var_retenue"])
+        / (frontier_df["prime_pct"] + 1e-10)
+    )
+
+    # ── Score ROC (vision réassureur) ────────────────────────────────
+    # Déjà calculé point par point — on normalise pour le classement
+    frontier_df["score_roc"] = frontier_df["roc"]
+
+    # ── Optimaux ─────────────────────────────────────────────────────
+    best_finetti = frontier_df.loc[frontier_df["score_finetti"].idxmax()].to_dict()
+    best_roc     = frontier_df.loc[frontier_df["score_roc"].idxmax()].to_dict()
+
+    # Ils peuvent être différents — c'est l'information intéressante
+    convergent = (
+        abs(best_finetti["D"] - best_roc["D"]) < D0 * 0.15 and
+        abs(best_finetti["C"] - best_roc["C"]) < C0 * 0.15
+    )
+
+    return {
+        "frontier":          frontier_df.to_dict("records"),
+        "optimal_finetti":   best_finetti,   # attractif pour la cédante
+        "optimal_roc":       best_roc,       # optimal pour le réassureur
+        "convergent":        convergent,     # True = accord naturel des intérêts
+        "n_points":          len(results),
+        "sigma_from_model":  sigma_from_model,
+        "note": (
+            "σ issu du modèle ML entraîné sur sigma_sim (simulation réelle)."
+            if sigma_from_model else
+            "⚠ Modèle sigma absent — fallback proxy σ ≈ τ_pur × k."
+        ),
+    }
 
     # ── 11. OPTIMISATION ML AMÉLIORÉE ───────────────────────────────
     # Génère des candidats, prédit, retourne toujours des résultats
