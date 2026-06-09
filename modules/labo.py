@@ -17,7 +17,7 @@ from datetime import datetime
 
 class AgentLaboTarification:
     """
-    Laboratoire de tarification ML.
+    Expérience par machine learning.
     Workflow :
       1. Grille 120 scenarios/tranche (auto, modifiable)
       2. Batch BC + Simulation + Market Curve
