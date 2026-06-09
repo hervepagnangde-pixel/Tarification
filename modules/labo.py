@@ -1,6 +1,6 @@
 """
 Atlantic Re IA — Laboratoire de tarification ML
-AgentLaboTarification : grille 120 scénarios, batch BC+Sim+Mkt,
+AgentLaboTarification : grille 120 scénarios, batch BC+Sim+Mkt,         
 RF/XGB/CatBoost, dichotomie, De Finetti-Borch, NSGA-II multi-objectif.
 """ 
 import streamlit as st
