@@ -347,140 +347,312 @@ class AgentActuarielPython:
         self.rapport_rows = rows
         self.prime_totale = pt
         return rows, pt
-
+    def _calibrer_elasticites(self):
+        """
+        Calibre les élasticités log-log depuis df_ml.
+        Remplace les constantes arbitraires 0.6 / 0.35 / 0.3
+        par des valeurs estimées sur les scénarios réels.
+        """
+        if self.df_ml is None or len(self.df_ml) < 10:
+            return {
+                "e_portee": 0.60,
+                "e_priorite": 0.35,
+                "e_recon": 0.30,
+                "calibre": False,
+            }
+    
+        import numpy as np
+    
+        df = self.df_ml.copy()
+        df = df[
+            (df["taux_retenu"] > 0)
+            & (df["priorite"] > 0)
+            & (df["portee"] > 0)
+        ]
+    
+        if len(df) < 10:
+            return {
+                "e_portee": 0.60,
+                "e_priorite": 0.35,
+                "e_recon": 0.30,
+                "calibre": False,
+            }
+    
+        log_tau = np.log(df["taux_retenu"])
+        log_C = np.log(df["portee"])
+        log_D = np.log(df["priorite"])
+        log_rec = np.log(df["nb_reconstitutions"] + 1)
+    
+        X_ols = np.column_stack([
+            np.ones(len(df)),
+            log_C,
+            log_D,
+            log_rec,
+        ])
+    
+        try:
+            beta, _, _, _ = np.linalg.lstsq(X_ols, log_tau, rcond=None)
+    
+            e_portee = float(beta[1])
+            e_priorite = float(-beta[2])
+            e_recon = float(beta[3])
+    
+            e_portee = np.clip(e_portee, 0.3, 1.2)
+            e_priorite = np.clip(e_priorite, 0.1, 0.8)
+            e_recon = np.clip(e_recon, 0.0, 0.6)
+    
+            return {
+                "e_portee": round(e_portee, 3),
+                "e_priorite": round(e_priorite, 3),
+                "e_recon": round(e_recon, 3),
+                "calibre": True,
+            }
+    
+        except Exception:
+            return {
+                "e_portee": 0.60,
+                "e_priorite": 0.35,
+                "e_recon": 0.30,
+                "calibre": False,
+            }
+    
+    
     # ────────────────────────────────────────────
     # ÉTAPE 6 — 5 VARIANTES DE PROGRAMME OPTIMAL
     # ────────────────────────────────────────────
     def etape_6_optimisation(self):
         """
         Génère 5 variantes de programme basées sur :
-        - Analyse technique (taux, simulation, market curve)
-        - Sensibilité des conditions (AAL, AAD, reconstitutions)
-        - Logique de leader : Le leader de l'affaire fixe les conditions de référence. ça se peut, et nous te développons pour ça, que Atlantic Re que nous sommes, soit Leader.
+        - Analyse technique
+        - Sensibilité des conditions
+        - Logique de leader
         """
-        self._log("Optimisation", "Génération de 5 variantes de programme — perspective leader")
+    
+        self._log(
+            "Optimisation",
+            "Génération de 5 variantes de programme — perspective leader"
+        )
+    
         sim_map = {r["tranche"]: r for r in self.resultats_sim}
-        bc_map  = {r["tranche"]: r for r in self.resultats_bc}
+        bc_map = {r["tranche"]: r for r in self.resultats_bc}
         mkt_map = {r["tranche"]: r for r in self.resultats_mkt}
-
-        def taux_technique_modifie(t_info, taux_pur_ref, coeff_portee=1.0,
-                                    coeff_priorite=1.0, nb_recon_new=None, aal_ratio=None):
-            """Estime le taux technique pour un programme modifié."""
-            portee_new   = t_info["portee"]   * coeff_portee
-            priorite_new = t_info["priorite"] * coeff_priorite
-            # Sensibilité log-log : taux ~ portee^0.6 / priorite^0.35
-            adj = (coeff_portee**0.6) / (coeff_priorite**0.35)
-            # Impact reconstitutions
-            n_rec = nb_recon_new if nb_recon_new is not None else t_info["nb_reconstitutions"]
-            adj_rec = (n_rec / max(t_info["nb_reconstitutions"], 1)) ** 0.3
-            # Impact AAL
+    
+        elasticites = self._calibrer_elasticites()
+    
+        self._log(
+            "Optimisation",
+            f"Élasticités {'calibrées' if elasticites['calibre'] else 'heuristiques'} — "
+            f"e_portée={elasticites['e_portee']:.3f}, "
+            f"e_priorité={elasticites['e_priorite']:.3f}, "
+            f"e_recon={elasticites['e_recon']:.3f}"
+        )
+    
+        def taux_technique_modifie(
+            t_info,
+            taux_pur_ref,
+            coeff_portee=1.0,
+            coeff_priorite=1.0,
+            nb_recon_new=None,
+            aal_ratio=None,
+            elasticites=None,
+        ):
+            """
+            Estime le taux technique pour un programme modifié.
+            Élasticités calibrées depuis df_ml si disponibles,
+            sinon fallback sur heuristiques marché.
+            """
+            e = elasticites or {
+                "e_portee": 0.60,
+                "e_priorite": 0.35,
+                "e_recon": 0.30,
+            }
+    
+            adj = (coeff_portee ** e["e_portee"]) / (
+                coeff_priorite ** e["e_priorite"]
+            )
+    
+            n_rec = (
+                nb_recon_new
+                if nb_recon_new is not None
+                else t_info["nb_reconstitutions"]
+            )
+    
+            ratio_rec = (n_rec + 1) / max(t_info["nb_reconstitutions"] + 1, 1)
+            adj_rec = ratio_rec ** e["e_recon"]
+    
             adj_aal = 1.0
             if aal_ratio is not None and t_info.get("AAL"):
                 adj_aal = aal_ratio ** 0.2
+    
             return taux_pur_ref * adj * adj_rec * adj_aal
-
+    
         variantes = {}
-
-        # ── VARIANTE 1 — Programme de référence (tarif technique) ──
+    
+        # ── VARIANTE 1 — Programme de référence ──
         v1 = []
+    
         for t in self.tranches:
             r = sim_map.get(t["nom"], {})
-            v1.append({**t, "_taux": r.get("taux_technique", 0),
-                       "_prime": self.gnpi * r.get("taux_technique", 0)})
+            taux = r.get("taux_technique", 0)
+    
+            v1.append({
+                **t,
+                "_taux": taux,
+                "_prime": self.gnpi * taux,
+            })
+    
         variantes["ref"] = {
             "label": "Programme de référence",
             "description": "Conditions actuelles — taux techniques issus de la simulation",
             "angle": "Base de comparaison",
             "tranches": v1,
-            "prime": sum(t["_prime"] for t in v1)
+            "prime": sum(t["_prime"] for t in v1),
         }
-
+    
         # ── VARIANTE 2 — Optimisation priorité (+10%) ──
-        # Augmenter la priorité réduit l'exposition du réassureur sur les sinistres courants
         v2 = []
+    
         for t in self.tranches:
             t2 = dict(t)
             t2["priorite"] = round(t["priorite"] * 1.10 / 500_000) * 500_000
+    
             r = sim_map.get(t["nom"], {})
-            tt = taux_technique_modifie(t, r.get("taux_technique",0), coeff_priorite=1.10)
-            v2.append({**t2, "_taux": tt, "_prime": self.gnpi * tt})
+            tt = taux_technique_modifie(
+                t,
+                r.get("taux_technique", 0),
+                coeff_priorite=1.10,
+                elasticites=elasticites,
+            )
+    
+            v2.append({
+                **t2,
+                "_taux": tt,
+                "_prime": self.gnpi * tt,
+            })
+    
         variantes["priorite_haute"] = {
             "label": "Priorité relevée (+10%)",
-            "description": f"Priorité T1 : {self.tranches[0]['priorite']*1.10/1e6:.1f}M MAD — réduit l'exposition sur sinistres courants",
+            "description": (
+                f"Priorité T1 : {self.tranches[0]['priorite'] * 1.10 / 1e6:.1f}M MAD — "
+                "réduit l'exposition sur sinistres courants"
+            ),
             "angle": "Protège le réassureur sur la tranche travaillante",
             "tranches": v2,
-            "prime": sum(t["_prime"] for t in v2)
+            "prime": sum(t["_prime"] for t in v2),
         }
-
+    
         # ── VARIANTE 3 — Portée réduite (−15%) ──
-        # Limite l'engagement maximum par sinistre
         v3 = []
+    
         for t in self.tranches:
             t3 = dict(t)
             t3["portee"] = round(t["portee"] * 0.85 / 500_000) * 500_000
+    
             r = sim_map.get(t["nom"], {})
-            tt = taux_technique_modifie(t, r.get("taux_technique",0), coeff_portee=0.85)
-            v3.append({**t3, "_taux": tt, "_prime": self.gnpi * tt})
+            tt = taux_technique_modifie(
+                t,
+                r.get("taux_technique", 0),
+                coeff_portee=0.85,
+                elasticites=elasticites,
+            )
+    
+            v3.append({
+                **t3,
+                "_taux": tt,
+                "_prime": self.gnpi * tt,
+            })
+    
         variantes["portee_reduite"] = {
             "label": "Portée réduite (−15%)",
             "description": "Réduit l'engagement maximal — adapté si sinistralité catastrophique élevée",
             "angle": "Limite le MPL (Maximum Possible Loss)",
             "tranches": v3,
-            "prime": sum(t["_prime"] for t in v3)
+            "prime": sum(t["_prime"] for t in v3),
         }
-
-        # ── VARIANTE 4 — Conditions restrictives (AAD relevé + reconstitutions limitées) ──
+    
+        # ── VARIANTE 4 — Conditions restrictives ──
         v4 = []
+    
         for t in self.tranches:
             t4 = dict(t)
-            # AAD relevé pour filtrer les petits sinistres agrégés
+    
             if t["type"] == "travaillante":
                 aad_actuel = t.get("AAD") or 0
-                t4["AAD"] = round(max(aad_actuel * 1.25, t["portee"] * 0.15) / 100_000) * 100_000
-            # Reconstitutions limitées à 1 pour les cat
+                t4["AAD"] = round(
+                    max(aad_actuel * 1.25, t["portee"] * 0.15) / 100_000
+                ) * 100_000
+    
             if t["type"] == "cat":
                 t4["nb_reconstitutions"] = max(t["nb_reconstitutions"] - 1, 1)
+    
             r = sim_map.get(t["nom"], {})
-            tt = taux_technique_modifie(t, r.get("taux_technique",0),
-                nb_recon_new=t4["nb_reconstitutions"])
-            v4.append({**t4, "_taux": tt, "_prime": self.gnpi * tt})
+            tt = taux_technique_modifie(
+                t,
+                r.get("taux_technique", 0),
+                nb_recon_new=t4["nb_reconstitutions"],
+                elasticites=elasticites,
+            )
+    
+            v4.append({
+                **t4,
+                "_taux": tt,
+                "_prime": self.gnpi * tt,
+            })
+    
         variantes["conditions_restrictives"] = {
             "label": "Conditions restrictives",
             "description": "AAD renforcé + reconstitutions cat limitées — réduit la fréquence de mise en jeu",
             "angle": "Meilleure rentabilité technique pour le réassureur",
             "tranches": v4,
-            "prime": sum(t["_prime"] for t in v4)
+            "prime": sum(t["_prime"] for t in v4),
         }
-
-        # ── VARIANTE 5 — Programme élargi cédante (portée +15%, priorité −10%) ──
-        # Maximise la protection de la cédante
+    
+        # ── VARIANTE 5 — Programme élargi cédante ──
         v5 = []
+    
         for t in self.tranches:
             t5 = dict(t)
-            t5["portee"]   = round(t["portee"]   * 1.15 / 500_000) * 500_000
+            t5["portee"] = round(t["portee"] * 1.15 / 500_000) * 500_000
             t5["priorite"] = round(t["priorite"] * 0.90 / 500_000) * 500_000
+    
             r = sim_map.get(t["nom"], {})
-            tt = taux_technique_modifie(t, r.get("taux_technique",0),
-                coeff_portee=1.15, coeff_priorite=0.90)
-            v5.append({**t5, "_taux": tt, "_prime": self.gnpi * tt})
+            tt = taux_technique_modifie(
+                t,
+                r.get("taux_technique", 0),
+                coeff_portee=1.15,
+                coeff_priorite=0.90,
+                elasticites=elasticites,
+            )
+    
+            v5.append({
+                **t5,
+                "_taux": tt,
+                "_prime": self.gnpi * tt,
+            })
+    
         variantes["elargi_cedante"] = {
             "label": "Programme élargi",
             "description": "Portée +15%, priorité −10% — protection maximale pour la cédante",
             "angle": "Proposition cédante si marché favorable / négociation de renouvellement",
             "tranches": v5,
-            "prime": sum(t["_prime"] for t in v5)
+            "prime": sum(t["_prime"] for t in v5),
         }
-
+    
         # ── Scoring des variantes ──
         taux_ref = variantes["ref"]["prime"] / self.gnpi if self.gnpi else 0
-        for key, v in variantes.items():
+    
+        for _, v in variantes.items():
             taux_v = v["prime"] / self.gnpi if self.gnpi else 0
+    
             v["taux_global"] = taux_v
             v["ecart_ref_pts"] = (taux_v - taux_ref) * 100
-            # Score leader : équilibre rendement / protection
             v["score_leader"] = taux_v - abs(taux_v - taux_ref) * 0.5
-
-        self._log("Optimisation", f"5 variantes générées | Prime ref : {variantes['ref']['prime']:,.0f} MAD")
+    
+        self._log(
+            "Optimisation",
+            f"5 variantes générées | Prime ref : {variantes['ref']['prime']:,.0f} MAD"
+        )
+    
         return variantes
 
     def generer_rapport_texte(self):
