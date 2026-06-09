@@ -356,7 +356,7 @@ class AgentActuarielPython:
         Génère 5 variantes de programme basées sur :
         - Analyse technique (taux, simulation, market curve)
         - Sensibilité des conditions (AAL, AAD, reconstitutions)
-        - Logique de leader : Partner Re fixe les conditions de référence
+        - Logique de leader : Le leader de l'affaire fixe les conditions de référence. ça se peut, et nous te développons pour ça, que Atlantic Re que nous sommes, soit Leader.
         """
         self._log("Optimisation", "Génération de 5 variantes de programme — perspective leader")
         sim_map = {r["tranche"]: r for r in self.resultats_sim}
