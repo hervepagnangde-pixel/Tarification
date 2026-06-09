@@ -31,14 +31,14 @@ class AgentLaboTarification:
     MULT_PRIORITE    = [0.50, 0.60, 0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30, 1.50]
     MULT_PORTEE      = [0.70, 0.80, 0.90, 1.00, 1.15, 1.30]
     AAD_PCT          = [0.00, 0.05, 0.10, 0.15, 0.20]     # % de la portée
-    NB_RECON         = [0, 1, 2, 3]
+    NB_RECON         = [0, 1, 2, 3, 4, 5]
     TAUX_RECON_LIST  = [50.0, 75.0, 100.0]                 # % par reconstitution
     K_SECURITE       = [0.10, 0.15, 0.20, 0.25, 0.30]
     SEUIL_STAB       = [0.00, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.20]
 
     FEATURES = [
         "priorite","portee","AAD_val","AAL_val",
-        "nb_reconstitutions","taux_recon_1","taux_recon_2","taux_recon_moy",
+        "nb_reconstitutions","taux_recon_1","taux_recon_2","taux_recon_3","taux_recon_4","taux_recon_5","taux_recon_moy",
         "brokage","frais","marge","retrocession","k_securite",
         "seuil_stab",
         "alpha","lambda_","seuil_modelisation",
@@ -96,8 +96,12 @@ class AgentLaboTarification:
                     taux_rec_list = [t_rec]
                 elif n_rec == 2:
                     taux_rec_list = [min(t_rec, 75.0), 100.0]
-                else:
+                elif n_rec == 3:
                     taux_rec_list = [min(t_rec, 75.0), 100.0, 100.0]
+                elif n_rec == 4:
+                    taux_rec_list = [min(t_rec, 75.0), 100.0, 100.0, 100.0]
+                else:
+                    taux_rec_list = [min(t_rec, 75.0), 100.0, 100.0, 100.0, 100.0]
                 pool.append(self._make_scenario(
                     t, D, C, aad, None, n_rec, taux_rec_list, k_sec, seuil_s))
 
@@ -227,7 +231,7 @@ class AgentLaboTarification:
         arr = np.array(charges); P0 = np.mean(arr); sig = np.std(arr)
         tp  = P0 / self.gnpi
         tr  = tp + k * (sig / self.gnpi)
-        tt  = tr / max(1 - bk - fg - mg - rt, 0.01)
+        tt  = tr / max(1 - bk - fg - mg - rt, 0.001)
         return {"taux_pur_sim":round(tp,6),"taux_technique_sim":round(tt,6),
                 "sigma_sim":round(sig/self.gnpi,6),"valide_sim":True}
 
@@ -248,9 +252,7 @@ class AgentLaboTarification:
                 return {"taux_technique_mkt":0.0,"valide_mkt":False}
             x_norm = (D + P/2) / self.gnpi
             rol = a * (x_norm ** (-b))
-            tp  = rol * P / self.gnpi
-            tr  = tp * 1.002
-            tt  = tr / max(1 - bk - fg - mg - rt, 0.01)
+            tt  = rol * P / self.gnpi
             return {"taux_technique_mkt":round(tt,6),"valide_mkt":True,
                     "rol":round(rol,6),"a_mkt":round(a,6),"b_mkt":round(b,4)}
         except:
@@ -343,18 +345,29 @@ class AgentLaboTarification:
         except Exception as e:
             return {"erreur": f"scikit-learn manquant : {e}"}
 
-        # IMPORTANT :
+        # IMPORTANT ( pour toi qui verra mon code one day) :
         # Les colonnes de taux sont des résultats actuariels calculés.
         # Elles ne doivent jamais être utilisées comme variables explicatives,
         # sinon le modèle "prédit" un taux à partir d'autres taux déjà calculés.
         # On conserve les taux uniquement comme variables cibles possibles.
         colonnes_exclues = {
+            # ── Taux (fuites directes) ──────────────────────
             "taux_pur_bc",
             "taux_technique_bc",
             "taux_pur_sim",
             "taux_technique_sim",
             "taux_technique_mkt",
             "taux_retenu",
+            # ── Dérivés du taux (fuites causales) ───────────
+            "prime_MAD",          # = taux_retenu × GNPI
+            "methode_retenue",    # déterminée PAR le taux retenu
+            # ── Identifiants / doublons ──────────────────────
+            "tranche_base",       # identifiant de ligne
+            "type",               # doublon de type_travaillante / type_cat
+            # ── Variance nulle (inutiles pour ML) ───────────
+            "alpha",
+            "lambda_",
+            "seuil_modelisation",
         }
 
         feats = [
@@ -470,100 +483,170 @@ class AgentLaboTarification:
         return resultats
 
     # ── 8. PRÉDICTION ───────────────────────────────────────────────
+def predire_taux(self, conditions):
+    """
+    Prédit le taux retenu pour une structure de programme donnée.
+    Utilise exactement les features sélectionnées à l'entraînement (_features_used).
+    """
+    model = self.modeles_entraines.get(self._best_model_name)
+    if model is None:
+        return None
+    if not hasattr(self, "_features_used") or not self._features_used:
+        return None
 
-    def predire_taux(self, conditions):
-        model = self.modeles_entraines.get(self._best_model_name)
-        if model is None: return None
-        D = conditions.get("priorite",2e6); C = conditions.get("portee",13e6)
-        aad_v = conditions.get("AAD") or 0.0; aal_v = conditions.get("AAL") or 0.0
-        bk=conditions.get("brokage",0.10); fg=conditions.get("frais",0.05)
-        mg=conditions.get("marge",0.10);  rt=conditions.get("retrocession",0.0)
-        t  = conditions.get("type","travaillante")
-        n_rec = conditions.get("nb_reconstitutions",1)
-        tr1 = conditions.get("taux_recon_1",100.0)
-        tr2 = conditions.get("taux_recon_2",0.0)
-        row = {
-            "priorite":D,"portee":C,"AAD_val":aad_v,"AAL_val":aal_v,
-            "nb_reconstitutions":n_rec,"taux_recon_1":tr1,"taux_recon_2":tr2,
-            "taux_recon_moy":(tr1+tr2)/2 if n_rec>1 else tr1,
-            "brokage":bk,"frais":fg,"marge":mg,"retrocession":rt,
-            "k_securite":conditions.get("k_securite",0.20),
-            "seuil_stab":conditions.get("seuil_stab",0.0),
-            "alpha":conditions.get("alpha",self.alpha),
-            "lambda_":conditions.get("lambda_",self.lambda_),
-            "seuil_modelisation":conditions.get("seuil_modelisation",self.seuil),
-            "type_travaillante":1 if t=="travaillante" else 0,
-            "type_cat":1 if t=="cat" else 0,
-            "type_non_trav":1 if t=="non_travaillante" else 0,
-            "ratio_D_GNPI":D/max(self.gnpi,1),"ratio_C_GNPI":C/max(self.gnpi,1),
-            "ratio_aad_C":aad_v/max(C,1),"ratio_aal_C":aal_v/max(C,1),
-            "levier_frais":1-bk-fg-mg-rt,
-            "cap_sur_GNPI":(n_rec+1)*C/max(self.gnpi,1),
-        }
-        X = pd.DataFrame([{f: row.get(f,0) for f in self._features_used}])
+    # ── Variables contractuelles (les seules légitimes) ──────────────
+    D     = conditions.get("priorite",       2_000_000)
+    C     = conditions.get("portee",        13_000_000)
+    aad_v = conditions.get("AAD")  or 0.0
+    aal_v = conditions.get("AAL")  or 0.0
+    bk    = conditions.get("brokage",        0.10)
+    fg    = conditions.get("frais",          0.05)
+    mg    = conditions.get("marge",          0.10)
+    rt    = conditions.get("retrocession",   0.00)
+    t     = conditions.get("type",           "travaillante")
+    n_rec = int(conditions.get("nb_reconstitutions", 1))
+    tr1   = conditions.get("taux_recon_1",  100.0)
+    tr2   = conditions.get("taux_recon_2",    0.0)
+    k_sec = conditions.get("k_securite",      0.20)
+    s_stab= conditions.get("seuil_stab",      0.0)
+
+    # ── Construction du vecteur (features légitimes uniquement) ──────
+    row = {
+        # Géométrie du contrat
+        "priorite":          D,
+        "portee":            C,
+        "AAD_val":           aad_v,
+        "AAL_val":           aal_v,
+        "nb_reconstitutions":n_rec,
+        "taux_recon_1":      tr1,
+        "taux_recon_2":      tr2,
+        "taux_recon_moy":    (tr1 + tr2) / 2 if n_rec > 1 else tr1,
+
+        # Chargements
+        "brokage":           bk,
+        "frais":             fg,
+        "marge":             mg,
+        "retrocession":      rt,
+        "k_securite":        k_sec,
+        "seuil_stab":        s_stab,
+
+        # Type de tranche (encodé)
+        "type_travaillante": 1 if t == "travaillante"     else 0,
+        "type_cat":          1 if t == "cat"               else 0,
+        "type_non_trav":     1 if t == "non_travaillante"  else 0,
+
+        # Ratios normalisés
+        "ratio_D_GNPI":      D     / max(self.gnpi, 1),
+        "ratio_C_GNPI":      C     / max(self.gnpi, 1),
+        "ratio_aad_C":       aad_v / max(C, 1),
+        "ratio_aal_C":       aal_v / max(C, 1),
+        "levier_frais":      1 - bk - fg - mg - rt,
+        "cap_sur_GNPI":      (n_rec + 1) * C / max(self.gnpi, 1),
+
+        # ── NE PAS inclure ──────────────────────────────────────────
+        # alpha, lambda_, seuil_modelisation  → variance nulle sur ce dataset (on peut ls exploite si on a un multi-portfeuille)
+        # taux_*                              → fuite de données
+        # prime_MAD, methode_retenue          → fuite causale
+        # tranche_base, type                  → identifiants / doublons
+    }
+
+    # ── Projection sur les features exactes de l'entraînement ────────
+    # Toute feature manquante dans row → 0 (neutre)
+    X = pd.DataFrame([{f: row.get(f, 0) for f in self._features_used}])
+
+    try:
         return float(model.predict(X)[0])
-
+    except Exception:
+        return None
     # ── 9. OPTIMISATION — DICHOTOMIE ACTUARIELLE ────────────────────
     # Propriété : taux_retenu est monotone décroissant en D (priorité)
     # → bisection sur [D_min, D_max] jusqu'à convergence vers tau_cible
-
     def optimiser_dichotomie(self, t_base, taux_cible, tolerance=1e-5,
                               max_iter=60, conditions_fixees=None):
         """
-        Trouve D* tel que tau(D*) ≈ taux_cible par bisection.
-        Basé sur la monotonie : tau decroit quand D augmente.
+        Trouve D* tel que τ(D*) ≈ taux_cible par bisection.
+        τ est prédit par le modèle ML (surrogate de la simulation).
+        Monotonie garantie : τ décroît quand D augmente.
         """
-        if not self.modeles_entraines: return None
+        if not self.modeles_entraines:
+            return None
+        if not hasattr(self, "_features_used") or not self._features_used:
+            return None
+    
+        # ── Conditions de base (features légitimes uniquement) ───────────
         cond = {
-            "type":              t_base["type"],
-            "portee":            t_base["portee"],
-            "AAD":               None,
-            "nb_reconstitutions":t_base.get("nb_reconstitutions",1),
-            "taux_recon_1":      100.0,"taux_recon_2":0.0,
-            "brokage":           t_base["brokage"],
-            "frais":             t_base["frais"],
-            "marge":             t_base["marge"],
-            "retrocession":      t_base["retrocession"],
-            "k_securite":        0.20,
-            "seuil_stab":        0.0,
-            "alpha":             self.alpha,"lambda_":self.lambda_,
-            "seuil_modelisation":self.seuil,
+            "type":               t_base["type"],
+            "portee":             t_base["portee"],
+            "AAD":                None,
+            "AAL":                None,
+            "nb_reconstitutions": t_base.get("nb_reconstitutions", 1),
+            "taux_recon_1":       t_base.get("taux_recon_1",  100.0),
+            "taux_recon_2":       t_base.get("taux_recon_2",    0.0),
+            "brokage":            t_base["brokage"],
+            "frais":              t_base["frais"],
+            "marge":              t_base["marge"],
+            "retrocession":       t_base["retrocession"],
+            "k_securite":         t_base.get("k_securite",   0.20),
+            "seuil_stab":         t_base.get("seuil_stab",   0.0),
+            # ── Exclus volontairement ────────────────────────────────────
+            # alpha, lambda_, seuil_modelisation → variance nulle,
+            # absents de _features_used, predire_taux les ignore de toute façon
         }
-        if conditions_fixees: cond.update(conditions_fixees)
-
+    
+        if conditions_fixees:
+            cond.update(conditions_fixees)
+    
+        # ── Bornes initiales ─────────────────────────────────────────────
         D_min = t_base["priorite"] * 0.3
         D_max = t_base["priorite"] * 4.0
-
-        # Vérifier la monotonie : tau(D_min) > tau(D_max)
+    
         cond["priorite"] = D_min
-        tau_lo = self.predire_taux(cond) or 0
+        tau_lo = self.predire_taux(cond)
         cond["priorite"] = D_max
-        tau_hi = self.predire_taux(cond) or 0
-
+        tau_hi = self.predire_taux(cond)
+    
         if tau_lo is None or tau_hi is None:
             return None
-
-        # Ajuster les bornes si la cible est hors plage
-        if not (min(tau_lo,tau_hi) <= taux_cible <= max(tau_lo,tau_hi)):
-            return {"converge":False,"D_star":None,"tau_star":None,
-                    "tau_lo":tau_lo,"tau_hi":tau_hi,
-                    "message":f"Cible {taux_cible:.4%} hors plage [{min(tau_lo,tau_hi):.4%}, {max(tau_lo,tau_hi):.4%}]"}
-
+    
+        # ── Vérification que la cible est dans la plage ──────────────────
+        lo, hi = min(tau_lo, tau_hi), max(tau_lo, tau_hi)
+        if not (lo <= taux_cible <= hi):
+            return {
+                "converge": False,
+                "D_star":   None,
+                "tau_star": None,
+                "tau_lo":   tau_lo,
+                "tau_hi":   tau_hi,
+                "message":  f"Cible {taux_cible:.4%} hors plage [{lo:.4%}, {hi:.4%}]"
+            }
+    
+        # ── Bisection ────────────────────────────────────────────────────
+        D_mid   = D_min
+        tau_mid = tau_lo
         iterations = []
+    
         for _ in range(max_iter):
-            D_mid = (D_min + D_max) / 2
-            D_mid = round(D_mid / 100_000) * 100_000
+            D_mid   = round((D_min + D_max) / 2 / 100_000) * 100_000
             cond["priorite"] = D_mid
-            tau_mid = self.predire_taux(cond) or 0
-            iterations.append({"D":D_mid,"tau":tau_mid})
-            if abs(tau_mid - taux_cible) < tolerance: break
-            # tau décroit avec D → si tau_mid > cible, augmenter D_min
-            if tau_mid > taux_cible: D_min = D_mid
-            else:                    D_max = D_mid
-
-        return {"converge":True,"D_star":D_mid,"tau_star":tau_mid,
-                "iterations":iterations,"nb_iter":len(iterations)}
-
+            tau_mid = self.predire_taux(cond) or 0.0
+            iterations.append({"D": D_mid, "tau": tau_mid})
+    
+            if abs(tau_mid - taux_cible) < tolerance:
+                break
+    
+            # τ décroît avec D → tau_mid > cible ⟹ D trop faible → monter D_min
+            if tau_mid > taux_cible:
+                D_min = D_mid
+            else:
+                D_max = D_mid
+    
+        return {
+            "converge":   abs(tau_mid - taux_cible) < tolerance,
+            "D_star":     D_mid,
+            "tau_star":   tau_mid,
+            "iterations": iterations,
+            "nb_iter":    len(iterations),
+        }
     # ── 10. OPTIMISATION — DE FINETTI / FRONTIÈRE EFFICIENTE ────────
     # De Finetti (1940) : min Var(perte retenue) sous contrainte E[prime]=budget
     # Borch (1960) : optimal XL est celui minimisant la variance résiduelle
@@ -630,6 +713,7 @@ class AgentLaboTarification:
         # Frontière efficiente : pour chaque niveau de prime, garder le min variance
         df_r = pd.DataFrame(results).sort_values("prime_pct")
         # Pareto frontier
+        pareto(De Finetti)
         frontier = []
         min_var = float("inf")
         for _, row in df_r.sort_values("prime_pct", ascending=True).iterrows():
