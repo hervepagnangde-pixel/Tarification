@@ -3061,9 +3061,9 @@ with tab3:
                 try:
                     db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
                     db_save_etape("bc", [{k:v for k,v in r.items() if k!="detail_annuel"} for r in resultats_bc])
-                    st.toast(" BC sauvegardé", icon="")
+                    st.toast(" BC sauvegardé")
                 except Exception as _e:
-                    st.toast(f" Sauvegarde DB : {_e}", icon="")
+                    st.toast(f" Sauvegarde DB : {_e}")
 
     if "resultats_bc" in st.session_state:
         tableau_resultats([{
@@ -3629,9 +3629,9 @@ with tab4:
                 try:
                     db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
                     db_save_etape("sim", resultats_sim)
-                    st.toast(" Simulation sauvegardée", icon="")
+                    st.toast(" Simulation sauvegardée")
                 except Exception as _e:
-                    st.toast(f" Sauvegarde DB : {_e}", icon="")
+                    st.toast(f" Sauvegarde DB : {_e}")
 
     if "resultats_sim" in st.session_state:
         tableau_resultats([{
@@ -3848,9 +3848,9 @@ with tab5:
                 try:
                     db_save_etape("mkt", {"resultats_mkt": [{k:v for k,v in r.items() if k!="taux_tranches"} for r in resultats_mkt],
                                           "taux_mkt_final": resultats_mkt[0]["taux_tranches"] if resultats_mkt else []})
-                    st.toast(" Courbe de référence marché sauvegardée", icon="")
+                    st.toast(" Courbe de référence marché sauvegardée")
                 except Exception as _e:
-                    st.toast(f" Sauvegarde DB : {_e}", icon="")
+                    st.toast(f" Sauvegarde DB : {_e}")
 
     if "resultats_mkt" in st.session_state and "df_mkt_clean" in st.session_state:
         rmt = st.session_state.get("resultats_mkt", [])
@@ -3986,9 +3986,9 @@ with tab6:
         try:
             db_save_session(st.session_state.get("user_email",""), gnpi, tranches_input)
             db_save_etape("rapport", {"rows": rows_rapport, "prime_totale": prime_totale})
-            st.toast(" Rapport sauvegardé", icon="")
+            st.toast(" Rapport sauvegardé")
         except Exception as _e:
-            st.toast(f" Sauvegarde DB : {_e}", icon="")
+            st.toast(f" Sauvegarde DB : {_e}")
         st.subheader(" Synthèse de tarification")
         st.dataframe(st.session_state["df_rapport"], use_container_width=True)
         c1, c2, c3 = st.columns(3)
