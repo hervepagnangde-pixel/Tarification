@@ -3003,22 +3003,42 @@ with tab3:
                 else: st.session_state["bc_annees_exclues_set"] = set()
         if st.button(" Calculer le Burning Cost", type="primary"):
             with st.spinner("Calcul en cours..."):
-                df_proj = st.session_state["df_proj"]
+                df_proj_source = st.session_state["df_proj"].copy()
+                annees_exclues = set(st.session_state.get("bc_annees_exclues_set", set()))
+                annees_exclues = {int(a) for a in annees_exclues if str(a).strip() != ""}
+
+                if annees_exclues:
+                    df_proj_bc_calc = df_proj_source[
+                        ~df_proj_source["annee_surv"].astype(int).isin(annees_exclues)
+                    ].copy()
+                    st.info(
+                        "Années exclues du Burning Cost : "
+                        + ", ".join(str(a) for a in sorted(annees_exclues))
+                    )
+                else:
+                    df_proj_bc_calc = df_proj_source.copy()
+
+                if df_proj_bc_calc.empty:
+                    st.error("Toutes les années ont été exclues : calcul Burning Cost impossible.")
+                    st.stop()
+
                 resultats_bc = []
                 for t_info in tranches_input:
                     D = t_info["priorite"]; L = t_info["portee"]
                     aal = t_info["AAL"]; aad = t_info["AAD"]
                     n_rec = t_info["nb_reconstitutions"]; t_r = t_info["taux_reconstitution"] / 100
                     cap = (n_rec + 1) * L
-                    df_proj["Ck"] = df_proj.apply(
+
+                    df_t = df_proj_bc_calc.copy()
+                    df_t["Ck"] = df_t.apply(
                         lambda row: min(max(row["Sprime_ultime"] - D, 0), L) * row["coeff_stab"], axis=1)
-                    charges_ann = df_proj.groupby("annee_surv")["Ck"].sum()
+                    charges_ann = df_t.groupby("annee_surv")["Ck"].sum()
                     charges_finales = []
                     for ann, ch in charges_ann.items():
                         if aad: ch = max(ch - aad, 0)
                         if aal: ch = min(ch, aal)
                         ch = min(ch, cap)
-                        charges_finales.append({"annee": ann, "charge": ch})
+                        charges_finales.append({"annee": int(ann), "charge": ch})
                     df_ch = pd.DataFrame(charges_finales); N = len(df_ch)
                     # Reconstitutions avec taux individuels par reconstitution
                     taux_rec_list = t_info.get("taux_reconstitutions", [t_info.get("taux_reconstitution", 100)] * n_rec)
@@ -3054,6 +3074,8 @@ with tab3:
                         "taux_pur": taux_pur, "taux_risque": taux_risque,
                         "taux_technique": taux_technique,
                         "chargement_majeurs": charg_maj,
+                        "annees_exclues": sorted(annees_exclues),
+                        "nb_annees_utilisees": int(N),
                         "detail_annuel": df_ch.to_dict("records")
                     })
                 st.session_state["resultats_bc"] = resultats_bc
@@ -3164,7 +3186,13 @@ with tab3:
             if st.button("Calculer les IC Bootstrap", key="btn_bootstrap_ci"):
                 rows_ic = []
                 for t_bc in tranches_input:
-                    ic = bootstrap_ci_bc(st.session_state["df_proj"].copy(), t_bc, gnpi,
+                    df_boot_bc = st.session_state["df_proj"].copy()
+                    annees_exclues_boot = set(st.session_state.get("bc_annees_exclues_set", set()))
+                    if annees_exclues_boot:
+                        df_boot_bc = df_boot_bc[
+                            ~df_boot_bc["annee_surv"].astype(int).isin({int(a) for a in annees_exclues_boot})
+                        ].copy()
+                    ic = bootstrap_ci_bc(df_boot_bc, t_bc, gnpi,
                                          n_boot=n_boot_v, alpha_ci=1-alpha_ci_pct/100)
                     if ic:
                         tau_r = next((r["taux_technique"] for r in st.session_state["resultats_bc"]
@@ -3508,7 +3536,16 @@ with tab4:
         # ── Paramètres dynamiques selon la loi ───────────────────────────────
         st.markdown("####  Paramètres de simulation")
         c1, c2, c3, c4 = st.columns(4)
-        with c4: n_sim_v = st.number_input("Nb simulations", value=10000, step=1000, key="nsim_input")
+        with c4:
+            n_sim_v = st.number_input("Nb simulations", value=10000, step=1000, key="nsim_input")
+            seed_sim_v = st.number_input(
+                "Graine aléatoire",
+                value=int(st.session_state.get("seed_simulation", 42)),
+                step=1,
+                key="seed_simulation_input",
+                help="Modifier cette valeur permet de vérifier la stabilité Monte Carlo."
+            )
+            st.session_state["seed_simulation"] = int(seed_sim_v)
 
         if loi_active == "pareto":
             st.info(f"🌿 Branche {'longue' if is_long_sim else 'courte'} | **Pareto** | "
@@ -3561,7 +3598,24 @@ with tab4:
                     xi_f   = float(st.session_state.get("gpd_xi_input",   st.session_state.get("gpd_xi",   0.3)))
                     beta_f = float(st.session_state.get("gpd_beta_input",  st.session_state.get("gpd_beta", 500_000.0)))
 
-                np.random.seed(42)
+                # Validation des paramètres avant exécution
+                erreurs_param = []
+                if seuil_f <= 0:
+                    erreurs_param.append("Le seuil de modélisation doit être strictement positif.")
+                if lambda_f <= 0:
+                    erreurs_param.append("Lambda doit être strictement positif.")
+                if loi_sim == "pareto" and alpha_f <= 0:
+                    erreurs_param.append("Alpha Pareto doit être strictement positif.")
+                if loi_sim == "lognormale" and sigma_f <= 0:
+                    erreurs_param.append("Sigma lognormal doit être strictement positif.")
+                if loi_sim == "gpd" and beta_f <= 0:
+                    erreurs_param.append("Beta GPD doit être strictement positif.")
+                if erreurs_param:
+                    st.error("Paramètres de simulation invalides : " + " | ".join(erreurs_param))
+                    st.stop()
+
+                seed_sim = int(st.session_state.get("seed_simulation_input", st.session_state.get("seed_simulation", 42)))
+                rng_sim = np.random.default_rng(seed_sim)
                 resultats_sim = []
                 for idx_t, t_info in enumerate(tranches_input):
                     progress_sim.progress(int((idx_t/len(tranches_input))*100), text=f"Simulation {t_info['nom']}...")
@@ -3572,26 +3626,26 @@ with tab4:
                     def simuler(avec_aal, avec_aad, avec_rec):
                         charges = []
                         for _ in range(n_s):
-                            N = np.random.poisson(lambda_f); S_total = 0
+                            N = rng_sim.poisson(lambda_f); S_total = 0
                             if N > 0:
                                 # ── Génération selon la loi choisie ──────────
                                 if loi_sim == "pareto":
-                                    U = np.random.uniform(size=N)
+                                    U = rng_sim.uniform(size=N)
                                     Sprime_sim = seuil_f * (U ** (-1/alpha_f))
                                 elif loi_sim == "lognormale":
-                                    Sprime_sim = np.random.lognormal(mu_f, sigma_f, size=N)
+                                    Sprime_sim = rng_sim.lognormal(mu_f, sigma_f, size=N)
                                     Sprime_sim = np.maximum(Sprime_sim, seuil_f)
                                 elif loi_sim == "gpd":
-                                    U = np.random.uniform(size=N)
+                                    U = rng_sim.uniform(size=N)
                                     if xi_f != 0:
                                         Sprime_sim = seuil_f + beta_f / xi_f * ((1 - U) ** (-xi_f) - 1)
                                     else:
                                         Sprime_sim = seuil_f - beta_f * np.log(U)
                                 else:
-                                    U = np.random.uniform(size=N)
+                                    U = rng_sim.uniform(size=N)
                                     Sprime_sim = seuil_f * (U ** (-1/1.5))
 
-                                idx_c = np.random.choice(len(coeffs), size=N, replace=True)
+                                idx_c = rng_sim.choice(len(coeffs), size=N, replace=True)
                                 for i in range(N):
                                     S_prime = Sprime_sim[i]; c = coeffs[idx_c[i]]
                                     if S_prime <= D: S_i = 0
@@ -3618,6 +3672,16 @@ with tab4:
                     tp4, tr4, tt4 = calc_taux(c_sans_rec)
                     resultats_sim.append({
                         "tranche": t_info["nom"], "type": t_info["type"],
+                        "loi": loi_sim,
+                        "seuil": seuil_f,
+                        "lambda": lambda_f,
+                        "alpha": alpha_f if loi_sim == "pareto" else None,
+                        "mu_log": mu_f if loi_sim == "lognormale" else None,
+                        "sigma_log": sigma_f if loi_sim == "lognormale" else None,
+                        "xi_gpd": xi_f if loi_sim == "gpd" else None,
+                        "beta_gpd": beta_f if loi_sim == "gpd" else None,
+                        "n_simulations": n_s,
+                        "seed": seed_sim,
                         "taux_pur": tp, "taux_risque": tr, "taux_technique": tt,
                         "chargement_majeurs": st.session_state.get("chargement_majeurs", 0.0),
                         "sans_aal": tt2, "sans_aad": tt3, "sans_rec": tt4,
