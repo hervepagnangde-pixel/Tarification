@@ -1,710 +1,837 @@
-""" 
-Atlantic Re IA — Agent Python pur
-AgentActuarielPython : pipeline complet BC→Sim→Mkt→Rapport→Variantes,
-100%% Python sans LLM, fonctionne hors ligne.
 """
+Atlantic Re IA — Agent Python pur
+AgentActuarielPython : pipeline complet BC -> Simulation -> Market Curve -> Rapport -> Variantes.
+
+Module sans LLM, utilisable hors ligne.
+Correction intégrée : initialisation robuste de df_ml et calibration prudente des élasticités.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
-from datetime import datetime
+
 from modules.optimization import _lookup_taux, _lookup_result, _json_safe
 
-# ════════════════════════════════════════════
-# AGENT PYTHON PUR — LOGIQUE ACTUARIELLE CODÉE
-# ════════════════════════════════════════════
 
 class AgentActuarielPython:
     """
-    Agent de tarification 100% Python — aucun LLM, aucune API.
-    Logique actuarielle codée explicitement. Fonctionne hors ligne.
+    Agent de tarification 100 % Python.
+
+    Le moteur applique des règles actuarielles explicites :
+      1. validation des paramètres ;
+      2. Burning Cost ;
+      3. simulation fréquence-sévérité ;
+      4. contrôles de cohérence ;
+      5. courbe de marché ;
+      6. rapport de tarification ;
+      7. variantes comparables de programme.
     """
 
-    def __init__(self, tranches, gnpi, df_proj, coeffs,
-                 alpha_est, lambda_est, seuil_est, Pm_proxy,
-                 chargement_majeurs, df_mkt_clean=None):
-        self.tranches           = tranches
-        self.gnpi               = gnpi
-        self.df_proj            = df_proj
-        self.coeffs             = coeffs
-        self.alpha              = alpha_est
-        self.lambda_            = lambda_est
-        self.seuil              = seuil_est
-        self.Pm_proxy           = Pm_proxy
-        self.chargement_majeurs = chargement_majeurs
-        self.df_mkt             = df_mkt_clean
-        self.log                = []   # journal des décisions
-        self.anomalies          = []   # alertes détectées
-        self.resultats_bc       = []
-        self.resultats_sim      = []
-        self.resultats_mkt      = []
-        self.rapport_rows       = []
-        self.prime_totale       = 0.0
+    def __init__(
+        self,
+        tranches,
+        gnpi,
+        df_proj,
+        coeffs,
+        alpha_est,
+        lambda_est,
+        seuil_est,
+        Pm_proxy,
+        chargement_majeurs,
+        df_mkt_clean=None,
+        df_ml=None,
+    ):
+        self.tranches = tranches or []
+        self.gnpi = float(gnpi or 0.0)
+        self.df_proj = df_proj if df_proj is not None else pd.DataFrame()
+        self.coeffs = np.asarray(coeffs if coeffs is not None else [1.0], dtype=float)
+        self.alpha = float(alpha_est or 1.5)
+        self.lambda_ = float(lambda_est or 0.0)
+        self.seuil = float(seuil_est or 0.0)
+        self.Pm_proxy = float(Pm_proxy or 0.0)
+        self.chargement_majeurs = float(chargement_majeurs or 0.0)
+        self.df_mkt = df_mkt_clean
 
-    # ────────────────────────────────────────────
+        # IMPORTANT : certains workflows lancent l'agent avant le module labo/ML.
+        # L'attribut doit donc toujours exister, même si aucun dataset ML n'est disponible.
+        self.df_ml = df_ml
+
+        self.log = []
+        self.anomalies = []
+        self.resultats_bc = []
+        self.resultats_sim = []
+        self.resultats_mkt = []
+        self.rapport_rows = []
+        self.variantes = {}
+        self.prime_totale = 0.0
+
+    # ------------------------------------------------------------------
+    # UTILITAIRES
+    # ------------------------------------------------------------------
     def _log(self, etape, decision, detail=""):
         self.log.append({"etape": etape, "decision": decision, "detail": detail})
 
     def _alerte(self, niveau, message):
-        """niveau: INFO / WARN / CRITIQUE"""
-        icone = {"INFO": "ℹ️", "WARN": "⚠️", "CRITIQUE": "🚨"}.get(niveau, "ℹ️")
-        self.anomalies.append({"niveau": niveau, "icone": icone, "message": message})
+        """niveau : INFO / WARN / CRITIQUE."""
+        self.anomalies.append({"niveau": niveau, "message": message})
 
-    # ────────────────────────────────────────────
-    # ÉTAPE 1 — VALIDATION DES PARAMÈTRES
-    # ────────────────────────────────────────────
-    def etape_0_validation(self):
-        self._log("Validation", "Vérification des paramètres actuariels")
+    @staticmethod
+    def _num(x, default=0.0):
+        try:
+            if x is None or x == "":
+                return default
+            if isinstance(x, str):
+                s = x.replace("%", "").replace(" ", "").replace(",", ".")
+                val = float(s)
+                return val / 100.0 if "%" in x or val > 1.5 else val
+            return float(x)
+        except Exception:
+            return default
 
-        # Alpha
-        if self.alpha < 0.8:
-            self._alerte("CRITIQUE", f"Alpha = {self.alpha:.4f} < 0.8 — queue trop lourde, résultats suspects")
-        elif self.alpha > 4.0:
-            self._alerte("WARN", f"Alpha = {self.alpha:.4f} > 4.0 — distribution proche normale, vérifier la modélisation")
+    @staticmethod
+    def _arrondir_mad(x, pas=500_000, minimum=0.0):
+        try:
+            return max(round(float(x) / pas) * pas, minimum)
+        except Exception:
+            return minimum
+
+    def _get_taux_rec_list(self, t_info):
+        n_rec = int(t_info.get("nb_reconstitutions", 0) or 0)
+        if "taux_reconstitutions" in t_info and t_info.get("taux_reconstitutions"):
+            vals = list(t_info.get("taux_reconstitutions") or [])
         else:
-            self._log("Alpha", f"OK — {self.alpha:.4f} dans la plage [0.8, 4.0]")
+            vals = [float(t_info.get("taux_reconstitution", 100.0) or 100.0)] * n_rec
+        return [float(v or 0.0) for v in vals[:n_rec]]
 
-        # Lambda
-        if self.lambda_ < 0.5:
-            self._alerte("WARN", f"Lambda = {self.lambda_:.4f} très faible — fréquence quasi nulle au-dessus du seuil")
-        elif self.lambda_ > 50:
-            self._alerte("WARN", f"Lambda = {self.lambda_:.4f} très élevé — vérifier le seuil de modélisation")
-        else:
-            self._log("Lambda", f"OK — {self.lambda_:.4f} sinistres/an au-dessus du seuil")
-
-        # Programme
-        trav = [t for t in self.tranches if t["type"] == "travaillante"]
-        cat  = [t for t in self.tranches if t["type"] == "cat"]
-        if not trav:
-            self._alerte("WARN", "Aucune tranche travaillante dans le programme")
-        if not cat:
-            self._alerte("INFO", "Aucune tranche cat — market curve non applicable")
-        self._log("Programme", f"{len(trav)} travaillante(s), {len(cat)} cat")
-
-    # ────────────────────────────────────────────
-    # ÉTAPE 2 — BURNING COST
-    # ────────────────────────────────────────────
-    def etape_1_burning_cost(self):
-        self._log("Burning Cost", "Calcul BC individuel par sinistre, agrégation annuelle")
-        resultats = []
-        for t_info in self.tranches:
-            D   = t_info["priorite"];  L  = t_info["portee"]
-            aal = t_info["AAL"];       aad = t_info["AAD"]
-            n_rec = t_info["nb_reconstitutions"]
-            taux_rec_list = t_info.get("taux_reconstitutions",
-                            [t_info.get("taux_reconstitution", 100)] * n_rec)
-            cap = (n_rec + 1) * L
-
-            # Charge annuelle
-            df_p = self.df_proj.copy()
-            df_p["Ck"] = df_p.apply(
-                lambda row: min(max(row["Sprime_ultime"] - D, 0), L) * row["coeff_stab"], axis=1)
-            charges_ann = df_p.groupby("annee_surv")["Ck"].sum()
-            charges_finales = []
-            for ann, ch in charges_ann.items():
-                if aad: ch = max(ch - aad, 0)
-                if aal: ch = min(ch, aal)
-                charges_finales.append({"annee": int(ann), "charge": float(min(ch, cap))})
-
-            df_ch = pd.DataFrame(charges_finales); N = len(df_ch)
-            charges_nonzero = [c["charge"] for c in charges_finales if c["charge"] > 0]
-            n_nz = len(charges_nonzero)
-
-            # Reconstitutions individuelles
-            Pr_Rec = 0.0
-            for C_n in df_ch["charge"].values:
-                for r_idx, t_r_i in enumerate(taux_rec_list):
-                    Pr_Rec += (t_r_i / 100) * min(L, max(C_n - r_idx * L, 0))
-            Pr_Rec /= L if L > 0 else 1
-            Rec = Pr_Rec / (Pr_Rec + N) if (Pr_Rec + N) > 0 else 0.0
-
-            # R2 — données insuffisantes
-            if n_nz < 3:
-                tp = tr = tt = sigma = 0.0
-                self._alerte("WARN",
-                    f"{t_info['nom']} : BC = 0 — seulement {n_nz} année(s) non nulle(s) (règle R2 : min 3 requis)")
-            else:
-                charge_moy = df_ch["charge"].mean()
-                tp    = charge_moy / self.gnpi
-                sigma = float(np.std(charges_nonzero)) / self.gnpi
-                tr    = tp + sigma * 0.20   # R1
-                tt    = (tr * (1 - Rec)) / max(
-                    1 - t_info["brokage"] - t_info["frais"] - t_info["marge"] - t_info["retrocession"],
-                    0.01)
-
-            resultats.append({
-                "tranche": t_info["nom"], "type": t_info["type"],
-                "charge_moy": df_ch["charge"].mean() if n_nz >= 3 else 0.0,
-                "n_ann_nonzero": n_nz, "sigma_hist": round(sigma if n_nz >= 3 else 0.0, 6),
-                "Pr_Rec": round(Pr_Rec, 6), "Rec": round(Rec, 6),
-                "taux_pur": round(tp, 6), "taux_risque": round(tr, 6),
-                "taux_technique": round(tt, 6),
-                "chargement_majeurs": round(self.chargement_majeurs, 6),
-                "detail_annuel": charges_finales
-            })
-            self._log("BC", f"{t_info['nom']}: τ_pur={tp:.4%} τ_tech={tt:.4%} Rec={Rec:.4%} ({n_nz} ans non nuls)")
-
-        self.resultats_bc = resultats
-        return resultats
-
-    # ────────────────────────────────────────────
-    # ÉTAPE 3 — SIMULATION
-    # ────────────────────────────────────────────
-    def etape_2_simulation(self, n_sim=10000):
-        self._log("Simulation", f"Pareto(α={self.alpha:.4f}) × Poisson(λ={self.lambda_:.4f}) — {n_sim:,} simulations")
-        np.random.seed(42)
-        resultats = []
-        for t_info in self.tranches:
-            D = t_info["priorite"]; P = t_info["portee"]
-            r = t_info["nb_reconstitutions"]
-            aal = t_info["AAL"]; aad = t_info["AAD"]
-            cap = (r + 1) * P
-
-            def simuler(avec_aal, avec_aad, avec_rec):
-                charges = []
-                for _ in range(n_sim):
-                    N_sin = np.random.poisson(self.lambda_)
-                    S_tot = 0.0
-                    if N_sin > 0:
-                        U  = np.random.uniform(size=N_sin)
-                        Sp = self.seuil * (U ** (-1 / self.alpha))
-                        ic = np.random.choice(len(self.coeffs), size=N_sin, replace=True)
-                        for k in range(N_sin):
-                            s = Sp[k]; c = self.coeffs[ic[k]]
-                            if   s <= D:     S_i = 0
-                            elif s <= D + P: S_i = c * (s - D)
-                            else:            S_i = c * P
-                            S_tot += S_i
-                    ch = S_tot
-                    if avec_aad and aad: ch = max(ch - aad, 0)
-                    if avec_aal and aal: ch = min(ch, aal)
-                    charges.append(min(ch, cap) if avec_rec else ch)
-                return np.array(charges)
-
-            def calc(ch):
-                P0 = np.mean(ch); sig = np.std(ch)
-                tp = P0 / self.gnpi
-                tr = (P0 + 0.2 * sig) / self.gnpi
-                tt = tr / max(1 - t_info["brokage"] - t_info["frais"] -
-                              t_info["marge"] - t_info["retrocession"], 0.01)
-                return round(tp,6), round(tr,6), round(tt,6)
-
-            c_base = simuler(True,  True,  True)
-            c_saal = simuler(False, True,  True)
-            c_saad = simuler(True,  False, True)
-            c_srec = simuler(True,  True,  False)
-            tp,tr,tt   = calc(c_base)
-            _,_,tt_aal = calc(c_saal)
-            _,_,tt_aad = calc(c_saad)
-            _,_,tt_rec = calc(c_srec)
-
-            resultats.append({
-                "tranche": t_info["nom"], "type": t_info["type"],
-                "taux_pur": tp, "taux_risque": tr, "taux_technique": tt,
-                "chargement_majeurs": round(self.chargement_majeurs, 6),
-                "sans_aal": tt_aal, "sans_aad": tt_aad, "sans_rec": tt_rec,
-                "impact_aal": round(tt_aal - tt, 6),
-                "impact_aad": round(tt_aad - tt, 6),
-                "impact_rec": round(tt_rec - tt, 6),
-            })
-            self._log("Sim", f"{t_info['nom']}: τ_pur={tp:.4%} τ_tech={tt:.4%}")
-
-        self.resultats_sim = resultats
-        return resultats
-
-    # ────────────────────────────────────────────
-    # ÉTAPE 4 — DÉTECTION ANOMALIES BC vs SIM
-    # ────────────────────────────────────────────
-    def etape_3_controles(self):
-        self._log("Contrôles", "Vérification cohérence BC / Simulation")
-        bc_map  = {r["tranche"]: r for r in self.resultats_bc}
-        sim_map = {r["tranche"]: r for r in self.resultats_sim}
-        for t in self.tranches:
-            nom   = t["nom"]
-            bc_tt = bc_map.get(nom, {}).get("taux_technique", 0)
-            si_tt = sim_map.get(nom, {}).get("taux_technique", 0)
-            if t["type"] == "travaillante" and bc_tt > 0 and si_tt > 0:
-                ecart = abs(bc_tt - si_tt) / bc_tt
-                if ecart > 0.50:
-                    self._alerte("CRITIQUE",
-                        f"{nom}: écart BC/Sim = {ecart:.0%} > 50% — anomalie majeure, vérifier les données")
-                elif ecart > 0.30:
-                    self._alerte("WARN",
-                        f"{nom}: écart BC/Sim = {ecart:.0%} > 30% — simulation retenue (méthode conservative)")
-                else:
-                    self._log("Contrôle BC/Sim", f"{nom}: écart = {ecart:.0%} ✅")
-            if t["type"] == "cat" and bc_tt == 0:
-                self._log("Cat BC=0", f"{nom}: normal — tranche cat sans sinistres historiques au-dessus de la priorité")
-
-    # ────────────────────────────────────────────
-    # ÉTAPE 5 — MARKET CURVE (cat uniquement)
-    # ────────────────────────────────────────────
-    def etape_4_market_curve(self, r2_min=0.40):
-        cat_tranches = [t for t in self.tranches if t["type"] != "travaillante"]
-        if not cat_tranches:
-            self._log("Market Curve", "Aucune tranche cat — market curve non applicable")
-            self.resultats_mkt = []
-            return []
-        if self.df_mkt is None:
-            self._alerte("INFO", "Données marché non fournies — market curve ignorée")
-            self.resultats_mkt = []
-            return []
-
-        self._log("Market Curve", f"Ajustement ROL = a × x^(-b) sur {len(self.df_mkt)} points — cat uniquement")
-
-        def fit_power(x, y):
-            lx = np.log(x); ly = np.log(y)
-            c  = np.polyfit(lx, ly, 1)
-            a  = np.exp(c[1]); b = -c[0]
-            ly_pred = np.polyval(c, lx)
-            r2 = 1 - np.sum((ly-ly_pred)**2) / (np.sum((ly-ly.mean())**2) + 1e-10)
-            return a, b, r2
-
-        def calc_taux_cat(t, a, b):
-            x   = (t["priorite"] + t["portee"] / 2) / self.gnpi
-            rol = a * (x ** (-b))
-            tp  = rol * t["portee"] / self.gnpi
-            tr  = tp * 1.002
-            tt  = tr / max(1 - t["brokage"] - t["frais"] - t["marge"] - t["retrocession"], 0.01)
-            return {"tranche": t["nom"], "type": t["type"], "x_norm": round(x,6),
-                    "rol": round(rol,6), "taux_pur": round(tp,6),
-                    "taux_tech": round(tt,6), "taux": round(tt,6),
-                    "chargement_majeurs": round(self.chargement_majeurs,6)}
-
-        best = None
-        for q in [0.40, 0.60, 0.80, 1.0, 0.20]:
-            mq   = np.quantile(self.df_mkt["midpoints"], q)
-            df_q = self.df_mkt[self.df_mkt["midpoints"] <= mq]
-            if len(df_q) < 8: continue
-            try:
-                a, b, r2 = fit_power(df_q["midpoints"].values, df_q["ROLs"].values)
-                if b <= 0: continue
-                tts = [calc_taux_cat(t, a, b) for t in cat_tranches]
-                if any(tt["taux"] <= 0 for tt in tts): continue
-                # Vérification cohérence ROL : tranche plus basse = ROL plus élevé
-                if len(tts) >= 2:
-                    rols = [tt["rol"] for tt in tts]
-                    if rols != sorted(rols, reverse=True):
-                        self._alerte("INFO", f"Q{int(q*100)}: hiérarchie ROL non respectée — ajustement écarté")
-                        continue
-                score = r2 + (0.3 if r2 >= r2_min else 0) + 0.01 * len(df_q)
-                if best is None or score > best["score"]:
-                    best = {"a": a, "b": b, "r2": r2, "n": len(df_q),
-                            "quantile": q, "taux_tranches": tts, "score": score}
-            except: continue
-
-        if best is None:
-            self._alerte("CRITIQUE", "Aucun ajustement market curve valide — taux marché = 0 pour les tranches cat")
-            self.resultats_mkt = []
-            return []
-
-        if best["r2"] < r2_min:
-            self._alerte("WARN", f"R² = {best['r2']:.3f} < {r2_min} — market curve de faible qualité, simultion prioritaire")
-        else:
-            self._log("Market Curve", f"R²={best['r2']:.3f} N={best['n']} a={best['a']:.5f} b={best['b']:.4f} ✅")
-
-        # Compléter avec taux=0 pour les tranches travaillantes
-        all_tts = []
-        cat_map = {tt["tranche"]: tt for tt in best["taux_tranches"]}
-        for t in self.tranches:
-            if t["nom"] in cat_map:
-                all_tts.append(cat_map[t["nom"]])
-            else:
-                all_tts.append({"tranche": t["nom"], "type": t["type"],
-                                 "x_norm":0, "rol":0, "taux_pur":0,
-                                 "taux_tech":0, "taux":0, "chargement_majeurs":0})
-        self.resultats_mkt = all_tts
-        return all_tts
-
-    # ────────────────────────────────────────────
-    # ÉTAPE 6 — RAPPORT FINAL + SÉLECTION MÉTHODE
-    # ────────────────────────────────────────────
-    def etape_5_rapport(self):
-        self._log("Rapport", "Sélection méthode : max(BC,Sim) trav. | max(Sim,Mkt) cat")
-        bc_map  = {r["tranche"]: r for r in self.resultats_bc}
-        sim_map = {r["tranche"]: r for r in self.resultats_sim}
-        mkt_map = {r["tranche"]: r["taux"] for r in self.resultats_mkt}
-        rows = []; pt = 0.0
-        for idx_t, t in enumerate(self.tranches):
-            nom   = t["nom"]
-            bc_tt = _lookup_taux(self.resultats_bc,  nom, idx_t, "taux_technique")
-            si_tt = _lookup_taux(self.resultats_sim, nom, idx_t, "taux_technique")
-            mkt   = mkt_map.get(nom, 0.0) if t["type"] != "travaillante" else 0.0
-            if t["type"] == "travaillante":
-                taux = max(bc_tt, si_tt)
-                meth = f"max(BC={bc_tt:.4%}, Sim={si_tt:.4%}) → {'BC' if bc_tt >= si_tt else 'Sim'}"
-            else:
-                taux = max(si_tt, mkt)
-                meth = f"max(Sim={si_tt:.4%}, Mkt={mkt:.4%}) → {'Mkt' if mkt >= si_tt else 'Sim'}"
-            prime = self.gnpi * taux; pt += prime
-            ecart = abs(bc_tt - si_tt) / bc_tt * 100 if bc_tt > 0 else 0
-            rows.append({
-                "tranche": nom, "type": t["type"],
-                "taux_bc": round(bc_tt,6), "taux_sim": round(si_tt,6),
-                "taux_mkt": round(mkt,6), "taux_retenu": round(taux,6),
-                "methode": meth, "prime_MAD": round(prime,2),
-                "ecart_bc_sim_pct": round(ecart,1)
-            })
-            self._log("Sélection", f"{nom}: {meth} | prime={prime:,.0f} MAD")
-        self.rapport_rows = rows
-        self.prime_totale = pt
-        return rows, pt
+    # ------------------------------------------------------------------
+    # CALIBRATION DES ÉLASTICITÉS
+    # ------------------------------------------------------------------
     def _calibrer_elasticites(self):
         """
-        Calibre les élasticités log-log depuis df_ml.
-        Remplace les constantes arbitraires 0.6 / 0.35 / 0.3
-        par des valeurs estimées sur les scénarios réels.
+        Calibre les élasticités log-log depuis le dataset de scénarios ML si disponible.
+
+        Si df_ml n'existe pas ou est insuffisant, retourne des valeurs prudentes
+        par défaut. Cela évite le plantage observé :
+        AttributeError: 'AgentActuarielPython' object has no attribute 'df_ml'.
         """
-        if self.df_ml is None or len(self.df_ml) < 10:
-            return {
-                "e_portee": 0.60,
-                "e_priorite": 0.35,
-                "e_recon": 0.30,
-                "calibre": False,
-            }
-    
-        import numpy as np
-    
-        df = self.df_ml.copy()
+        valeurs_defaut = {
+            "e_portee": 0.60,
+            "e_priorite": 0.35,
+            "e_recon": 0.08,
+            "calibre": False,
+            "source": "valeurs_par_defaut",
+        }
+
+        df_ml = getattr(self, "df_ml", None)
+        if df_ml is None or not isinstance(df_ml, pd.DataFrame) or len(df_ml) < 10:
+            return valeurs_defaut
+
+        df = df_ml.copy().replace([np.inf, -np.inf], np.nan)
+        colonnes = ["taux_retenu", "priorite", "portee", "nb_reconstitutions"]
+        if not all(c in df.columns for c in colonnes):
+            return valeurs_defaut
+
+        for c in colonnes:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        df = df.dropna(subset=colonnes)
         df = df[
             (df["taux_retenu"] > 0)
             & (df["priorite"] > 0)
             & (df["portee"] > 0)
-        ]
-    
+            & (df["nb_reconstitutions"] >= 0)
+        ].copy()
+
         if len(df) < 10:
-            return {
-                "e_portee": 0.60,
-                "e_priorite": 0.35,
-                "e_recon": 0.30,
-                "calibre": False,
-            }
-    
-        log_tau = np.log(df["taux_retenu"])
-        log_C = np.log(df["portee"])
-        log_D = np.log(df["priorite"])
-        log_rec = np.log(df["nb_reconstitutions"] + 1)
-    
-        X_ols = np.column_stack([
-            np.ones(len(df)),
-            log_C,
-            log_D,
-            log_rec,
-        ])
-    
+            return valeurs_defaut
+
         try:
-            beta, _, _, _ = np.linalg.lstsq(X_ols, log_tau, rcond=None)
-    
-            e_portee = float(beta[1])
-            e_priorite = float(-beta[2])
-            e_recon = float(beta[3])
-    
-            e_portee = np.clip(e_portee, 0.3, 1.2)
-            e_priorite = np.clip(e_priorite, 0.1, 0.8)
-            e_recon = np.clip(e_recon, 0.0, 0.6)
-    
+            from sklearn.linear_model import LinearRegression
+
+            X = pd.DataFrame(
+                {
+                    "log_portee": np.log(df["portee"]),
+                    "log_priorite": np.log(df["priorite"]),
+                    "log_recon": np.log1p(df["nb_reconstitutions"]),
+                }
+            )
+            y = np.log(df["taux_retenu"])
+
+            reg = LinearRegression()
+            reg.fit(X, y)
+            coef = dict(zip(X.columns, reg.coef_))
+
+            e_portee = float(coef.get("log_portee", valeurs_defaut["e_portee"]))
+            e_priorite = float(-coef.get("log_priorite", valeurs_defaut["e_priorite"]))
+            e_recon = float(coef.get("log_recon", valeurs_defaut["e_recon"]))
+
+            # Encadrement prudent : on évite des sensibilités absurdes.
+            e_portee = min(max(e_portee, 0.10), 1.50)
+            e_priorite = min(max(e_priorite, 0.05), 1.50)
+            e_recon = min(max(e_recon, 0.00), 0.50)
+
             return {
-                "e_portee": round(e_portee, 3),
-                "e_priorite": round(e_priorite, 3),
-                "e_recon": round(e_recon, 3),
+                "e_portee": e_portee,
+                "e_priorite": e_priorite,
+                "e_recon": e_recon,
                 "calibre": True,
+                "source": "dataset_scenarios_ml",
+                "n_obs": int(len(df)),
             }
-    
-        except Exception:
+
+        except Exception as exc:
+            self._alerte("INFO", f"Calibration des élasticités non utilisée : {exc}")
+            return valeurs_defaut
+
+    # ------------------------------------------------------------------
+    # ÉTAPE 0 — VALIDATION
+    # ------------------------------------------------------------------
+    def etape_0_validation(self):
+        self._log("Validation", "Vérification des paramètres actuariels")
+
+        if self.df_proj is None or self.df_proj.empty:
+            self._alerte("CRITIQUE", "Aucune donnée projetée disponible pour le calcul.")
+
+        if self.gnpi <= 0:
+            self._alerte("CRITIQUE", "GNPI nul ou négatif.")
+
+        if self.alpha < 0.8:
+            self._alerte("CRITIQUE", f"Alpha = {self.alpha:.4f} < 0.8 : queue très lourde, résultats sensibles.")
+        elif self.alpha > 4.0:
+            self._alerte("WARN", f"Alpha = {self.alpha:.4f} > 4.0 : vérifier la pertinence de la loi de sévérité.")
+        else:
+            self._log("Alpha", f"Paramètre alpha cohérent : {self.alpha:.4f}")
+
+        if self.lambda_ < 0.0:
+            self._alerte("CRITIQUE", f"Lambda = {self.lambda_:.4f} négatif.")
+        elif self.lambda_ < 0.5:
+            self._alerte("WARN", f"Lambda = {self.lambda_:.4f} faible : fréquence quasi nulle au-dessus du seuil.")
+        elif self.lambda_ > 50:
+            self._alerte("WARN", f"Lambda = {self.lambda_:.4f} élevé : vérifier le seuil de modélisation.")
+        else:
+            self._log("Lambda", f"Fréquence moyenne cohérente : {self.lambda_:.4f}")
+
+        trav = [t for t in self.tranches if t.get("type") == "travaillante"]
+        cat = [t for t in self.tranches if t.get("type") == "cat"]
+        if not trav:
+            self._alerte("WARN", "Aucune tranche travaillante dans le programme.")
+        if not cat:
+            self._alerte("INFO", "Aucune tranche cat : courbe de marché potentiellement non applicable.")
+        self._log("Programme", f"{len(trav)} tranche(s) travaillante(s), {len(cat)} tranche(s) cat.")
+
+    # ------------------------------------------------------------------
+    # ÉTAPE 1 — BURNING COST
+    # ------------------------------------------------------------------
+    def etape_1_burning_cost(self):
+        self._log("Burning Cost", "Calcul BC individuel par sinistre et agrégation annuelle.")
+        resultats = []
+
+        if self.df_proj is None or self.df_proj.empty:
+            self.resultats_bc = []
+            self._alerte("CRITIQUE", "Burning Cost impossible : df_proj vide.")
+            return []
+
+        for t_info in self.tranches:
+            nom = t_info.get("nom", "Tranche")
+            D = float(t_info.get("priorite", 0.0) or 0.0)
+            L = float(t_info.get("portee", 0.0) or 0.0)
+            aal = t_info.get("AAL")
+            aad = t_info.get("AAD")
+            n_rec = int(t_info.get("nb_reconstitutions", 0) or 0)
+            taux_rec_list = self._get_taux_rec_list(t_info)
+            cap = (n_rec + 1) * L
+
+            df_p = self.df_proj.copy()
+            if "Sprime_ultime" not in df_p.columns or "annee_surv" not in df_p.columns:
+                self._alerte("CRITIQUE", f"{nom} : colonnes df_proj insuffisantes pour le BC.")
+                continue
+            if "coeff_stab" not in df_p.columns:
+                df_p["coeff_stab"] = 1.0
+
+            df_p["Ck"] = df_p.apply(
+                lambda row: min(max(float(row.get("Sprime_ultime", 0.0)) - D, 0.0), L)
+                * float(row.get("coeff_stab", 1.0) or 1.0),
+                axis=1,
+            )
+
+            charges_ann = df_p.groupby("annee_surv")["Ck"].sum()
+            charges_finales = []
+            for ann, ch in charges_ann.items():
+                ch = float(ch)
+                if aad:
+                    ch = max(ch - float(aad), 0.0)
+                if aal:
+                    ch = min(ch, float(aal))
+                charges_finales.append({"annee": int(ann), "charge": float(min(ch, cap))})
+
+            df_ch = pd.DataFrame(charges_finales)
+            N = len(df_ch)
+            charges_nonzero = [c["charge"] for c in charges_finales if c["charge"] > 0]
+            n_nz = len(charges_nonzero)
+
+            Pr_Rec = 0.0
+            if N > 0 and L > 0:
+                for C_n in df_ch["charge"].values:
+                    for r_idx, t_r_i in enumerate(taux_rec_list):
+                        Pr_Rec += (float(t_r_i) / 100.0) * min(L, max(float(C_n) - r_idx * L, 0.0))
+                Pr_Rec /= L
+            Rec = Pr_Rec / (Pr_Rec + N) if (Pr_Rec + N) > 0 else 0.0
+
+            if n_nz < 3:
+                tp = tr = tt = sigma = 0.0
+                charge_moy = 0.0
+                self._alerte("WARN", f"{nom} : BC non crédible, seulement {n_nz} année(s) non nulle(s).")
+            else:
+                charge_moy = float(df_ch["charge"].mean())
+                tp = charge_moy / max(self.gnpi, 1.0)
+                sigma = float(np.std(charges_nonzero)) / max(self.gnpi, 1.0)
+                tr = tp + sigma * 0.20
+                denom = max(
+                    1
+                    - float(t_info.get("brokage", 0.0) or 0.0)
+                    - float(t_info.get("frais", 0.0) or 0.0)
+                    - float(t_info.get("marge", 0.0) or 0.0)
+                    - float(t_info.get("retrocession", 0.0) or 0.0),
+                    0.01,
+                )
+                tt = (tr * (1 - Rec)) / denom
+
+            resultats.append(
+                {
+                    "tranche": nom,
+                    "type": t_info.get("type", ""),
+                    "charge_moy": round(charge_moy, 2),
+                    "n_ann_nonzero": int(n_nz),
+                    "sigma_hist": round(sigma if n_nz >= 3 else 0.0, 6),
+                    "Pr_Rec": round(Pr_Rec, 6),
+                    "Rec": round(Rec, 6),
+                    "taux_pur": round(tp, 6),
+                    "taux_risque": round(tr, 6),
+                    "taux_technique": round(tt, 6),
+                    "chargement_majeurs": round(self.chargement_majeurs, 6),
+                    "detail_annuel": charges_finales,
+                }
+            )
+            self._log("BC", f"{nom}: taux pur={tp:.4%}, taux technique={tt:.4%}, années non nulles={n_nz}.")
+
+        self.resultats_bc = resultats
+        return resultats
+
+    # ------------------------------------------------------------------
+    # ÉTAPE 2 — SIMULATION
+    # ------------------------------------------------------------------
+    def etape_2_simulation(self, n_sim=10000, seed=42):
+        self._log("Simulation", f"Simulation fréquence-sévérité : alpha={self.alpha:.4f}, lambda={self.lambda_:.4f}, n={n_sim:,}.")
+        rng = np.random.default_rng(seed)
+        resultats = []
+
+        if self.lambda_ < 0 or self.alpha <= 0 or self.seuil <= 0:
+            self._alerte("CRITIQUE", "Simulation impossible : paramètres fréquence/sévérité invalides.")
+            self.resultats_sim = []
+            return []
+
+        coeffs = self.coeffs[np.isfinite(self.coeffs)]
+        if len(coeffs) == 0:
+            coeffs = np.array([1.0])
+
+        for t_info in self.tranches:
+            nom = t_info.get("nom", "Tranche")
+            D = float(t_info.get("priorite", 0.0) or 0.0)
+            P = float(t_info.get("portee", 0.0) or 0.0)
+            r = int(t_info.get("nb_reconstitutions", 0) or 0)
+            aal = t_info.get("AAL")
+            aad = t_info.get("AAD")
+            cap = (r + 1) * P
+
+            def simuler(avec_aal=True, avec_aad=True, avec_rec=True):
+                charges = []
+                for _ in range(int(n_sim)):
+                    n_sin = rng.poisson(self.lambda_)
+                    s_tot = 0.0
+                    if n_sin > 0:
+                        u = rng.uniform(size=n_sin)
+                        sp = self.seuil * (u ** (-1.0 / self.alpha))
+                        ic = rng.choice(len(coeffs), size=n_sin, replace=True)
+                        for k in range(n_sin):
+                            s = float(sp[k])
+                            c = float(coeffs[ic[k]])
+                            if s <= D:
+                                s_i = 0.0
+                            elif s <= D + P:
+                                s_i = c * (s - D)
+                            else:
+                                s_i = c * P
+                            s_tot += s_i
+                    ch = s_tot
+                    if avec_aad and aad:
+                        ch = max(ch - float(aad), 0.0)
+                    if avec_aal and aal:
+                        ch = min(ch, float(aal))
+                    charges.append(min(ch, cap) if avec_rec else ch)
+                return np.array(charges, dtype=float)
+
+            def calc(ch):
+                p0 = float(np.mean(ch))
+                sig = float(np.std(ch))
+                tp = p0 / max(self.gnpi, 1.0)
+                tr = (p0 + 0.2 * sig) / max(self.gnpi, 1.0)
+                denom = max(
+                    1
+                    - float(t_info.get("brokage", 0.0) or 0.0)
+                    - float(t_info.get("frais", 0.0) or 0.0)
+                    - float(t_info.get("marge", 0.0) or 0.0)
+                    - float(t_info.get("retrocession", 0.0) or 0.0),
+                    0.01,
+                )
+                tt = tr / denom
+                return round(tp, 6), round(tr, 6), round(tt, 6), round(sig / max(self.gnpi, 1.0), 6)
+
+            c_base = simuler(True, True, True)
+            c_saal = simuler(False, True, True)
+            c_saad = simuler(True, False, True)
+            c_srec = simuler(True, True, False)
+
+            tp, tr, tt, sigma_sim = calc(c_base)
+            _, _, tt_aal, _ = calc(c_saal)
+            _, _, tt_aad, _ = calc(c_saad)
+            _, _, tt_rec, _ = calc(c_srec)
+
+            resultats.append(
+                {
+                    "tranche": nom,
+                    "type": t_info.get("type", ""),
+                    "taux_pur": tp,
+                    "taux_risque": tr,
+                    "taux_technique": tt,
+                    "sigma_sim": sigma_sim,
+                    "chargement_majeurs": round(self.chargement_majeurs, 6),
+                    "sans_aal": tt_aal,
+                    "sans_aad": tt_aad,
+                    "sans_rec": tt_rec,
+                    "impact_aal": round(tt_aal - tt, 6),
+                    "impact_aad": round(tt_aad - tt, 6),
+                    "impact_rec": round(tt_rec - tt, 6),
+                    "param_alpha": round(self.alpha, 6),
+                    "param_lambda": round(self.lambda_, 6),
+                    "param_seuil": round(self.seuil, 2),
+                    "n_sim": int(n_sim),
+                    "seed": int(seed),
+                }
+            )
+            self._log("Simulation", f"{nom}: taux pur={tp:.4%}, taux technique={tt:.4%}.")
+
+        self.resultats_sim = resultats
+        return resultats
+
+    # ------------------------------------------------------------------
+    # ÉTAPE 3 — CONTRÔLES BC / SIMULATION
+    # ------------------------------------------------------------------
+    def etape_3_controles(self):
+        self._log("Contrôles", "Vérification de la cohérence BC / Simulation.")
+        bc_map = {r.get("tranche"): r for r in self.resultats_bc}
+        sim_map = {r.get("tranche"): r for r in self.resultats_sim}
+
+        for t in self.tranches:
+            nom = t.get("nom", "")
+            bc_tt = float(bc_map.get(nom, {}).get("taux_technique", 0.0) or 0.0)
+            si_tt = float(sim_map.get(nom, {}).get("taux_technique", 0.0) or 0.0)
+
+            if t.get("type") == "travaillante" and bc_tt > 0 and si_tt > 0:
+                ecart = abs(bc_tt - si_tt) / max(bc_tt, 1e-12)
+                if ecart > 0.50:
+                    self._alerte("CRITIQUE", f"{nom}: écart BC/Simulation = {ecart:.0%}, analyse complémentaire requise.")
+                elif ecart > 0.30:
+                    self._alerte("WARN", f"{nom}: écart BC/Simulation = {ecart:.0%}, justification nécessaire.")
+                else:
+                    self._log("Contrôle BC/Simulation", f"{nom}: écart={ecart:.0%}, convergence acceptable.")
+
+            if t.get("type") == "cat" and bc_tt == 0:
+                self._log("Contrôle Cat", f"{nom}: BC nul cohérent pour une tranche cat non touchée historiquement.")
+
+    # ------------------------------------------------------------------
+    # ÉTAPE 4 — MARKET CURVE
+    # ------------------------------------------------------------------
+    def etape_4_market_curve(self, r2_min=0.40):
+        cat_tranches = [t for t in self.tranches if t.get("type") != "travaillante"]
+        if not cat_tranches:
+            self._log("Courbe de marché", "Aucune tranche non travaillante/cat : courbe de marché non appliquée.")
+            self.resultats_mkt = []
+            return []
+        if self.df_mkt is None or len(self.df_mkt) == 0:
+            self._alerte("INFO", "Données marché non fournies : courbe de marché ignorée.")
+            self.resultats_mkt = []
+            return []
+
+        df_mkt = self.df_mkt.copy().replace([np.inf, -np.inf], np.nan)
+        if not {"midpoints", "ROLs"}.issubset(df_mkt.columns):
+            self._alerte("CRITIQUE", "Données marché insuffisantes : colonnes midpoints et ROLs requises.")
+            self.resultats_mkt = []
+            return []
+
+        df_mkt["midpoints"] = pd.to_numeric(df_mkt["midpoints"], errors="coerce")
+        df_mkt["ROLs"] = pd.to_numeric(df_mkt["ROLs"], errors="coerce")
+        df_mkt = df_mkt[(df_mkt["midpoints"] > 0) & (df_mkt["ROLs"] > 0)].dropna()
+
+        if len(df_mkt) < 8:
+            self._alerte("WARN", f"Courbe de marché peu exploitable : seulement {len(df_mkt)} point(s).")
+            self.resultats_mkt = []
+            return []
+
+        self._log("Courbe de marché", f"Ajustement ROL = a x^(-b) sur {len(df_mkt)} point(s).")
+
+        def fit_power(x, y):
+            lx = np.log(x)
+            ly = np.log(y)
+            c = np.polyfit(lx, ly, 1)
+            a = float(np.exp(c[1]))
+            b = float(-c[0])
+            ly_pred = np.polyval(c, lx)
+            r2 = 1 - np.sum((ly - ly_pred) ** 2) / (np.sum((ly - ly.mean()) ** 2) + 1e-10)
+            return a, b, float(r2)
+
+        def calc_taux_cat(t, a, b):
+            x = (float(t.get("priorite", 0.0)) + float(t.get("portee", 0.0)) / 2.0) / max(self.gnpi, 1.0)
+            rol = a * (x ** (-b))
+            tp = rol * float(t.get("portee", 0.0)) / max(self.gnpi, 1.0)
+            tr = tp * 1.002
+            denom = max(
+                1
+                - float(t.get("brokage", 0.0) or 0.0)
+                - float(t.get("frais", 0.0) or 0.0)
+                - float(t.get("marge", 0.0) or 0.0)
+                - float(t.get("retrocession", 0.0) or 0.0),
+                0.01,
+            )
+            tt = tr / denom
             return {
-                "e_portee": 0.60,
-                "e_priorite": 0.35,
-                "e_recon": 0.30,
-                "calibre": False,
+                "tranche": t.get("nom", ""),
+                "type": t.get("type", ""),
+                "x_norm": round(x, 6),
+                "rol": round(rol, 6),
+                "taux_pur": round(tp, 6),
+                "taux_tech": round(tt, 6),
+                "taux": round(tt, 6),
+                "chargement_majeurs": round(self.chargement_majeurs, 6),
             }
-    
-    
-    # ────────────────────────────────────────────
-    # ÉTAPE 6 — 5 VARIANTES DE PROGRAMME OPTIMAL
-    # ────────────────────────────────────────────
+
+        best = None
+        for q in [0.40, 0.60, 0.80, 1.00, 0.20]:
+            try:
+                mq = np.quantile(df_mkt["midpoints"], q)
+                df_q = df_mkt[df_mkt["midpoints"] <= mq]
+                if len(df_q) < 8:
+                    continue
+                a, b, r2 = fit_power(df_q["midpoints"].values, df_q["ROLs"].values)
+                if b <= 0:
+                    continue
+                taux_tranches = [calc_taux_cat(t, a, b) for t in cat_tranches]
+                if any(tt.get("taux", 0) <= 0 for tt in taux_tranches):
+                    continue
+                score = r2 + (0.3 if r2 >= r2_min else 0.0) + 0.01 * len(df_q)
+                if best is None or score > best["score"]:
+                    best = {
+                        "a": a,
+                        "b": b,
+                        "r2": r2,
+                        "n": len(df_q),
+                        "quantile": q,
+                        "taux_tranches": taux_tranches,
+                        "score": score,
+                    }
+            except Exception:
+                continue
+
+        if best is None:
+            self._alerte("CRITIQUE", "Aucun ajustement valide de courbe de marché.")
+            self.resultats_mkt = []
+            return []
+
+        if best["r2"] < r2_min:
+            self._alerte("WARN", f"Courbe de marché de faible qualité : R2={best['r2']:.3f}.")
+        else:
+            self._log("Courbe de marché", f"R2={best['r2']:.3f}, N={best['n']}, a={best['a']:.5f}, b={best['b']:.4f}.")
+
+        all_tts = []
+        cat_map = {tt["tranche"]: tt for tt in best["taux_tranches"]}
+        for t in self.tranches:
+            nom = t.get("nom", "")
+            if nom in cat_map:
+                all_tts.append(cat_map[nom])
+            else:
+                all_tts.append(
+                    {
+                        "tranche": nom,
+                        "type": t.get("type", ""),
+                        "x_norm": 0,
+                        "rol": 0,
+                        "taux_pur": 0,
+                        "taux_tech": 0,
+                        "taux": 0,
+                        "chargement_majeurs": 0,
+                    }
+                )
+        self.resultats_mkt = all_tts
+        return all_tts
+
+    # ------------------------------------------------------------------
+    # ÉTAPE 5 — RAPPORT
+    # ------------------------------------------------------------------
+    def etape_5_rapport(self):
+        self._log("Rapport", "Sélection : max(BC, Simulation) pour travaillante ; max(Simulation, Marché) sinon.")
+        mkt_map = {r.get("tranche"): r.get("taux", 0.0) for r in self.resultats_mkt}
+        rows = []
+        pt = 0.0
+
+        for idx_t, t in enumerate(self.tranches):
+            nom = t.get("nom", f"Tranche {idx_t + 1}")
+            bc_tt = _lookup_taux(self.resultats_bc, nom, idx_t, "taux_technique")
+            si_tt = _lookup_taux(self.resultats_sim, nom, idx_t, "taux_technique")
+            mkt = float(mkt_map.get(nom, 0.0) or 0.0) if t.get("type") != "travaillante" else 0.0
+
+            if t.get("type") == "travaillante":
+                taux = max(bc_tt, si_tt)
+                meth = f"max(BC={bc_tt:.4%}, Simulation={si_tt:.4%})"
+            else:
+                taux = max(si_tt, mkt)
+                meth = f"max(Simulation={si_tt:.4%}, Marché={mkt:.4%})"
+
+            prime = self.gnpi * taux
+            pt += prime
+            ecart = abs(bc_tt - si_tt) / max(bc_tt, 1e-12) * 100 if bc_tt > 0 else 0.0
+            rows.append(
+                {
+                    "tranche": nom,
+                    "type": t.get("type", ""),
+                    "taux_bc": round(bc_tt, 6),
+                    "taux_sim": round(si_tt, 6),
+                    "taux_mkt": round(mkt, 6),
+                    "taux_retenu": round(taux, 6),
+                    "methode": meth,
+                    "prime_MAD": round(prime, 2),
+                    "ecart_bc_sim_pct": round(ecart, 1),
+                }
+            )
+            self._log("Sélection", f"{nom}: {meth}, prime={prime:,.0f} MAD.")
+
+        self.rapport_rows = rows
+        self.prime_totale = pt
+        return rows, pt
+
+    # ------------------------------------------------------------------
+    # ÉTAPE 6 — VARIANTES COMPARABLES / LOGIQUE DE FINETTI
+    # ------------------------------------------------------------------
     def etape_6_optimisation(self):
         """
-        Génère 5 variantes de programme basées sur :
-        - Analyse technique
-        - Sensibilité des conditions
-        - Logique de leader
+        Génère des variantes comparables du programme initial.
+
+        Logique :
+        - ne pas produire des programmes explicitement « avantage cédante/réassureur » ;
+        - rester proche du programme initial ;
+        - privilégier la stabilité et la convergence des méthodes ;
+        - utiliser les élasticités calibrées si le dataset ML existe, sinon valeurs par défaut.
         """
-    
-        self._log(
-            "Optimisation",
-            "Génération de 5 variantes de programme — perspective leader"
-        )
-    
-        sim_map = {r["tranche"]: r for r in self.resultats_sim}
-        bc_map = {r["tranche"]: r for r in self.resultats_bc}
-        mkt_map = {r["tranche"]: r for r in self.resultats_mkt}
-    
+        self._log("Optimisation", "Recherche de programmes alternatifs comparables.")
+
         elasticites = self._calibrer_elasticites()
-    
-        self._log(
-            "Optimisation",
-            f"Élasticités {'calibrées' if elasticites['calibre'] else 'heuristiques'} — "
-            f"e_portée={elasticites['e_portee']:.3f}, "
-            f"e_priorité={elasticites['e_priorite']:.3f}, "
-            f"e_recon={elasticites['e_recon']:.3f}"
-        )
-    
-        def taux_technique_modifie(
-            t_info,
-            taux_pur_ref,
-            coeff_portee=1.0,
-            coeff_priorite=1.0,
-            nb_recon_new=None,
-            aal_ratio=None,
-            elasticites=None,
-        ):
-            """
-            Estime le taux technique pour un programme modifié.
-            Élasticités calibrées depuis df_ml si disponibles,
-            sinon fallback sur heuristiques marché.
-            """
-            e = elasticites or {
-                "e_portee": 0.60,
-                "e_priorite": 0.35,
-                "e_recon": 0.30,
+        e_portee = elasticites["e_portee"]
+        e_priorite = elasticites["e_priorite"]
+        e_recon = elasticites["e_recon"]
+
+        sim_map = {r.get("tranche"): r for r in self.resultats_sim}
+        bc_map = {r.get("tranche"): r for r in self.resultats_bc}
+        mkt_map = {r.get("tranche"): r for r in self.resultats_mkt}
+
+        def taux_base(t):
+            nom = t.get("nom", "")
+            bc = float(bc_map.get(nom, {}).get("taux_technique", 0.0) or 0.0)
+            sim = float(sim_map.get(nom, {}).get("taux_technique", 0.0) or 0.0)
+            mkt = float(mkt_map.get(nom, {}).get("taux", 0.0) or 0.0)
+            if t.get("type") == "travaillante":
+                return max(bc, sim)
+            return max(sim, mkt)
+
+        def sigma_ref(t):
+            nom = t.get("nom", "")
+            s_sim = float(sim_map.get(nom, {}).get("sigma_sim", 0.0) or 0.0)
+            s_bc = float(bc_map.get(nom, {}).get("sigma_hist", 0.0) or 0.0)
+            return max(s_sim, s_bc, 0.0)
+
+        def convergence_ref(t):
+            nom = t.get("nom", "")
+            vals = []
+            for v in [
+                bc_map.get(nom, {}).get("taux_technique", 0.0),
+                sim_map.get(nom, {}).get("taux_technique", 0.0),
+                mkt_map.get(nom, {}).get("taux", 0.0),
+            ]:
+                v = float(v or 0.0)
+                if v > 0:
+                    vals.append(v)
+            if len(vals) <= 1:
+                return 0.0
+            return float(np.std(vals) / max(np.mean(vals), 1e-12))
+
+        def evaluer_programme(label, mult_D=1.0, mult_C=1.0, delta_rec=0):
+            tranches_alt = []
+            prime = 0.0
+            protection = 0.0
+            variance_proxy = 0.0
+            convergence = 0.0
+            ecart_structure = 0.0
+
+            for t in self.tranches:
+                t_alt = dict(t)
+                D0 = float(t.get("priorite", 0.0) or 0.0)
+                C0 = float(t.get("portee", 0.0) or 0.0)
+                rec0 = int(t.get("nb_reconstitutions", 0) or 0)
+
+                D1 = self._arrondir_mad(D0 * mult_D, minimum=500_000)
+                C1 = self._arrondir_mad(C0 * mult_C, minimum=500_000)
+                rec1 = int(max(0, min(5, rec0 + delta_rec)))
+
+                t_alt["priorite"] = D1
+                t_alt["portee"] = C1
+                t_alt["nb_reconstitutions"] = rec1
+
+                base = taux_base(t)
+                if base <= 0:
+                    base = float(sim_map.get(t.get("nom", ""), {}).get("taux_technique", 0.0) or 0.0)
+
+                adj_portee = (C1 / max(C0, 1.0)) ** e_portee
+                adj_priorite = (D0 / max(D1, 1.0)) ** e_priorite
+                adj_recon = ((rec1 + 1) / max(rec0 + 1, 1)) ** e_recon
+                taux = max(base * adj_portee * adj_priorite * adj_recon, 0.0)
+
+                prime_t = self.gnpi * taux
+                prime += prime_t
+                protection_t = C1 * (rec1 + 1)
+                protection += protection_t
+
+                sig = sigma_ref(t)
+                variance_proxy += (sig * self.gnpi) ** 2 * (C1 / max(C0, 1.0)) ** 2
+                convergence += convergence_ref(t)
+                ecart_structure += abs(D1 / max(D0, 1.0) - 1.0) + abs(C1 / max(C0, 1.0) - 1.0) + 0.25 * abs(rec1 - rec0)
+
+                t_alt["_taux"] = taux
+                t_alt["_prime"] = prime_t
+                tranches_alt.append(t_alt)
+
+            n = max(len(self.tranches), 1)
+            taux_global = prime / max(self.gnpi, 1.0)
+            variance_moyenne = variance_proxy / n
+            convergence_moyenne = convergence / n
+            ecart_structure_moyen = ecart_structure / n
+
+            # Score De Finetti simplifié : priorité à la variance faible,
+            # puis à la convergence des méthodes et à la proximité du programme initial.
+            score = (
+                -np.log1p(max(variance_moyenne, 0.0))
+                -2.0 * convergence_moyenne
+                -1.5 * ecart_structure_moyen
+            )
+
+            return {
+                "label": label,
+                "description": "Structure alternative comparable au programme initial.",
+                "tranches": tranches_alt,
+                "prime": round(prime, 2),
+                "taux_global": round(taux_global, 6),
+                "protection_theorique": round(protection, 2),
+                "variance_proxy": round(float(variance_moyenne), 2),
+                "indice_convergence_methodes": round(float(max(0.0, 1.0 - convergence_moyenne)) * 100, 2),
+                "indice_comparabilite": round(float(max(0.0, 1.0 - ecart_structure_moyen)) * 100, 2),
+                "score_de_finetti": round(float(score), 6),
+                "elasticites": elasticites,
             }
-    
-            adj = (coeff_portee ** e["e_portee"]) / (
-                coeff_priorite ** e["e_priorite"]
-            )
-    
-            n_rec = (
-                nb_recon_new
-                if nb_recon_new is not None
-                else t_info["nb_reconstitutions"]
-            )
-    
-            ratio_rec = (n_rec + 1) / max(t_info["nb_reconstitutions"] + 1, 1)
-            adj_rec = ratio_rec ** e["e_recon"]
-    
-            adj_aal = 1.0
-            if aal_ratio is not None and t_info.get("AAL"):
-                adj_aal = aal_ratio ** 0.2
-    
-            return taux_pur_ref * adj * adj_rec * adj_aal
-    
-        variantes = {}
-    
-        # ── VARIANTE 1 — Programme de référence ──
-        v1 = []
-    
-        for t in self.tranches:
-            r = sim_map.get(t["nom"], {})
-            taux = r.get("taux_technique", 0)
-    
-            v1.append({
-                **t,
-                "_taux": taux,
-                "_prime": self.gnpi * taux,
-            })
-    
-        variantes["ref"] = {
-            "label": "Programme de référence",
-            "description": "Conditions actuelles — taux techniques issus de la simulation",
-            "angle": "Base de comparaison",
-            "tranches": v1,
-            "prime": sum(t["_prime"] for t in v1),
+
+        variantes = {
+            "programme_initial": evaluer_programme("Programme initial", 1.00, 1.00, 0),
+            "structure_comparable_1": evaluer_programme("Structure comparable 1", 1.05, 1.00, 0),
+            "structure_comparable_2": evaluer_programme("Structure comparable 2", 1.00, 0.95, 0),
+            "structure_comparable_3": evaluer_programme("Structure comparable 3", 1.10, 1.00, -1),
+            "structure_comparable_4": evaluer_programme("Structure comparable 4", 0.95, 1.05, 0),
         }
-    
-        # ── VARIANTE 2 — Optimisation priorité (+10%) ──
-        v2 = []
-    
-        for t in self.tranches:
-            t2 = dict(t)
-            t2["priorite"] = round(t["priorite"] * 1.10 / 500_000) * 500_000
-    
-            r = sim_map.get(t["nom"], {})
-            tt = taux_technique_modifie(
-                t,
-                r.get("taux_technique", 0),
-                coeff_priorite=1.10,
-                elasticites=elasticites,
-            )
-    
-            v2.append({
-                **t2,
-                "_taux": tt,
-                "_prime": self.gnpi * tt,
-            })
-    
-        variantes["priorite_haute"] = {
-            "label": "Priorité relevée (+10%)",
-            "description": (
-                f"Priorité T1 : {self.tranches[0]['priorite'] * 1.10 / 1e6:.1f}M MAD — "
-                "réduit l'exposition sur sinistres courants"
-            ),
-            "angle": "Protège le réassureur sur la tranche travaillante",
-            "tranches": v2,
-            "prime": sum(t["_prime"] for t in v2),
-        }
-    
-        # ── VARIANTE 3 — Portée réduite (−15%) ──
-        v3 = []
-    
-        for t in self.tranches:
-            t3 = dict(t)
-            t3["portee"] = round(t["portee"] * 0.85 / 500_000) * 500_000
-    
-            r = sim_map.get(t["nom"], {})
-            tt = taux_technique_modifie(
-                t,
-                r.get("taux_technique", 0),
-                coeff_portee=0.85,
-                elasticites=elasticites,
-            )
-    
-            v3.append({
-                **t3,
-                "_taux": tt,
-                "_prime": self.gnpi * tt,
-            })
-    
-        variantes["portee_reduite"] = {
-            "label": "Portée réduite (−15%)",
-            "description": "Réduit l'engagement maximal — adapté si sinistralité catastrophique élevée",
-            "angle": "Limite le MPL (Maximum Possible Loss)",
-            "tranches": v3,
-            "prime": sum(t["_prime"] for t in v3),
-        }
-    
-        # ── VARIANTE 4 — Conditions restrictives ──
-        v4 = []
-    
-        for t in self.tranches:
-            t4 = dict(t)
-    
-            if t["type"] == "travaillante":
-                aad_actuel = t.get("AAD") or 0
-                t4["AAD"] = round(
-                    max(aad_actuel * 1.25, t["portee"] * 0.15) / 100_000
-                ) * 100_000
-    
-            if t["type"] == "cat":
-                t4["nb_reconstitutions"] = max(t["nb_reconstitutions"] - 1, 1)
-    
-            r = sim_map.get(t["nom"], {})
-            tt = taux_technique_modifie(
-                t,
-                r.get("taux_technique", 0),
-                nb_recon_new=t4["nb_reconstitutions"],
-                elasticites=elasticites,
-            )
-    
-            v4.append({
-                **t4,
-                "_taux": tt,
-                "_prime": self.gnpi * tt,
-            })
-    
-        variantes["conditions_restrictives"] = {
-            "label": "Conditions restrictives",
-            "description": "AAD renforcé + reconstitutions cat limitées — réduit la fréquence de mise en jeu",
-            "angle": "Meilleure rentabilité technique pour le réassureur",
-            "tranches": v4,
-            "prime": sum(t["_prime"] for t in v4),
-        }
-    
-        # ── VARIANTE 5 — Programme élargi cédante ──
-        v5 = []
-    
-        for t in self.tranches:
-            t5 = dict(t)
-            t5["portee"] = round(t["portee"] * 1.15 / 500_000) * 500_000
-            t5["priorite"] = round(t["priorite"] * 0.90 / 500_000) * 500_000
-    
-            r = sim_map.get(t["nom"], {})
-            tt = taux_technique_modifie(
-                t,
-                r.get("taux_technique", 0),
-                coeff_portee=1.15,
-                coeff_priorite=0.90,
-                elasticites=elasticites,
-            )
-    
-            v5.append({
-                **t5,
-                "_taux": tt,
-                "_prime": self.gnpi * tt,
-            })
-    
-        variantes["elargi_cedante"] = {
-            "label": "Programme élargi",
-            "description": "Portée +15%, priorité −10% — protection maximale pour la cédante",
-            "angle": "Proposition cédante si marché favorable / négociation de renouvellement",
-            "tranches": v5,
-            "prime": sum(t["_prime"] for t in v5),
-        }
-    
-        # ── Scoring des variantes ──
-        taux_ref = variantes["ref"]["prime"] / self.gnpi if self.gnpi else 0
-    
-        for _, v in variantes.items():
-            taux_v = v["prime"] / self.gnpi if self.gnpi else 0
-    
-            v["taux_global"] = taux_v
-            v["ecart_ref_pts"] = (taux_v - taux_ref) * 100
-            v["score_leader"] = taux_v - abs(taux_v - taux_ref) * 0.5
-    
+
+        initial_prime = variantes["programme_initial"]["prime"]
+        for key, v in variantes.items():
+            v["ecart_prime_vs_initial"] = round((v["prime"] - initial_prime) / max(initial_prime, 1.0), 6)
+            if key == "programme_initial":
+                v["diagnostic"] = "Programme proposé par la cédante, utilisé comme base de comparaison."
+            elif abs(v["ecart_prime_vs_initial"]) <= 0.15 and v["indice_comparabilite"] >= 70:
+                v["diagnostic"] = "Programme alternatif comparable, techniquement discutable avec la cédante."
+            else:
+                v["diagnostic"] = "Programme indicatif : écart au programme initial à documenter."
+
+        candidats = {k: v for k, v in variantes.items() if k != "programme_initial"}
+        programme_recommande_key = max(candidats, key=lambda k: candidats[k]["score_de_finetti"]) if candidats else "programme_initial"
+        variantes["programme_recommande"] = variantes[programme_recommande_key]
+        variantes["programme_recommande"]["cle_source"] = programme_recommande_key
+
         self._log(
             "Optimisation",
-            f"5 variantes générées | Prime ref : {variantes['ref']['prime']:,.0f} MAD"
+            f"Variantes comparables générées. Élasticités : source={elasticites.get('source')}, calibré={elasticites.get('calibre')}.",
         )
-    
         return variantes
 
+    # ------------------------------------------------------------------
+    # RAPPORT TEXTE
+    # ------------------------------------------------------------------
     def generer_rapport_texte(self):
-        taux_global = self.prime_totale / self.gnpi if self.gnpi else 0
+        taux_global = self.prime_totale / max(self.gnpi, 1.0)
         lignes = [
             "=" * 60,
-            "  RAPPORT DE TARIFICATION — AGENT PYTHON AUTONOME",
+            "RAPPORT DE TARIFICATION — AGENT PYTHON AUTONOME",
             "=" * 60,
-            f"  GNPI        : {self.gnpi:,.0f} MAD",
-            f"  Prime totale: {self.prime_totale:,.0f} MAD",
-            f"  Taux global : {taux_global:.4%}",
-            f"  Tranches    : {len(self.tranches)}",
+            f"GNPI         : {self.gnpi:,.0f} MAD",
+            f"Prime totale : {self.prime_totale:,.0f} MAD",
+            f"Taux global  : {taux_global:.4%}",
+            f"Tranches     : {len(self.tranches)}",
             "=" * 60,
             "",
-            "── PARAMÈTRES CALIBRÉS ─────────────────────────────",
-            f"  Alpha Pareto (MLE-Hill) : {self.alpha:.4f}",
-            f"  Lambda Poisson          : {self.lambda_:.4f}",
-            f"  Seuil modélisation      : {self.seuil:,.0f} MAD",
-            f"  Pm proxy (P99.5)        : {self.Pm_proxy:,.0f} MAD",
-            f"  Chargement majeurs      : {self.chargement_majeurs:.4%}",
+            "PARAMÈTRES",
+            f"Alpha        : {self.alpha:.4f}",
+            f"Lambda       : {self.lambda_:.4f}",
+            f"Seuil        : {self.seuil:,.0f} MAD",
+            f"Pm proxy     : {self.Pm_proxy:,.0f} MAD",
+            f"Charg. majeurs : {self.chargement_majeurs:.4%}",
             "",
-            "── RÉSULTATS PAR TRANCHE ───────────────────────────",
+            "RÉSULTATS PAR TRANCHE",
         ]
+
         for r in self.rapport_rows:
-            statut = "⚠️" if r["ecart_bc_sim_pct"] > 30 else "✅"
+            statut = "DIVERGENCE" if r.get("ecart_bc_sim_pct", 0) > 30 else "COHÉRENT"
             lignes += [
-                f"",
-                f"  [{r['type'].upper()}] {r['tranche']}",
-                f"  BC={r['taux_bc']:.4%} | Sim={r['taux_sim']:.4%} | Mkt={r['taux_mkt']:.4%}",
-                f"  → Retenu : {r['taux_retenu']:.4%} ({r['methode']})",
-                f"  → Prime  : {r['prime_MAD']:,.0f} MAD {statut} (écart BC/Sim : {r['ecart_bc_sim_pct']:.0f}%)",
+                "",
+                f"[{str(r.get('type','')).upper()}] {r.get('tranche','')}",
+                f"BC={r.get('taux_bc',0):.4%} | Simulation={r.get('taux_sim',0):.4%} | Marché={r.get('taux_mkt',0):.4%}",
+                f"Retenu : {r.get('taux_retenu',0):.4%} ({r.get('methode','')})",
+                f"Prime  : {r.get('prime_MAD',0):,.0f} MAD | Statut : {statut} | Ecart BC/Sim : {r.get('ecart_bc_sim_pct',0):.0f}%",
             ]
+
         if self.anomalies:
-            lignes += ["", "── ALERTES ─────────────────────────────────────────"]
+            lignes += ["", "ALERTES"]
             for a in self.anomalies:
-                lignes.append(f"  {a['icone']} [{a['niveau']}] {a['message']}")
-        lignes += [
-            "",
-            "── JOURNAL DES DÉCISIONS ───────────────────────────",
-        ]
+                lignes.append(f"[{a.get('niveau','')}] {a.get('message','')}")
+
+        lignes += ["", "JOURNAL DES DÉCISIONS"]
         for entry in self.log:
-            lignes.append(f"  [{entry['etape']}] {entry['decision']}" +
-                          (f" — {entry['detail']}" if entry['detail'] else ""))
+            lignes.append(
+                f"[{entry.get('etape','')}] {entry.get('decision','')}"
+                + (f" — {entry.get('detail','')}" if entry.get("detail") else "")
+            )
         lignes += ["", "=" * 60]
         return "\n".join(lignes)
 
-    # ────────────────────────────────────────────
+    # ------------------------------------------------------------------
     # PIPELINE COMPLET
-    # ────────────────────────────────────────────
+    # ------------------------------------------------------------------
     def run(self, n_sim=10000):
         self.etape_0_validation()
-        self.etape_1_burning_cost() 
+        self.etape_1_burning_cost()
         self.etape_2_simulation(n_sim)
         self.etape_3_controles()
         self.etape_4_market_curve()
