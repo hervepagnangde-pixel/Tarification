@@ -376,3 +376,19 @@ def afficher_ml_actuariel(ml):
     if ml.get("importance"):
         tableau_resultats([{"Variable":x["variable"],"Importance":f"{x['importance']:.4f}"} for x in ml["importance"]],
             f"Variables importantes — {ml.get('meilleur_modele')}")
+# -----------------------------------------------------------------------------
+# Alias de compatibilité avec app.py
+# -----------------------------------------------------------------------------
+# Les noms historiques sont conservés pour ne pas casser les imports existants.
+# Les libellés affichés restent professionnels grâce aux fonctions ci-dessus.
+
+def afficher_plan_agentique(plan):
+    return afficher_plan_actuariel(plan)
+
+
+def afficher_critique_agentique(critique):
+    return afficher_critique_actuariel(critique)
+
+
+def afficher_ml_agentique(ml):
+    return afficher_ml_actuariel(ml)
