@@ -1,7 +1,7 @@
 """
-Atlantic Re IA — Laboratoire de tarification ML
-AgentLaboTarification : grille 120 scénarios, batch BC+Sim+Mkt,
-RF/XGB/CatBoost, dichotomie, De Finetti-Borch, NSGA-II multi-objectif.
+Atlantic Re IA — Module d’optimisation actuarielle des programmes XL
+AgentLaboTarification : tarification du programme reçu, contrôles statistiques,
+recherche de programmes alternatifs comparables, frontière de De Finetti.
 """
 import streamlit as st
 import numpy as np
@@ -12,12 +12,12 @@ from modules.ui import tableau_resultats, card, section_header
 from datetime import datetime
 
 # ════════════════════════════════════════════
-# LABORATOIRE DE TARIFICATION ML
+# MODULE D’OPTIMISATION ACTUARIELLE
 # ════════════════════════════════════════════
 
 class AgentLaboTarification:
     """
-    Expérience par machine learning.
+    Module d’optimisation actuarielle des programmes XL.
     Workflow :
       1. Grille 120 scenarios/tranche (auto, modifiable)
       2. Batch BC + Simulation + Market Curve
@@ -69,6 +69,14 @@ class AgentLaboTarification:
         self.importance_vars    = {}
         self._features_used     = list(self.FEATURES)
         self._best_model_name   = None
+
+        # Attributs ajoutés sans modifier l'interface publique existante.
+        # Ils servent aux contrôles préalables et à l'optimisation comparable.
+        self.mode_leader        = True
+        self.modele_sigma       = None
+        self.metriques_sigma    = {}
+        self.controles_qualite  = {}
+        self.sinistres_majeurs  = {}
 
     # ── 1. GÉNÉRATION GRILLE ────────────────────────────────────────
 
@@ -471,37 +479,431 @@ class AgentLaboTarification:
 
     # ── 8. PRÉDICTION ───────────────────────────────────────────────
 
+    # ── 8. CONTRÔLES ACTUARIELS PRÉALABLES ──────────────────────────
+
+    @staticmethod
+    def _qualifier_score(score):
+        """Qualification standardisée des scores de contrôle."""
+        try:
+            score = float(score)
+        except Exception:
+            score = 0.0
+        if score < 50:
+            return "À revoir"
+        if score < 70:
+            return "À prendre avec modération"
+        if score < 90:
+            return "Bon"
+        return "Très bon"
+
+    @staticmethod
+    def _safe_float(x, default=0.0):
+        try:
+            if x is None or x == "":
+                return default
+            if isinstance(x, str):
+                return float(x.replace("%", "").replace(" ", "").replace(",", "."))
+            return float(x)
+        except Exception:
+            return default
+
+    def evaluer_coherence_donnees(self):
+        """
+        Indice de cohérence des données sur 100.
+        Barème demandé : <50 à revoir ; 50-70 modération ; 70-90 bon ; >90 très bon.
+        """
+        score = 100.0
+        motifs = []
+        df = self.df_proj
+
+        if df is None or getattr(df, "empty", True):
+            return {"score": 0.0, "niveau": "À revoir", "motifs": ["Aucune donnée projetée disponible."], "bloquant": True}
+
+        required = ["annee_surv", "Sprime_ultime", "coeff_stab"]
+        missing = [c for c in required if c not in df.columns]
+        if missing:
+            score -= 35
+            motifs.append(f"Colonnes indispensables manquantes : {missing}.")
+
+        n_rows = len(df)
+        if n_rows < 30:
+            score -= 25
+            motifs.append(f"Volume faible : {n_rows} lignes exploitables.")
+        elif n_rows < 80:
+            score -= 10
+            motifs.append(f"Volume modéré : {n_rows} lignes exploitables.")
+
+        if "annee_surv" in df.columns:
+            n_years = int(pd.Series(df["annee_surv"]).dropna().nunique())
+            if n_years < 5:
+                score -= 25
+                motifs.append(f"Historique court : {n_years} années de survenance.")
+            elif n_years < 8:
+                score -= 10
+                motifs.append(f"Historique acceptable mais limité : {n_years} années.")
+
+        if "Sprime_ultime" in df.columns:
+            x = pd.to_numeric(df["Sprime_ultime"], errors="coerce")
+            tx_na = float(x.isna().mean())
+            if tx_na > 0.05:
+                score -= min(25, 100 * tx_na)
+                motifs.append(f"Taux de valeurs manquantes sur Sprime_ultime : {tx_na:.1%}.")
+            if (x.dropna() < 0).any():
+                score -= 25
+                motifs.append("Présence de montants ultimes négatifs.")
+            n_pos = int((x.dropna() > 0).sum())
+            if n_pos < 10:
+                score -= 20
+                motifs.append(f"Seulement {n_pos} sinistres positifs exploitables.")
+
+        if {"I_reg", "I_surv"}.issubset(df.columns):
+            i_reg = pd.to_numeric(df["I_reg"], errors="coerce")
+            i_surv = pd.to_numeric(df["I_surv"], errors="coerce")
+            if (i_reg <= 0).any() or (i_surv <= 0).any():
+                score -= 20
+                motifs.append("Indices de règlement ou de survenance nuls/négatifs détectés.")
+            if i_reg.isna().any() or i_surv.isna().any():
+                score -= 15
+                motifs.append("Indices manquants sur certaines lignes.")
+        else:
+            score -= 10
+            motifs.append("Indices I_reg/I_surv non disponibles : contrôle As-If limité.")
+
+        score = max(0.0, min(100.0, score))
+        return {
+            "score": round(score, 2),
+            "niveau": self._qualifier_score(score),
+            "motifs": motifs or ["Aucune anomalie majeure détectée."],
+            "bloquant": score < 50,
+        }
+
+    def evaluer_convergence_methodes(self, resultats=None):
+        """
+        Mesure la proximité BC / Simulation / Market Curve.
+        Une forte convergence signifie que l'historique, la simulation et le marché conduisent
+        à des taux proches : le programme initial paraît techniquement stable.
+        """
+        rows = resultats or self.resultats or []
+        if not rows:
+            return {"score": 0.0, "niveau": "À revoir", "details": [], "message": "Aucun résultat tarifaire disponible."}
+
+        details = []
+        scores = []
+        for r in rows:
+            taux = []
+            labels = []
+            for label, key in [("BC", "taux_technique_bc"), ("Simulation", "taux_technique_sim"), ("Marché", "taux_technique_mkt")]:
+                val = self._safe_float(r.get(key), 0.0)
+                if val > 0:
+                    taux.append(val)
+                    labels.append(label)
+            if len(taux) < 2:
+                score_i = 55.0
+                dispersion = None
+                diagnostic = "Comparaison limitée : moins de deux méthodes positives."
+            else:
+                arr = np.array(taux, dtype=float)
+                mean = float(np.mean(arr))
+                dispersion = float((np.max(arr) - np.min(arr)) / max(mean, 1e-12))
+                if dispersion <= 0.10:
+                    score_i = 95.0
+                elif dispersion <= 0.25:
+                    score_i = 82.0
+                elif dispersion <= 0.50:
+                    score_i = 62.0
+                else:
+                    score_i = 35.0
+                diagnostic = "Convergence forte" if score_i >= 90 else "Convergence correcte" if score_i >= 70 else "Divergence à documenter" if score_i >= 50 else "Incohérence forte"
+            scores.append(score_i)
+            details.append({
+                "tranche": r.get("tranche_base", r.get("tranche", "")),
+                "methodes_comparees": ", ".join(labels),
+                "score": round(score_i, 2),
+                "niveau": self._qualifier_score(score_i),
+                "dispersion": round(dispersion, 4) if dispersion is not None else None,
+                "diagnostic": diagnostic,
+            })
+
+        score = float(np.mean(scores)) if scores else 0.0
+        return {
+            "score": round(score, 2),
+            "niveau": self._qualifier_score(score),
+            "details": details,
+            "message": "Convergence mesurée entre les méthodes disponibles.",
+        }
+
+    def quantifier_sinistres_majeurs(self, seuil=None):
+        """Analyse l'exposition aux sinistres majeurs et leur poids dans l'optimisation."""
+        df = self.df_proj
+        seuil = float(seuil or self.seuil or 0.0)
+        if df is None or getattr(df, "empty", True) or "Sprime_ultime" not in df.columns:
+            return {"disponible": False, "message": "Sprime_ultime indisponible.", "n_majeurs": 0}
+
+        x = pd.to_numeric(df["Sprime_ultime"], errors="coerce").fillna(0.0)
+        total = float(x[x > 0].sum())
+        majeurs = x[x > seuil]
+        n_majeurs = int(len(majeurs))
+        poids = float(majeurs.sum() / total) if total > 0 else 0.0
+        if n_majeurs == 0:
+            niveau = "Aucun sinistre majeur au seuil retenu"
+        elif poids >= 0.60:
+            niveau = "Concentration très forte"
+        elif poids >= 0.35:
+            niveau = "Concentration significative"
+        else:
+            niveau = "Concentration modérée"
+
+        by_year = []
+        if "annee_surv" in df.columns and n_majeurs > 0:
+            tmp = df.loc[x > seuil].copy()
+            tmp["_montant"] = x.loc[x > seuil]
+            by_year = [
+                {"annee": int(a), "charge_majeure": float(v)}
+                for a, v in tmp.groupby("annee_surv")["_montant"].sum().sort_index().items()
+            ]
+
+        return {
+            "disponible": True,
+            "seuil": seuil,
+            "n_majeurs": n_majeurs,
+            "charge_majeure": float(majeurs.sum()),
+            "poids_charge_totale": round(poids, 4),
+            "niveau": niveau,
+            "par_annee": by_year,
+        }
+
+    def evaluer_adequation_frequence_severite(self):
+        """
+        Contrôle bloquant avant optimisation.
+        Si la fréquence et la sévérité ne sont pas suffisamment crédibles,
+        l'optimisation ne s'exécute pas sauf forçage utilisateur.
+        """
+        df = self.df_proj
+        if df is None or getattr(df, "empty", True) or "Sprime_ultime" not in df.columns:
+            return {"score": 0.0, "niveau": "À revoir", "valide": False, "motifs": ["Données de sévérité indisponibles."]}
+
+        x = pd.to_numeric(df["Sprime_ultime"], errors="coerce").dropna()
+        x = x[x > 0]
+        seuil = float(self.seuil or 0.0)
+        exc = x[x > seuil]
+        motifs = []
+        score = 100.0
+
+        if len(x) < 30:
+            score -= 20
+            motifs.append(f"Nombre total de sinistres positifs limité : {len(x)}.")
+        if len(exc) < 10:
+            score -= 35
+            motifs.append(f"Excédances au-dessus du seuil insuffisantes : {len(exc)}.")
+        elif len(exc) < 30:
+            score -= 15
+            motifs.append(f"Excédances exploitables mais limitées : {len(exc)}.")
+
+        if not (0.8 <= float(self.alpha or 0.0) <= 4.0):
+            score -= 25
+            motifs.append(f"Alpha hors plage usuelle [0.8 ; 4.0] : {float(self.alpha or 0.0):.4f}.")
+        if float(self.lambda_ or 0.0) <= 0:
+            score -= 25
+            motifs.append("Lambda non positif.")
+
+        # Contrôle simple de fréquence par année.
+        if "annee_surv" in df.columns:
+            freq = df.loc[pd.to_numeric(df["Sprime_ultime"], errors="coerce") > seuil].groupby("annee_surv").size()
+            if len(freq) < 4:
+                score -= 20
+                motifs.append("Moins de quatre années avec sinistres au-dessus du seuil.")
+            elif freq.mean() > 0:
+                dispersion = float(freq.var(ddof=0) / max(freq.mean(), 1e-12))
+                if dispersion > 3.0:
+                    score -= 15
+                    motifs.append(f"Surdispersion forte de la fréquence : indice {dispersion:.2f}.")
+        else:
+            score -= 10
+            motifs.append("Année de survenance indisponible : contrôle fréquence limité.")
+
+        # Test KS Pareto indicatif si scipy est disponible.
+        pval_pareto = None
+        if len(exc) >= 10 and seuil > 0:
+            try:
+                from scipy import stats
+                alpha_h = len(exc) / max(np.sum(np.log(exc / seuil)), 1e-12)
+                _, pval_pareto = stats.kstest(exc, lambda v: 1 - (v / seuil) ** (-alpha_h))
+                if pval_pareto < 0.01:
+                    score -= 25
+                    motifs.append(f"Ajustement de sévérité rejeté au seuil 1% (p-value KS={pval_pareto:.4f}).")
+                elif pval_pareto < 0.05:
+                    score -= 10
+                    motifs.append(f"Ajustement de sévérité fragile au seuil 5% (p-value KS={pval_pareto:.4f}).")
+            except Exception:
+                motifs.append("Test KS de sévérité non exécuté ; contrôle basé sur volume, alpha et seuil.")
+
+        score = max(0.0, min(100.0, score))
+        return {
+            "score": round(score, 2),
+            "niveau": self._qualifier_score(score),
+            "valide": score >= 50,
+            "motifs": motifs or ["Ajustement fréquence-sévérité exploitable pour l'optimisation."],
+            "n_sinistres": int(len(x)),
+            "n_excedances": int(len(exc)),
+            "pvalue_pareto": round(float(pval_pareto), 6) if pval_pareto is not None else None,
+        }
+
+    def evaluer_credibilite_market_curve(self):
+        """Indice de crédibilité de la courbe de référence marché."""
+        if self.df_mkt is None or getattr(self.df_mkt, "empty", True):
+            return {"score": 0.0, "niveau": "À revoir", "n_points": 0, "r2": None, "message": "Aucune donnée marché disponible."}
+
+        df = self.df_mkt.copy()
+        if not {"midpoints", "ROLs"}.issubset(df.columns):
+            return {"score": 0.0, "niveau": "À revoir", "n_points": len(df), "r2": None, "message": "Colonnes midpoints/ROLs indisponibles."}
+
+        x = pd.to_numeric(df["midpoints"], errors="coerce")
+        y = pd.to_numeric(df["ROLs"], errors="coerce")
+        mask = (x > 0) & (y > 0)
+        x = x[mask]
+        y = y[mask]
+        n = int(len(x))
+        r2 = None
+        score = 0.0
+        if n < 50:
+            score = 35.0
+            message = "Données de marché peu crédibles : moins de 50 points."
+        elif n < 100:
+            score = 65.0
+            message = "Données de marché assez crédibles : entre 50 et 100 points."
+        else:
+            score = 82.0
+            message = "Données de marché crédibles : plus de 100 points."
+
+        try:
+            lx, ly = np.log(x.values), np.log(y.values)
+            coef = np.polyfit(lx, ly, 1)
+            pred = np.polyval(coef, lx)
+            ss_res = float(np.sum((ly - pred) ** 2))
+            ss_tot = float(np.sum((ly - np.mean(ly)) ** 2))
+            r2 = 1 - ss_res / max(ss_tot, 1e-12)
+            if r2 < 0.30:
+                score -= 20
+                message += " Ajustement log-log faible."
+            elif r2 >= 0.60:
+                score += 10
+                message += " Ajustement log-log solide."
+        except Exception:
+            message += " R² non calculable."
+
+        score = max(0.0, min(100.0, score))
+        return {"score": round(score, 2), "niveau": self._qualifier_score(score), "n_points": n, "r2": round(float(r2), 4) if r2 is not None else None, "message": message}
+
+    def controler_execution_optimisation(self, forcer_execution=False):
+        """Contrôle d'entrée unique avant la recherche de programmes comparables."""
+        coherence = self.evaluer_coherence_donnees()
+        adequation = self.evaluer_adequation_frequence_severite()
+        marche = self.evaluer_credibilite_market_curve()
+        convergence = self.evaluer_convergence_methodes()
+        majeurs = self.quantifier_sinistres_majeurs()
+
+        blocages = []
+        if coherence.get("score", 0) < 50:
+            blocages.append("Indice de cohérence des données inférieur à 50.")
+        if not adequation.get("valide", False):
+            blocages.append("Contrôle d'adéquation fréquence-sévérité insuffisant.")
+
+        execution_autorisee = (len(blocages) == 0) or bool(forcer_execution)
+        statut = "Exécution autorisée" if execution_autorisee and not blocages else "Exécution forcée" if execution_autorisee else "Exécution bloquée"
+
+        controles = {
+            "coherence_donnees": coherence,
+            "adequation_frequence_severite": adequation,
+            "credibilite_market_curve": marche,
+            "convergence_methodes": convergence,
+            "sinistres_majeurs": majeurs,
+            "blocages": blocages,
+            "forcer_execution": bool(forcer_execution),
+            "execution_autorisee": execution_autorisee,
+            "statut": statut,
+        }
+        self.controles_qualite = controles
+        self.sinistres_majeurs = majeurs
+        return controles
+
+    def _build_feature_row(self, conditions):
+        """Construit une ligne de variables explicatives sans taux de résultat."""
+        D = conditions.get("priorite", 2_000_000)
+        C = conditions.get("portee", 13_000_000)
+        aad_v = conditions.get("AAD") or 0.0
+        aal_v = conditions.get("AAL") or 0.0
+        bk = conditions.get("brokage", 0.10)
+        fg = conditions.get("frais", 0.05)
+        mg = conditions.get("marge", 0.10)
+        rt = conditions.get("retrocession", 0.0)
+        t = conditions.get("type", "travaillante")
+        n_rec = int(conditions.get("nb_reconstitutions", 1))
+        tr1 = conditions.get("taux_recon_1", 100.0)
+        tr2 = conditions.get("taux_recon_2", 0.0)
+        return {
+            "priorite": D, "portee": C, "AAD_val": aad_v, "AAL_val": aal_v,
+            "nb_reconstitutions": n_rec, "taux_recon_1": tr1, "taux_recon_2": tr2,
+            "taux_recon_moy": (tr1 + tr2) / 2 if n_rec > 1 else tr1,
+            "brokage": bk, "frais": fg, "marge": mg, "retrocession": rt,
+            "k_securite": conditions.get("k_securite", 0.20),
+            "seuil_stab": conditions.get("seuil_stab", 0.0),
+            "alpha": conditions.get("alpha", self.alpha),
+            "lambda_": conditions.get("lambda_", self.lambda_),
+            "seuil_modelisation": conditions.get("seuil_modelisation", self.seuil),
+            "type_travaillante": 1 if t == "travaillante" else 0,
+            "type_cat": 1 if t == "cat" else 0,
+            "type_non_trav": 1 if t == "non_travaillante" else 0,
+            "ratio_D_GNPI": D / max(self.gnpi, 1),
+            "ratio_C_GNPI": C / max(self.gnpi, 1),
+            "ratio_aad_C": aad_v / max(C, 1),
+            "ratio_aal_C": aal_v / max(C, 1),
+            "levier_frais": 1 - bk - fg - mg - rt,
+            "cap_sur_GNPI": (n_rec + 1) * C / max(self.gnpi, 1),
+        }
+
+    def _variance_retention_historique(self, D, C, aad=None, aal=None, n_rec=1):
+        """Variance empirique de la charge retenue après programme XL candidat."""
+        df = self.df_proj
+        if df is None or getattr(df, "empty", True) or "Sprime_ultime" not in df.columns or "annee_surv" not in df.columns:
+            return {"variance_retention": np.nan, "ecart_type_retention": np.nan, "charge_cedee_moyenne": np.nan, "charge_retention_moyenne": np.nan}
+        tmp = df.copy()
+        ultimate = pd.to_numeric(tmp["Sprime_ultime"], errors="coerce").fillna(0.0)
+        coeff = pd.to_numeric(tmp.get("coeff_stab", 1.0), errors="coerce").fillna(1.0)
+        ceded = np.minimum(np.maximum(ultimate - D, 0.0), C) * coeff
+        tmp["_brut"] = ultimate
+        tmp["_cede"] = ceded
+        ann = tmp.groupby("annee_surv")[["_brut", "_cede"]].sum()
+        cap = (int(n_rec) + 1) * C
+        charges_cedees = []
+        charges_retenues = []
+        for _, row in ann.iterrows():
+            ch_cedee = float(row["_cede"])
+            if aad:
+                ch_cedee = max(ch_cedee - aad, 0.0)
+            if aal:
+                ch_cedee = min(ch_cedee, aal)
+            ch_cedee = min(ch_cedee, cap)
+            ch_brut = float(row["_brut"])
+            charges_cedees.append(ch_cedee)
+            charges_retenues.append(max(ch_brut - ch_cedee, 0.0))
+        ret = np.array(charges_retenues, dtype=float) / max(self.gnpi, 1)
+        ced = np.array(charges_cedees, dtype=float) / max(self.gnpi, 1)
+        return {
+            "variance_retention": float(np.var(ret, ddof=0)) if len(ret) else np.nan,
+            "ecart_type_retention": float(np.std(ret, ddof=0)) if len(ret) else np.nan,
+            "charge_cedee_moyenne": float(np.mean(ced)) if len(ced) else np.nan,
+            "charge_retention_moyenne": float(np.mean(ret)) if len(ret) else np.nan,
+        }
     def predire_taux(self, conditions):
         model = self.modeles_entraines.get(self._best_model_name)
-        if model is None: return None
-        D = conditions.get("priorite",2e6); C = conditions.get("portee",13e6)
-        aad_v = conditions.get("AAD") or 0.0; aal_v = conditions.get("AAL") or 0.0
-        bk=conditions.get("brokage",0.10); fg=conditions.get("frais",0.05)
-        mg=conditions.get("marge",0.10);  rt=conditions.get("retrocession",0.0)
-        t  = conditions.get("type","travaillante")
-        n_rec = conditions.get("nb_reconstitutions",1)
-        tr1 = conditions.get("taux_recon_1",100.0)
-        tr2 = conditions.get("taux_recon_2",0.0)
-        row = {
-            "priorite":D,"portee":C,"AAD_val":aad_v,"AAL_val":aal_v,
-            "nb_reconstitutions":n_rec,"taux_recon_1":tr1,"taux_recon_2":tr2,
-            "taux_recon_moy":(tr1+tr2)/2 if n_rec>1 else tr1,
-            "brokage":bk,"frais":fg,"marge":mg,"retrocession":rt,
-            "k_securite":conditions.get("k_securite",0.20),
-            "seuil_stab":conditions.get("seuil_stab",0.0),
-            "alpha":conditions.get("alpha",self.alpha),
-            "lambda_":conditions.get("lambda_",self.lambda_),
-            "seuil_modelisation":conditions.get("seuil_modelisation",self.seuil),
-            "type_travaillante":1 if t=="travaillante" else 0,
-            "type_cat":1 if t=="cat" else 0,
-            "type_non_trav":1 if t=="non_travaillante" else 0,
-            "ratio_D_GNPI":D/max(self.gnpi,1),"ratio_C_GNPI":C/max(self.gnpi,1),
-            "ratio_aad_C":aad_v/max(C,1),"ratio_aal_C":aal_v/max(C,1),
-            "levier_frais":1-bk-fg-mg-rt,
-            "cap_sur_GNPI":(n_rec+1)*C/max(self.gnpi,1),
-        }
-        X = pd.DataFrame([{f: row.get(f,0) for f in self._features_used}])
-        return float(model.predict(X)[0])
+        if model is None or not getattr(self, "_features_used", None):
+            return None
+        row = self._build_feature_row(conditions)
+        X = pd.DataFrame([{f: row.get(f, 0) for f in self._features_used}])
+        try:
+            return float(model.predict(X)[0])
+        except Exception:
+            return None
 
     # ── 9. OPTIMISATION — DICHOTOMIE ACTUARIELLE ────────────────────
     # Propriété : taux_retenu est monotone décroissant en D (priorité)
@@ -570,88 +972,213 @@ class AgentLaboTarification:
     # Approche : balayer (D,C) et calculer Var(perte retenue) vs prime cédée
     # La frontière efficiente = courbe Pareto-optimale dans l'espace (prime, variance)
 
-    def frontiere_de_finetti(self, t_base, budget_prime_pct=None, n_points=40):
+    def frontiere_de_finetti(self, t_base, budget_prime_pct=None, n_points=40,
+                             forcer_execution=False, marge_variation=0.20,
+                             prime_tolerance=0.15):
         """
-        Calcule la frontière efficiente De Finetti pour une tranche.
-        Retourne les couples (prime_cedee_pct, variance_retenue_normalisee)
-        et identifie le programme optimal selon le critère de De Finetti.
+        Recherche de programmes alternatifs comparables selon De Finetti.
 
-        Le programme optimal minimise Var(retenu) pour un niveau de prime donné.
-        Équivalent à : maximiser l'utilité quadratique E[R] - lambda*Var(R).
+        Principe retenu : ne pas produire un programme "cédante" ou "réassureur",
+        mais des structures proches du programme initial, plus stables au sens de la
+        variance retenue, avec une prime et une protection comparables.
+
+        La variance est estimée directement sur les charges historiques projetées.
+        Les sinistres majeurs sont quantifiés et intégrés dans la lecture du résultat.
         """
-        if not self.modeles_entraines or self.df_ml is None:
-            return []
+        controles = self.controler_execution_optimisation(forcer_execution=forcer_execution)
+        if not controles.get("execution_autorisee"):
+            return {
+                "frontier": [],
+                "optimal": None,
+                "programme_recommande": None,
+                "programmes_comparables": [],
+                "controles": controles,
+                "message": "Optimisation bloquée : contrôles préalables insuffisants.",
+            }
 
-        D0 = t_base["priorite"]; C0 = t_base["portee"]
-        # Grille de (D,C) à évaluer
-        D_vals = np.linspace(D0 * 0.4, D0 * 2.5, n_points)
-        C_vals = [C0 * m for m in [0.7, 1.0, 1.3]]
+        if self.df_proj is None or getattr(self.df_proj, "empty", True):
+            return {"frontier": [], "optimal": None, "programmes_comparables": [], "controles": controles,
+                    "message": "Données projetées indisponibles."}
 
-        # Calcul de la prime et de la variance pour chaque (D,C)
-        # On utilise les simulations disponibles dans df_ml
+        D0 = float(t_base["priorite"])
+        C0 = float(t_base["portee"])
+        aad0 = t_base.get("AAD")
+        aal0 = t_base.get("AAL")
+        n_rec0 = int(t_base.get("nb_reconstitutions", 1))
+        tr1 = float(t_base.get("taux_recon_1", t_base.get("taux_reconstitution", 100.0)))
+        tr2 = float(t_base.get("taux_recon_2", 0.0))
+
+        # Programme initial : référence de comparabilité.
+        cond_initial = {
+            "type": t_base["type"], "priorite": D0, "portee": C0,
+            "AAD": aad0, "AAL": aal0, "nb_reconstitutions": n_rec0,
+            "taux_recon_1": tr1, "taux_recon_2": tr2,
+            "brokage": t_base["brokage"], "frais": t_base["frais"],
+            "marge": t_base["marge"], "retrocession": t_base["retrocession"],
+            "k_securite": t_base.get("k_securite", 0.20),
+            "seuil_stab": t_base.get("seuil_stab", 0.0),
+        }
+        tau_initial = self.predire_taux(cond_initial)
+        if tau_initial is None or tau_initial <= 0:
+            # Fallback actuariel si le modèle d'approximation n'est pas entraîné.
+            scenario_initial = self._make_scenario(t_base, D0, C0, aad0, aal0, n_rec0,
+                                                   t_base.get("taux_reconstitutions", [tr1] if n_rec0 else []),
+                                                   t_base.get("k_securite", 0.20),
+                                                   t_base.get("seuil_stab", 0.0))
+            bc_i = self._bc_scenario(scenario_initial)
+            sim_i = self._sim_scenario(scenario_initial, n_sim=1500)
+            mkt_i = self._mkt_scenario(scenario_initial)
+            tau_initial = max(
+                bc_i.get("taux_technique_bc", 0.0),
+                sim_i.get("taux_technique_sim", 0.0),
+                mkt_i.get("taux_technique_mkt", 0.0) if mkt_i.get("valide_mkt") else 0.0,
+            )
+
+        var_init = self._variance_retention_historique(D0, C0, aad0, aal0, n_rec0)
+        var_initial = var_init.get("variance_retention", np.nan)
+
+        # Grille volontairement proche du programme reçu : optimisation sous comparabilité.
+        D_vals = np.linspace(D0 * (1 - marge_variation), D0 * (1 + marge_variation), n_points)
+        C_vals = np.linspace(C0 * (1 - marge_variation), C0 * (1 + marge_variation), max(5, min(9, n_points // 6)))
+        rec_vals = sorted(set([max(0, n_rec0 - 1), n_rec0, min(5, n_rec0 + 1)]))
+
         results = []
-        model = self.modeles_entraines.get(self._best_model_name)
-        if model is None: return []
-
         for C in C_vals:
             for D in D_vals:
-                cond = {
-                    "type":t_base["type"],"priorite":D,"portee":C,
-                    "AAD":None,"nb_reconstitutions":1,
-                    "taux_recon_1":100.0,"taux_recon_2":0.0,"taux_recon_moy":100.0,
-                    "brokage":t_base["brokage"],"frais":t_base["frais"],
-                    "marge":t_base["marge"],"retrocession":t_base["retrocession"],
-                    "k_securite":0.20,"seuil_stab":0.0,
-                    "alpha":self.alpha,"lambda_":self.lambda_,
-                    "seuil_modelisation":self.seuil,
-                }
-                tau_pred = self.predire_taux(cond)
-                if tau_pred is None or tau_pred <= 0: continue
+                D = max(round(D / 500_000) * 500_000, 0.0)
+                C = max(round(C / 500_000) * 500_000, 500_000.0)
+                for n_rec in rec_vals:
+                    cond = {
+                        "type": t_base["type"], "priorite": D, "portee": C,
+                        "AAD": aad0, "AAL": aal0, "nb_reconstitutions": n_rec,
+                        "taux_recon_1": tr1, "taux_recon_2": tr2 if n_rec >= 2 else 0.0,
+                        "brokage": t_base["brokage"], "frais": t_base["frais"],
+                        "marge": t_base["marge"], "retrocession": t_base["retrocession"],
+                        "k_securite": t_base.get("k_securite", 0.20),
+                        "seuil_stab": t_base.get("seuil_stab", 0.0),
+                    }
+                    tau_pred = self.predire_taux(cond)
+                    if tau_pred is None or tau_pred <= 0:
+                        continue
 
-                # Variance retenue approchée (var(X) - 2*Cov(X, ceded) + var(ceded))
-                # Simplification : var_retenu ~ var_total * (1 - tau_pred/tau_total)^2
-                # tau_total = tau sans aucune rétrocession
-                cond_libre = dict(cond); cond_libre["marge"] = 0.0; cond_libre["brokage"] = 0.0
-                tau_libre = self.predire_taux(cond_libre) or tau_pred
+                    met_var = self._variance_retention_historique(D, C, aad0, aal0, n_rec)
+                    var_ret = met_var.get("variance_retention", np.nan)
+                    if not np.isfinite(var_ret):
+                        continue
 
-                prime_pct = tau_pred
-                # Approx variance normalisée basée sur le chargement de sécurité
-                k_sec = cond["k_securite"]
-                sigma_approx = tau_libre / (1 + k_sec) * k_sec  # sigma ≈ tau_pur * k
-                var_retenue = max(0, sigma_approx * (1 - prime_pct) ** 2)
+                    prime_ecart = abs(tau_pred - tau_initial) / max(tau_initial, 1e-12)
+                    if budget_prime_pct is not None and tau_pred > budget_prime_pct:
+                        continue
+                    if prime_ecart > prime_tolerance:
+                        continue
 
-                results.append({
-                    "D":D,"C":C,"prime_pct":prime_pct,
-                    "var_retenue":var_retenue,"tau_pred":tau_pred
-                })
+                    protection_initiale = C0 * (1 + n_rec0) / max(self.gnpi, 1)
+                    protection = C * (1 + n_rec) / max(self.gnpi, 1)
+                    ecart_protection = abs(protection - protection_initiale) / max(protection_initiale, 1e-12)
+                    ecart_D = abs(D - D0) / max(D0, 1)
+                    ecart_C = abs(C - C0) / max(C0, 1)
 
-        if not results: return []
+                    score_comparabilite = 100 * (1 - min(1.0, 0.35 * ecart_D + 0.35 * ecart_C + 0.20 * prime_ecart + 0.10 * ecart_protection))
+                    reduction_variance = (var_initial - var_ret) / max(var_initial, 1e-12) if np.isfinite(var_initial) and var_initial > 0 else 0.0
+                    score_stabilite = max(0.0, min(100.0, 50 + 100 * reduction_variance))
+                    score_de_finetti = max(0.0, reduction_variance) / max(tau_pred, 1e-12)
 
-        # Frontière efficiente : pour chaque niveau de prime, garder le min variance
-        df_r = pd.DataFrame(results).sort_values("prime_pct")
-        # Pareto frontier
+                    # Score final : priorité à la variance, puis comparabilité.
+                    score_global = 0.55 * score_stabilite + 0.35 * score_comparabilite + 0.10 * controles["convergence_methodes"].get("score", 0.0)
+
+                    results.append({
+                        "D": float(D), "C": float(C), "AAD": aad0 or 0.0, "AAL": aal0 or 0.0,
+                        "nb_reconstitutions": int(n_rec),
+                        "prime_pct": float(tau_pred), "tau_pred": float(tau_pred),
+                        "prime_MAD": float(self.gnpi * tau_pred),
+                        "var_retenue": float(var_ret),
+                        "ecart_type_retention": float(met_var.get("ecart_type_retention", np.nan)),
+                        "charge_cedee_moyenne": float(met_var.get("charge_cedee_moyenne", np.nan)),
+                        "reduction_variance": float(reduction_variance),
+                        "score_de_finetti": float(score_de_finetti),
+                        "score_stabilite": float(score_stabilite),
+                        "score_comparabilite": float(score_comparabilite),
+                        "score_global": float(score_global),
+                        "ecart_prime": float(prime_ecart),
+                        "ecart_priorite": float(ecart_D),
+                        "ecart_portee": float(ecart_C),
+                        "ecart_protection": float(ecart_protection),
+                        "diagnostic": "Programme comparable" if score_comparabilite >= 70 else "Comparabilité limitée",
+                    })
+
+        if not results:
+            return {
+                "frontier": [], "optimal": None, "programme_recommande": None,
+                "programmes_comparables": [], "controles": controles,
+                "programme_initial": {"D": D0, "C": C0, "tau_pred": tau_initial, "var_retenue": var_initial},
+                "message": "Aucun programme comparable trouvé dans les contraintes retenues.",
+            }
+
+        df_r = pd.DataFrame(results).drop_duplicates(subset=["D", "C", "nb_reconstitutions"])
+        df_r = df_r.sort_values(["prime_pct", "var_retenue"]).reset_index(drop=True)
+
+        # Frontière efficiente : pour une prime croissante, conserver la variance minimale.
         frontier = []
         min_var = float("inf")
-        for _, row in df_r.sort_values("prime_pct", ascending=True).iterrows():
+        for _, row in df_r.iterrows():
             if row["var_retenue"] < min_var:
-                min_var = row["var_retenue"]
+                min_var = float(row["var_retenue"])
                 frontier.append(row.to_dict())
 
-        # Programme optimal = meilleur ratio amélioration_variance / prime
-        if len(frontier) > 1:
-            frontier_df = pd.DataFrame(frontier)
-            frontier_df["score_finetti"] = (
-                frontier_df["var_retenue"].max() - frontier_df["var_retenue"]
-            ) / (frontier_df["prime_pct"] + 1e-10)
-            best_idx = frontier_df["score_finetti"].idxmax()
-            best     = frontier_df.iloc[best_idx]
-        else:
-            best = pd.Series(frontier[0]) if frontier else None
+        frontier_df = pd.DataFrame(frontier)
+        top_df = df_r.sort_values(["score_global", "score_de_finetti"], ascending=False).head(10)
+        best = top_df.iloc[0].to_dict()
+
+        programme_initial = {
+            "D": D0, "C": C0, "AAD": aad0 or 0.0, "AAL": aal0 or 0.0,
+            "nb_reconstitutions": n_rec0, "tau_pred": float(tau_initial),
+            "prime_pct": float(tau_initial), "prime_MAD": float(self.gnpi * tau_initial),
+            "var_retenue": float(var_initial) if np.isfinite(var_initial) else None,
+        }
 
         return {
-            "frontier": frontier,
-            "optimal":  best.to_dict() if best is not None else None,
-            "n_points": len(results),
+            "frontier": frontier_df.to_dict("records"),
+            "optimal": best,  # compatibilité avec l'ancien affichage
+            "programme_recommande": best,
+            "programmes_comparables": top_df.to_dict("records"),
+            "programme_initial": programme_initial,
+            "controles": controles,
+            "sinistres_majeurs": controles.get("sinistres_majeurs", {}),
+            "n_points": int(len(df_r)),
+            "message": "Recherche de programmes alternatifs comparables exécutée.",
+            "note": "Optimisation sous contrainte de comparabilité : priorité à la réduction de variance, sans dénaturer le programme proposé.",
+        }
+
+    def optimiser_programmes_comparables_de_finetti(self, budget_prime_pct=None, n_points=40,
+                                                    forcer_execution=False,
+                                                    marge_variation=0.20,
+                                                    prime_tolerance=0.15):
+        """Optimisation De Finetti sur l'ensemble des tranches du programme."""
+        if not self.tranches_base:
+            return {"programmes": [], "message": "Aucune tranche disponible."}
+        programmes = []
+        prime_initiale = 0.0
+        prime_recommandee = 0.0
+        for t in self.tranches_base:
+            res = self.frontiere_de_finetti(
+                t,
+                budget_prime_pct=budget_prime_pct,
+                n_points=n_points,
+                forcer_execution=forcer_execution,
+                marge_variation=marge_variation,
+                prime_tolerance=prime_tolerance,
+            )
+            init = res.get("programme_initial") or {}
+            best = res.get("programme_recommande") or {}
+            prime_initiale += float(init.get("prime_MAD", 0.0) or 0.0)
+            prime_recommandee += float(best.get("prime_MAD", 0.0) or 0.0)
+            programmes.append({"tranche": t.get("nom", ""), "initial": init, "recommande": best, "detail": res})
+        return {
+            "programmes": programmes,
+            "prime_initiale": prime_initiale,
+            "prime_recommandee": prime_recommandee,
+            "ecart_prime": (prime_recommandee - prime_initiale) / max(prime_initiale, 1.0),
+            "message": "Optimisation consolidée de structures comparables.",
         }
 
     # ── 11. OPTIMISATION ML AMÉLIORÉE ───────────────────────────────
@@ -1029,11 +1556,11 @@ class AgentLaboTarification:
 
 
 def _labo_display_section():
-    """Laboratoire de tarification ML — affiché dans tab_agent."""
+    """Module d’optimisation actuarielle — affiché dans tab_agent."""
     import matplotlib.pyplot as plt
 
     st.markdown("---")
-    st.markdown("#### Laboratoire de tarification ML")
+    st.markdown("#### Module d’optimisation actuarielle")
     st.caption(
         "120 scénarios/tranche · BC + Simulation + Market Curve · RF/DT/XGB · "
         "Optimisation Dichotomie (actuarielle) + De Finetti · Programme multi-tranches"
@@ -1214,7 +1741,7 @@ def _labo_display_section():
                     import io as _io_labo
                     buf = _io_labo.BytesIO()
                     st.session_state["labo_df_ml"].to_excel(buf, index=False, engine="openpyxl")
-                    st.download_button("📥 Télécharger le dataset ML (Excel)",
+                    st.download_button(" Télécharger le dataset ML (Excel)",
                         data=buf.getvalue(), file_name="labo_dataset_ml.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="btn_dl_labo")
@@ -1259,7 +1786,7 @@ def _labo_display_section():
                     "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if "RMSE" in v else "—",
                     "R²":         f"{v.get('R2',0):.4f}" if "R2" in v else "—",
                     "N train":    v.get("n_train","—"),
-                    "✓ Meilleur": "✅" if nom == best else "",
+                    "✓ Meilleur": "" if nom == best else "",
                 } for nom, v in st.session_state["labo_metriques"].items()])
 
                 imp_dict = st.session_state.get("labo_importance", {})
@@ -1283,7 +1810,7 @@ def _labo_display_section():
     # ÉTAPE 4 — OPTIMISATION ACTUARIELLE
     # ═══════════════════════════════════════════════════════════
     if "labo_modeles" in st.session_state:
-        with st.expander("🎯 Recommandeur de conditions optimales (ML)", expanded=False):
+        with st.expander("Recherche de structures comparables", expanded=False):
             st.caption(
                 "Le modèle ML prédit le taux pour n'importe quelle combinaison de conditions. "
                 "Entrez un taux cible et l'outil trouve les conditions qui s'en approchent."
@@ -1325,7 +1852,7 @@ def _labo_display_section():
                 if info_r.get("hors_plage"):
                     st.warning(info_r.get("message","Taux cible hors plage — résultats les plus proches affichés"))
                 else:
-                    st.success(f"✅ {len(st.session_state['reco_results'])} combinaison(s) trouvée(s) près de {t_target_reco:.4%}")
+                    st.success(f" {len(st.session_state['reco_results'])} combinaison(s) trouvée(s) près de {t_target_reco:.4%}")
                     st.caption(f"Plage observée : [{info_r.get('pred_min',0):.4%} — {info_r.get('pred_max',0):.4%}]")
                 tableau_resultats(st.session_state["reco_results"][:n_reco],
                     "Conditions optimales recommandées par le modèle ML")
@@ -1337,20 +1864,20 @@ def _labo_display_section():
     # ═══════════════════════════════════════════════════════════════════
     if "labo_modeles" in st.session_state:
         with st.expander(
-            "Étape 4 — Optimisation actuarielle (Dichotomie + De Finetti/Borch)", expanded=True
+            "Étape 4 — Recherche de programmes alternatifs comparables", expanded=True
         ):
             st.markdown(
                 """
 **Méthodes disponibles :**
 - **Dichotomie (De Wylder, 1979 / méthode actuarielle)** : τ est monotone décroissant en D → bisection sur [D_min, D_max], convergence en ~50 itérations vers D* tel que τ(D*) = τ_cible. Méthode recommandée par les traités actuariels (Daykin, Pentikäinen & Pesonen, 1994).
-- **Frontière De Finetti–Borch (1940/1969)** : minimise Var(perte retenue) pour un budget de prime donné. Borch (1969) prouve que le stop-loss (XL) est optimal pour ce critère. Retourne la courbe Pareto-efficiente et le programme optimal.
+- **Optimisation De Finetti sous contrainte de comparabilité (1940/1969)** : minimise Var(perte retenue) pour un budget de prime donné. Borch (1969) prouve que le stop-loss (XL) est optimal pour ce critère. Retourne la courbe Pareto-efficiente et le programme optimal.
 - **Programme multi-tranches** : combine les résultats des deux méthodes sur l'ensemble des tranches pour proposer le programme global.
                 """
             )
 
             methode_opt = st.radio(
                 "Méthode d'optimisation",
-                ["Dichotomie actuarielle", "Frontière De Finetti–Borch", "Programme multi-tranches complet"],
+                ["Dichotomie actuarielle", "Optimisation De Finetti sous contrainte de comparabilité", "Programme multi-tranches complet"],
                 horizontal=True, key="labo_methode_opt"
             )
 
@@ -1371,7 +1898,7 @@ def _labo_display_section():
                     "Budget prime max (% GNPI)", value=4.0, step=0.1, min_value=0.1,
                     key="labo_budget_pct") / 100
 
-            if st.button("Lancer l'optimisation", type="primary", key="btn_labo_opt2"):
+            if st.button("Lancer la recherche", type="primary", key="btn_labo_opt2"):
                 labo = _restore_labo(_make_labo())
 
                 if methode_opt == "Dichotomie actuarielle":
@@ -1383,7 +1910,7 @@ def _labo_display_section():
                             res_dich = labo.optimiser_dichotomie(t_base, taux_cible_opt)
                         st.session_state["labo_opt_res"] = ("dichotomie", res_dich, t_base)
 
-                elif methode_opt == "Frontière De Finetti–Borch":
+                elif methode_opt == "Optimisation De Finetti sous contrainte de comparabilité":
                     if not tranches_input:
                         st.error("Aucune tranche définie.")
                     else:
@@ -1457,7 +1984,7 @@ def _labo_display_section():
                         )
 
                 elif methode_r == "finetti":
-                    st.markdown(f"##### Frontière De Finetti–Borch — {t_r['nom']}")
+                    st.markdown(f"##### Optimisation De Finetti sous contrainte de comparabilité — {t_r['nom']}")
                     if not res_r or not res_r.get("frontier"):
                         st.warning("Frontière vide. Vérifiez que le modèle ML est entraîné (étape 3).")
                     else:
@@ -1482,7 +2009,7 @@ def _labo_display_section():
 
                         if optimal:
                             st.success(
-                                f"**Programme De Finetti optimal** : "
+                                f"**Programme alternatif recommandé** : "
                                 f"D\\* = {optimal.get('D',0):,.0f} · "
                                 f"C = {optimal.get('C',0):,.0f} · "
                                 f"τ\\* = {optimal.get('tau_pred',0):.4%}"
@@ -1575,7 +2102,7 @@ Algorithme évolutionnaire qui explore simultanément les **3 objectifs actuarie
                 nsga_multi = st.checkbox("Multi-tranches", value=True, key="nsga_multi",
                     help="Optimise toutes les tranches simultanément (chromosome global)")
 
-            if st.button("Lancer NSGA-II", type="primary", key="btn_nsga2"):
+            if st.button("Lancer l’analyse multi-objectif", type="primary", key="btn_nsga2"):
                 labo = _restore_labo(_make_labo())
                 bar_nsga = st.progress(0, "Initialisation population...")
                 def _nsga_cb(gen, n):
