@@ -704,7 +704,7 @@ class AgentActuarielPython:
     # ────────────────────────────────────────────
     def run(self, n_sim=10000):
         self.etape_0_validation()
-        self.etape_1_burning_cost()
+        self.etape_1_burning_cost() 
         self.etape_2_simulation(n_sim)
         self.etape_3_controles()
         self.etape_4_market_curve()
