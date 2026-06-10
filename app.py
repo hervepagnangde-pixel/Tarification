@@ -4290,7 +4290,7 @@ with tab6:
                 st.session_state["variantes_optimisation"],
                 gnpi, tranches_input)
 
-    # ── Panneau Audit Managers ──
+    # ── Panneau de contrôle actuariel ──
     if (st.session_state.get("resultats_bc") and
         st.session_state.get("resultats_sim") and
         st.session_state.get("df_rapport") is not None):
@@ -4452,7 +4452,7 @@ with tab_agent:
 
         # ── Moteurs agentiques V2 ──
         if any(st.session_state.get(k) for k in ["agent_plan_agentique","agent_critique","agent_ml","agent_memoire_metier","agent_challenger","agent_optimisation_avancee"]):
-            with st.expander("Raisonnement · Critique · Mémoire · Challenger · ML · Optimisation avancée", expanded=True):
+            with st.expander("Séquence actuarielle · Contrôle · Référentiel historique · Analyse contradictoire · Approximation statistique · Optimisation", expanded=True):
                 afficher_plan_agentique(st.session_state.get("agent_plan_agentique"))
                 afficher_critique_agentique(st.session_state.get("agent_critique"))
                 afficher_memoire_metier(st.session_state.get("agent_memoire_metier"))
@@ -4512,52 +4512,102 @@ with tab_agent:
             with c1: card("Prime totale", f"{pt:,.0f} MAD", icone="")
             with c2: card("Taux global",  f"{pt/gnpi:.4%}", couleur="#1a1a1a", icone="")
 
-        # ── 5 VARIANTES DE PROGRAMME OPTIMAL ──
+        # ── PROGRAMMES ALTERNATIFS COMPARABLES ──
         variantes = st.session_state.get("agent_py_variantes", {})
         if variantes:
             st.markdown("---")
-            st.markdown("#### Optimisation du programme — 5 variantes (perspective leader)")
-            st.caption("En tant que leader, ces variantes structurent la proposition de tarification et la marge de négociation.")
+            st.markdown("#### Recherche de programmes alternatifs comparables")
+            st.caption(
+                "Les structures proposées restent proches du programme initial. "
+                "Elles sont classées selon la stabilité, la convergence des méthodes, "
+                "la variance retenue et la comparabilité technique."
+            )
 
-            cols = st.columns(len(variantes))
-            colors_v = ["#1a1a1a","#2d8a4e","#3b82f6","#f59e0b","#7c3aed"]
-            for col, (key, v), color in zip(cols, variantes.items(), colors_v):
-                delta = v["ecart_ref_pts"]
-                delta_str = f"{delta:+.2f} pts" if key != "ref" else "référence"
+            variantes_affichees = {
+                k: v for k, v in variantes.items()
+                if k not in {"programme_recommande", "recommande"}
+            }
+            if not variantes_affichees:
+                variantes_affichees = variantes
+
+            colors_v = ["#1a1a1a", "#2d8a4e", "#3b82f6", "#f59e0b", "#7c3aed", "#0f766e"]
+            cols = st.columns(min(len(variantes_affichees), len(colors_v)))
+
+            for col, (key, v), color in zip(cols, variantes_affichees.items(), colors_v):
+                label = v.get("label", str(key).replace("_", " ").title())
+                description = (
+                    v.get("description")
+                    or v.get("angle")
+                    or v.get("diagnostic")
+                    or "Structure comparable au programme initial."
+                )
+                taux_global_v = float(v.get("taux_global", 0.0) or 0.0)
+                prime_v = float(v.get("prime", 0.0) or 0.0)
+
+                if key in {"programme_initial", "ref", "reference"}:
+                    delta_str = "Référence"
+                elif "ecart_prime_vs_initial" in v:
+                    delta_str = f"{float(v.get('ecart_prime_vs_initial', 0.0)):+.1%} vs prime initiale"
+                elif "ecart_ref_pts" in v:
+                    delta_str = f"{float(v.get('ecart_ref_pts', 0.0)):+.2f} pts"
+                else:
+                    delta_str = "Écart non renseigné"
+
+                convergence = v.get("indice_convergence_methodes")
+                comparabilite = v.get("indice_comparabilite")
+                indicateurs = []
+                if convergence is not None:
+                    indicateurs.append(f"Convergence : {float(convergence):.0f}/100")
+                if comparabilite is not None:
+                    indicateurs.append(f"Comparabilité : {float(comparabilite):.0f}/100")
+                indicateurs_html = "<br>".join(indicateurs) if indicateurs else ""
+
                 with col:
                     st.markdown(f"""<div style="border-top:3px solid {color};background:white;
                         border-radius:0 0 8px 8px;padding:14px 12px;
                         box-shadow:0 2px 8px rgba(0,0,0,0.06);margin-bottom:8px">
-                        <div style="font-size:13px;font-weight:700;color:{color}">{v['label']}</div>
-                        <div style="font-size:11px;color:#555;margin:4px 0">{v['angle']}</div>
+                        <div style="font-size:13px;font-weight:700;color:{color}">{label}</div>
+                        <div style="font-size:11px;color:#555;margin:4px 0">{description}</div>
                         <div style="font-size:18px;font-weight:700;color:#1a1a1a;margin:8px 0">
-                            {v['taux_global']:.4%}</div>
-                        <div style="font-size:11px;color:#888">{v['prime']:,.0f} MAD</div>
+                            {taux_global_v:.4%}</div>
+                        <div style="font-size:11px;color:#888">{prime_v:,.0f} MAD</div>
                         <div style="font-size:11px;color:{color};font-weight:600;margin-top:4px">
                             {delta_str}</div>
+                        <div style="font-size:10px;color:#555;margin-top:4px">{indicateurs_html}</div>
                         </div>""", unsafe_allow_html=True)
 
-            # Tableau comparatif détaillé
-            with st.expander("Détail des 5 variantes — paramètres et justifications", expanded=False):
+            programme_recommande = variantes.get("programme_recommande") or variantes.get("recommande")
+            if isinstance(programme_recommande, dict):
+                st.info(
+                    "Programme recommandé : "
+                    f"{programme_recommande.get('label', 'structure comparable retenue')} — "
+                    f"{programme_recommande.get('diagnostic', 'sous réserve de validation actuarielle finale.')}"
+                )
+
+            with st.expander("Détail des structures comparables — paramètres et justification", expanded=False):
                 rows_v = []
-                for key, v in variantes.items():
-                    for t in v["tranches"]:
+                for key, v in variantes_affichees.items():
+                    for t in v.get("tranches", []):
                         rows_v.append({
-                            "Variante": v["label"],
-                            "Tranche": t["nom"],
-                            "Priorité (MAD)": f"{t['priorite']:,.0f}",
-                            "Portée (MAD)": f"{t['portee']:,.0f}",
-                            "Reconst.": t.get("nb_reconstitutions","—"),
-                            "AAL": f"{t['AAL']:,.0f}" if t.get("AAL") else "—",
-                            "AAD": f"{t['AAD']:,.0f}" if t.get("AAD") else "—",
-                            "Taux": f"{t.get('_taux',0):.4%}",
+                            "Structure": v.get("label", str(key).replace("_", " ").title()),
+                            "Tranche": t.get("nom", ""),
+                            "Priorité (MAD)": f"{float(t.get('priorite', 0) or 0):,.0f}",
+                            "Portée (MAD)": f"{float(t.get('portee', 0) or 0):,.0f}",
+                            "Reconst.": t.get("nb_reconstitutions", "—"),
+                            "AAL": f"{float(t.get('AAL', 0) or 0):,.0f}" if t.get("AAL") else "—",
+                            "AAD": f"{float(t.get('AAD', 0) or 0):,.0f}" if t.get("AAD") else "—",
+                            "Taux": f"{float(t.get('_taux', 0) or 0):.4%}",
+                            "Prime": f"{float(t.get('_prime', 0) or 0):,.0f}",
+                            "Diagnostic": v.get("diagnostic", ""),
                         })
-                tableau_resultats(rows_v)
+                if rows_v:
+                    tableau_resultats(rows_v)
+                else:
+                    st.info("Aucune structure comparable à afficher.")
 
-                st.markdown("**Justifications actuarielles :**")
-                for key, v in variantes.items():
-                    st.markdown(f"**{v['label']}** — {v['description']}")
-
+            st.markdown("**Justifications actuarielles :**")
+            for key, v in variantes_affichees.items():
+                st.markdown(f"**{v.get('label', str(key))}** — {v.get('description', v.get('diagnostic', ''))}")
         # ── Journal des décisions ──
         with st.expander("Journal des décisions actuarielles", expanded=False):
             log_data = [{"Etape": e["etape"], "Décision": e["decision"],
@@ -4575,7 +4625,7 @@ with tab_agent:
                 st.session_state.pop(k, None)
             st.rerun()
 
-    # ── Laboratoire ML (toujours accessible si df_proj disponible) ──
+    # ── Module d’optimisation actuarielle (accessible si df_proj disponible) ──
     _labo_display_section()
 
     # ── Ressources actuarielles ──
