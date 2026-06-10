@@ -153,7 +153,7 @@ class AgentML:
             imp=pd.Series(best_model.feature_importances_,index=X_enc.columns).sort_values(ascending=False).head(10)
             importance=[{"variable":k,"importance":float(v)} for k,v in imp.items()]
 
-        return {"disponible":True,"message":"Benchmark ML exécuté. Interprétation prudente recommandée.",
+        return {"disponible":True,"message":"Benchmark statistique exécuté. Interprétation prudente recommandée.",
                 "modeles":resultats,"meilleur_modele":best_name,"importance":importance}
 
 
@@ -317,12 +317,12 @@ class AgentOptimisationProgramme:
         return {"alternatives":alternatives,"message":f"{len(alternatives)} alternatives selon objectif {objectif}."}
 
 
-def afficher_plan_agentique(plan):
+def afficher_plan_actuariel(plan):
     if not plan: return
     tableau_resultats([{"Ordre":i,"Étape":p["titre"],"Priorité":p["priorite"],"Justification":p["justification"]}
-        for i,p in enumerate(plan,1)],"Plan de raisonnement agentique")
+        for i,p in enumerate(plan,1)],"Séquence de traitement actuariel")
 
-def afficher_critique_agentique(critique):
+def afficher_critique_actuariel(critique):
     if not critique: return
     syn=critique.get("synthese",{})
     c1,c2,c3=st.columns(3)
@@ -348,7 +348,7 @@ def afficher_memoire_metier(memoire):
 
 def afficher_challenger(challenge):
     if not challenge: return
-    st.markdown("#### Agent challenger contradictoire")
+    st.markdown("#### Analyse contradictoire actuarielle")
     rows=[{"Tranche":a["tranche"],"Type":a["type"],"Retenu":f"{a['taux_retenu']:.4%}",
         "Prudentiel":f"{a['avis_prudentiel']:.4%}","Marché":f"{a['avis_marche']:.4%}",
         "Équilibre":f"{a['avis_equilibre']:.4%}","Conflit":a["conflit"],"Arbitrage":a["arbitrage"]}
@@ -357,16 +357,16 @@ def afficher_challenger(challenge):
 
 def afficher_optimisation_avancee(opt):
     if not opt: return
-    st.markdown("#### Optimisation avancée du programme")
+    st.markdown("#### Recherche de programmes alternatifs comparables")
     st.caption(opt.get("message",""))
     rows=[{"Rang":i,"Scénario":a["label"],"Prime":f"{a['prime']:,.0f} MAD",
         "Taux global":f"{a['taux_global']:.4%}","Score":f"{a['score']:.2f}"}
         for i,a in enumerate(opt.get("alternatives",[]),1)]
     if rows: tableau_resultats(rows)
 
-def afficher_ml_agentique(ml):
+def afficher_ml_actuariel(ml):
     if not ml: return
-    st.markdown("#### Benchmark Machine Learning")
+    st.markdown("#### Approximation statistique — benchmark")
     if not ml.get("disponible"): st.info(ml.get("message","ML non disponible.")); return
     rows=[{"Modèle":r.get("modele"),"MAE":f"{r.get('MAE',0):,.0f}" if r.get("MAE") else "Erreur",
         "RMSE":f"{r.get('RMSE',0):,.0f}" if r.get("RMSE") else "Erreur",
