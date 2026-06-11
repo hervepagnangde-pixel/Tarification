@@ -1272,12 +1272,6 @@ def afficher_selection_loi(data, seuil, key_prefix="loi"):
             st.session_state["gpd_beta"]  = float(p["beta"])
             st.session_state["loi_mu"]    = None
             st.session_state["loi_sigma"] = None
-            st.info(
-                f"📐 Paramètres GPD calibrés injectés : "
-                f"ξ = {p['xi']:.4f} · β = {p['beta']:,.0f}"
-            )
 
     st.session_state["loi_sim"] = loi_choisie
-    st.info(f"✅ Loi retenue : **{loi_choisie.upper()}** — "
-            f"les simulations utiliseront cette loi et ses paramètres calibrés.")
     return loi_choisie
