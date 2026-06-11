@@ -2,8 +2,10 @@
 Atlantic Re IA — Agent Python pur
 AgentActuarielPython : pipeline complet BC -> Simulation -> Market Curve -> Rapport -> Variantes.
 
+Module sans LLM, utilisable hors ligne.
+Correction intégrée : initialisation robuste de df_ml et calibration prudente des élasticités.
 """
- 
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -42,6 +44,11 @@ class AgentActuarielPython:
         chargement_majeurs,
         df_mkt_clean=None,
         df_ml=None,
+        loi_sim="pareto",
+        mu_ln=None,
+        sigma_ln=None,
+        gpd_xi=None,
+        gpd_beta=None,
     ):
         self.tranches = tranches or []
         self.gnpi = float(gnpi or 0.0)
@@ -57,6 +64,11 @@ class AgentActuarielPython:
         # IMPORTANT : certains workflows lancent l'agent avant le module labo/ML.
         # L'attribut doit donc toujours exister, même si aucun dataset ML n'est disponible.
         self.df_ml = df_ml
+        self.loi_sim = str(loi_sim or "pareto").lower()
+        self.mu_ln = None if mu_ln is None else float(mu_ln)
+        self.sigma_ln = None if sigma_ln is None else float(sigma_ln)
+        self.gpd_xi = None if gpd_xi is None else float(gpd_xi)
+        self.gpd_beta = None if gpd_beta is None else float(gpd_beta)
 
         self.log = []
         self.anomalies = []
@@ -323,18 +335,65 @@ class AgentActuarielPython:
     # ÉTAPE 2 — SIMULATION
     # ------------------------------------------------------------------
     def etape_2_simulation(self, n_sim=10000, seed=42):
-        self._log("Simulation", f"Simulation fréquence-sévérité : alpha={self.alpha:.4f}, lambda={self.lambda_:.4f}, n={n_sim:,}.")
+        """
+        Simulation fréquence-sévérité.
+        La loi de sévérité utilisée est celle retenue dans l'interface :
+        Pareto, Lognormale ou GPD. Le LLM ne choisit pas la loi à la place
+        de l'utilisateur ; il exploite les paramètres déjà validés.
+        """
+        loi = str(getattr(self, "loi_sim", "pareto") or "pareto").lower()
+        self._log(
+            "Simulation",
+            f"Simulation fréquence-sévérité : loi={loi}, lambda={self.lambda_:.4f}, seuil={self.seuil:,.0f}, n={n_sim:,}.",
+        )
         rng = np.random.default_rng(seed)
         resultats = []
 
-        if self.lambda_ < 0 or self.alpha <= 0 or self.seuil <= 0:
-            self._alerte("CRITIQUE", "Simulation impossible : paramètres fréquence/sévérité invalides.")
+        if self.lambda_ <= 0 or self.seuil <= 0:
+            self._alerte("CRITIQUE", "Simulation impossible : lambda ou seuil invalide.")
             self.resultats_sim = []
             return []
+        if loi == "pareto" and self.alpha <= 0:
+            self._alerte("CRITIQUE", "Simulation Pareto impossible : alpha invalide.")
+            self.resultats_sim = []
+            return []
+        if loi == "lognormale":
+            if self.mu_ln is None:
+                self.mu_ln = float(np.log(max(self.seuil, 1.0)))
+            if self.sigma_ln is None or self.sigma_ln <= 0:
+                self._alerte("CRITIQUE", "Simulation lognormale impossible : sigma invalide.")
+                self.resultats_sim = []
+                return []
+        if loi == "gpd":
+            if self.gpd_xi is None:
+                self.gpd_xi = 0.0
+            if self.gpd_beta is None or self.gpd_beta <= 0:
+                self._alerte("CRITIQUE", "Simulation GPD impossible : beta invalide.")
+                self.resultats_sim = []
+                return []
 
         coeffs = self.coeffs[np.isfinite(self.coeffs)]
         if len(coeffs) == 0:
             coeffs = np.array([1.0])
+
+        def generer_sinistres(n_sin):
+            if n_sin <= 0:
+                return np.array([], dtype=float)
+            if loi == "pareto":
+                u = rng.uniform(size=n_sin)
+                return self.seuil * (u ** (-1.0 / self.alpha))
+            if loi == "lognormale":
+                sp = rng.lognormal(float(self.mu_ln), float(self.sigma_ln), size=n_sin)
+                return np.maximum(sp, self.seuil)
+            if loi == "gpd":
+                u = rng.uniform(size=n_sin)
+                xi = float(self.gpd_xi)
+                beta = float(self.gpd_beta)
+                if abs(xi) < 1e-10:
+                    return self.seuil - beta * np.log(np.clip(u, 1e-12, 1.0))
+                return self.seuil + beta / xi * ((1.0 - np.clip(u, 1e-12, 1-1e-12)) ** (-xi) - 1.0)
+            # Garde-fou : loi inconnue, on bloque plutôt que de revenir silencieusement à Pareto.
+            raise ValueError(f"Loi de sévérité inconnue : {loi}")
 
         for t_info in self.tranches:
             nom = t_info.get("nom", "Tranche")
@@ -351,10 +410,9 @@ class AgentActuarielPython:
                     n_sin = rng.poisson(self.lambda_)
                     s_tot = 0.0
                     if n_sin > 0:
-                        u = rng.uniform(size=n_sin)
-                        sp = self.seuil * (u ** (-1.0 / self.alpha))
-                        ic = rng.choice(len(coeffs), size=n_sin, replace=True)
-                        for k in range(n_sin):
+                        sp = generer_sinistres(int(n_sin))
+                        ic = rng.choice(len(coeffs), size=int(n_sin), replace=True)
+                        for k in range(int(n_sin)):
                             s = float(sp[k])
                             c = float(coeffs[ic[k]])
                             if s <= D:
@@ -398,6 +456,22 @@ class AgentActuarielPython:
             _, _, tt_aad, _ = calc(c_saad)
             _, _, tt_rec, _ = calc(c_srec)
 
+            parametres = {
+                "loi": loi,
+                "lambda": round(self.lambda_, 6),
+                "seuil": round(self.seuil, 2),
+                "n_sim": int(n_sim),
+                "seed": int(seed),
+            }
+            if loi == "pareto":
+                parametres["alpha"] = round(self.alpha, 6)
+            elif loi == "lognormale":
+                parametres["mu"] = round(float(self.mu_ln), 6)
+                parametres["sigma"] = round(float(self.sigma_ln), 6)
+            elif loi == "gpd":
+                parametres["xi"] = round(float(self.gpd_xi), 6)
+                parametres["beta"] = round(float(self.gpd_beta), 2)
+
             resultats.append(
                 {
                     "tranche": nom,
@@ -413,14 +487,15 @@ class AgentActuarielPython:
                     "impact_aal": round(tt_aal - tt, 6),
                     "impact_aad": round(tt_aad - tt, 6),
                     "impact_rec": round(tt_rec - tt, 6),
-                    "param_alpha": round(self.alpha, 6),
+                    "parametres_simulation": parametres,
+                    "loi_severite": loi,
                     "param_lambda": round(self.lambda_, 6),
                     "param_seuil": round(self.seuil, 2),
                     "n_sim": int(n_sim),
                     "seed": int(seed),
                 }
             )
-            self._log("Simulation", f"{nom}: taux pur={tp:.4%}, taux technique={tt:.4%}.")
+            self._log("Simulation", f"{nom}: loi={loi}, taux pur={tp:.4%}, taux technique={tt:.4%}.")
 
         self.resultats_sim = resultats
         return resultats
