@@ -302,24 +302,24 @@ console.log("OK");
         return None
     except Exception:
         return None
-    with st.expander("💡 Conseils pour bien prompter Claude sur cette étape", expanded=False):
+    with st.expander(" Conseils pour bien prompter Claude sur cette étape", expanded=False):
         st.markdown(f"""<div style="background:#f0fff4;border-left:4px solid #2d8a4e;border-radius:0 8px 8px 0;
-            padding:14px 18px;margin-bottom:12px"><b style="color:#2d8a4e">🎯 Meilleure analyse pour : {etape}</b></div>""",
+            padding:14px 18px;margin-bottom:12px"><b style="color:#2d8a4e"> Meilleure analyse pour : {etape}</b></div>""",
             unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("**📌 Contexte — quoi mettre**")
+            st.markdown("** Contexte — quoi mettre**")
             for ex in exemples_contexte: st.markdown(f"- {ex}")
-            st.markdown("**📋 Instructions — quoi demander**")
+            st.markdown("** Instructions — quoi demander**")
             for ex in exemples_instructions: st.markdown(f"- {ex}")
         with c2:
-            st.markdown("**📥 Données supplémentaires**")
+            st.markdown("** Données supplémentaires**")
             for ex in exemples_input: st.markdown(f"- {ex}")
-            st.markdown("**📤 Format de sortie**")
+            st.markdown("** Format de sortie**")
             for ex in exemples_output: st.markdown(f"- {ex}")
         st.markdown("""<div style="background:#fff8f0;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;
             padding:10px 14px;margin-top:8px;font-size:12px">
-            ⚠️ <b>Règle d'or :</b> Plus vous donnez de contexte métier, plus l'analyse sera pertinente et actionnelle.
+             <b>Règle d'or :</b> Plus vous donnez de contexte métier, plus l'analyse sera pertinente et actionnelle.
             </div>""", unsafe_allow_html=True)
 
 
@@ -1159,7 +1159,7 @@ def comparer_lois_ajustement(data, seuil, label="Sinistres"):
     valid = [r for r in resultats if "_aic" in r and r["_aic"] < 1e9]
     if valid:
         best = min(valid, key=lambda r: r["_aic"])
-        best["Recommandée"] = "✅ AIC min"
+        best["Recommandée"] = "AIC min"
 
     # ── Index des paramètres calibrés par loi (avant nettoyage) ───────────
     # Conservés pour injection dans session_state dans afficher_selection_loi
@@ -1200,7 +1200,7 @@ def afficher_selection_loi(data, seuil, key_prefix="loi"):
     CORRECTIF : injecte les paramètres calibrés dans session_state
     selon la loi choisie, pour que la simulation utilise les bons paramètres.
     """
-    st.markdown("#### 📊 Sélection de la loi de sévérité")
+    st.markdown("#### Sélection de la loi de sévérité")
     st.caption("Ajustement Pareto / Lognormale / GPD aux excédances. "
                "Choisissez la loi en fonction des indicateurs ci-dessous.")
 
@@ -1232,12 +1232,12 @@ def afficher_selection_loi(data, seuil, key_prefix="loi"):
     # ── Pré-sélectionner la loi recommandée ──────────────────────────
     loi_recommandee = "pareto"
     for r in resultats_lois:
-        if "✅" in str(r.get("Recommandée", "")):
+        if "AIC min" in str(r.get("Recommandée", "")):
             loi_recommandee = r["Loi"].lower()
             break
 
     loi_choisie = st.selectbox(
-        "🔬 Loi retenue pour la simulation",
+        "Loi retenue pour la simulation",
         options=["pareto", "lognormale", "gpd"],
         index=["pareto", "lognormale", "gpd"].index(loi_recommandee)
               if loi_recommandee in ["pareto", "lognormale", "gpd"] else 0,
@@ -1247,7 +1247,7 @@ def afficher_selection_loi(data, seuil, key_prefix="loi"):
             "gpd":        "GPD (Extreme Value Theory — TVE)",
         }.get,
         key=f"{key_prefix}_loi_choisie",
-        help="La loi avec ✅ AIC min est statistiquement recommandée.",
+        help="La loi avec  AIC min est statistiquement recommandée.",
     )
 
     # ── CORRECTIF : injecter les paramètres calibrés dans session_state ──
