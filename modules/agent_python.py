@@ -2,8 +2,6 @@
 Atlantic Re IA — Agent Python pur
 AgentActuarielPython : pipeline complet BC -> Simulation -> Market Curve -> Rapport -> Variantes.
 
-Module sans LLM, utilisable hors ligne.
-Correction intégrée : initialisation robuste de df_ml et calibration prudente des élasticités.
 """
 
 from __future__ import annotations
