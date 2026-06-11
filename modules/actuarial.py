@@ -1,8 +1,8 @@
 """
 Atlantic Re IA — Actuarial computations module
-Tooltips, glossaire, Hill/MEF/GPD, Bühlmann-Straub, Bootstrap CI, 
+Tooltips, glossaire, Hill/MEF/GPD, Bühlmann-Straub, Bootstrap CI,
 selectionner_seuil_pareto, identifier_sinistres_majeurs, 
-section_analyse_distributions. 
+section_analyse_distributions.
 """
 import streamlit as st
 import numpy as np
@@ -1161,58 +1161,123 @@ def comparer_lois_ajustement(data, seuil, label="Sinistres"):
         best = min(valid, key=lambda r: r["_aic"])
         best["Recommandée"] = "✅ AIC min"
 
+    # ── Index des paramètres calibrés par loi (avant nettoyage) ───────────
+    # Conservés pour injection dans session_state dans afficher_selection_loi
+    params_calibres = {}
+    for r in resultats:
+        loi = r.get("Loi", "")
+        if loi == "Pareto":
+            params_calibres["pareto"] = {"alpha": r.get("α (Pareto)", 1.5)}
+        elif loi == "Lognormale":
+            # Extraire μ et σ depuis la chaîne Params "μ=X, σ=Y"
+            try:
+                p = r.get("Params", "")
+                parts = {x.split("=")[0].strip(): float(x.split("=")[1])
+                         for x in p.split(",")}
+                params_calibres["lognormale"] = {
+                    "mu":    parts.get("μ", 13.0),
+                    "sigma": parts.get("σ", 1.0),
+                }
+            except Exception:
+                params_calibres["lognormale"] = {"mu": 13.0, "sigma": 1.0}
+        elif loi == "GPD":
+            params_calibres["gpd"] = {
+                "xi":   r.get("_xi",   0.3),
+                "beta": r.get("_beta", 500_000.0),
+            }
+
     # Nettoyer les clés internes avant affichage
     for r in resultats:
         for k in ["_ll", "_aic", "_xi", "_beta"]:
             r.pop(k, None)
 
-    return resultats, None
+    return resultats, params_calibres
 
 
 def afficher_selection_loi(data, seuil, key_prefix="loi"):
     """
-    Affiche le comparateur de lois et retourne la loi choisie par l'utilisateur.
-    Appelé depuis Tab 4 (Simulation) avant de lancer la simulation.
+    Affiche le comparateur de lois et retourne la loi choisie.
+    CORRECTIF : injecte les paramètres calibrés dans session_state
+    selon la loi choisie, pour que la simulation utilise les bons paramètres.
     """
     st.markdown("#### 📊 Sélection de la loi de sévérité")
     st.caption("Ajustement Pareto / Lognormale / GPD aux excédances. "
                "Choisissez la loi en fonction des indicateurs ci-dessous.")
 
     with st.spinner("Ajustement des lois..."):
-        resultats_lois, err = comparer_lois_ajustement(data, seuil, "Excédances")
+        resultats_lois, params_calibres = comparer_lois_ajustement(
+            data, seuil, "Excédances")
 
-    if err or not resultats_lois:
-        st.warning(err or "Pas assez de données")
+    if not resultats_lois:
+        st.warning("Pas assez de données pour ajuster les lois.")
         return "pareto"
 
-    # Affichage tableau
-    import streamlit as st
-    cols_aff = ["Loi","Params","KS stat","p-value KS","AIC","BIC","Recommandée"]
-    rows_aff = [{k: r.get(k,"") for k in cols_aff} for r in resultats_lois]
-
-    # Colorier la ligne recommandée
-    df_lois = __import__('pandas').DataFrame(rows_aff)
+    # ── Tableau comparatif ────────────────────────────────────────────
+    import pandas as _pd
+    cols_aff = ["Loi", "Params", "KS stat", "p-value KS", "AIC", "BIC", "Recommandée"]
+    rows_aff = [{k: r.get(k, "") for k in cols_aff} for r in resultats_lois]
+    df_lois  = _pd.DataFrame(rows_aff)
     st.dataframe(df_lois, use_container_width=True, hide_index=True)
 
     st.markdown("""
-    <div style="background:#f2f8f7;border-left:4px solid #00b5a5;padding:10px 14px;font-size:12px">
+    <div style="background:#f2f8f7;border-left:4px solid #00b5a5;
+                padding:10px 14px;font-size:12px">
     <b>Guide de lecture :</b><br>
     • <b>KS p-value</b> : > 0.05 = bonne adéquation | < 0.05 = loi rejetée<br>
     • <b>AIC</b> : plus petit = meilleur ajustement (pénalise la complexité)<br>
     • <b>BIC</b> : idem AIC, pénalité plus forte sur n<br>
-    • <b>ξ GPD</b> : > 0 = queue lourde (Fréchet) | ξ ≈ 0 = Gumbel (légère) | ξ < 0 = Weibull (bornée)
+    • <b>ξ GPD</b> : > 0 = queue lourde (Fréchet) | ξ ≈ 0 = Gumbel | ξ &lt; 0 = Weibull
     </div>""", unsafe_allow_html=True)
+
+    # ── Pré-sélectionner la loi recommandée ──────────────────────────
+    loi_recommandee = "pareto"
+    for r in resultats_lois:
+        if "✅" in str(r.get("Recommandée", "")):
+            loi_recommandee = r["Loi"].lower()
+            break
 
     loi_choisie = st.selectbox(
         "🔬 Loi retenue pour la simulation",
         options=["pareto", "lognormale", "gpd"],
-        format_func={"pareto":"Pareto (Extrapolation classique XL)",
-                     "lognormale":"Lognormale (Sinistres moyens)",
-                     "gpd":"GPD (Extreme Value Theory — TVE)"}.get,
+        index=["pareto", "lognormale", "gpd"].index(loi_recommandee)
+              if loi_recommandee in ["pareto", "lognormale", "gpd"] else 0,
+        format_func={
+            "pareto":     "Pareto (Extrapolation classique XL)",
+            "lognormale": "Lognormale (Sinistres moyens)",
+            "gpd":        "GPD (Extreme Value Theory — TVE)",
+        }.get,
         key=f"{key_prefix}_loi_choisie",
-        help="La loi avec ✅ AIC min est statistiquement recommandée, "
-             "mais vous pouvez choisir selon le contexte actuariel."
+        help="La loi avec ✅ AIC min est statistiquement recommandée.",
     )
 
-    st.info(f"✅ Loi retenue : **{loi_choisie.upper()}** — les simulations utiliseront cette loi.")
+    # ── CORRECTIF : injecter les paramètres calibrés dans session_state ──
+    # Garantit que la simulation utilise les paramètres de la loi choisie,
+    # pas ceux de Pareto simple par défaut.
+    if isinstance(params_calibres, dict):
+        p = params_calibres.get(loi_choisie, {})
+        if loi_choisie == "pareto" and "alpha" in p:
+            st.session_state["gpd_xi"]    = None   # désactiver GPD
+            st.session_state["gpd_beta"]  = None
+            st.session_state["loi_mu"]    = None
+            st.session_state["loi_sigma"] = None
+            # alpha_est déjà dans session_state depuis Tab 2 — pas besoin de l'écraser
+        elif loi_choisie == "lognormale" and "mu" in p:
+            st.session_state["loi_mu"]    = float(p["mu"])
+            st.session_state["loi_sigma"] = float(p["sigma"])
+            st.session_state["gpd_xi"]    = None
+            st.session_state["gpd_beta"]  = None
+        elif loi_choisie == "gpd" and "xi" in p:
+            # ← CORRECTIF PRINCIPAL : injecter ξ et β calibrés
+            st.session_state["gpd_xi"]    = float(p["xi"])
+            st.session_state["gpd_beta"]  = float(p["beta"])
+            st.session_state["loi_mu"]    = None
+            st.session_state["loi_sigma"] = None
+            st.info(
+                f"📐 Paramètres GPD calibrés injectés : "
+                f"ξ = {p['xi']:.4f} · β = {p['beta']:,.0f}"
+            )
+
+    st.session_state["loi_sim"] = loi_choisie
+    st.info(f"✅ Loi retenue : **{loi_choisie.upper()}** — "
+            f"les simulations utiliseront cette loi et ses paramètres calibrés.")
     return loi_choisie
