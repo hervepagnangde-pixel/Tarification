@@ -1,487 +1,378 @@
 """
-Atlantic Re IA — Prompt engineering module
-build_prompt, claude_stream, build_prompt_agent_autonome,
-build_prompt_variantes_leader, guide_prompt.
-
-VERSION AUTONOME :
-  L'agent raisonne au maximum, identifie les causes de problèmes,
-  score la cohérence de ses résultats, et liste les méthodes utilisées.
-  Aucune validation humaine dans la boucle.
+Atlantic Re IA — Agents V2 module
+AgentRaisonnement, AgentCritique, AgentML, AgentMemoireMetier,
+AgentChallenger, AgentOptimisationProgramme + affichage.
 """
 import streamlit as st
-import anthropic
-from modules.db import _get_conn, _ph
-
-
-# ════════════════════════════════════════════════════════════════════
-# IDENTITÉ COMMUNE — injectée dans tous les prompts
-# ════════════════════════════════════════════════════════════════════
-
-_IDENTITE = """Tu es un agent actuariel autonome spécialisé en réassurance
-non-proportionnelle XL automobile, au service d'Atlantic Re.
-
-Niveau d'expertise : Senior 15+ ans, marchés émergents MENA/Afrique.
-Références : Daykin-Pentikäinen-Pesonen, Klugman, CAS, ASTIN, IAA.
-
-Tu raisonnes seul jusqu'au bout. Tu ne demandes pas de validation.
-Tu poses des hypothèses, tu les testes, tu les rejettes ou confirmes.
-Quand les données sont insuffisantes, tu le dis — tu n'inventes rien."""
-
-_REGLES_ABSOLUES = """
-RÈGLES ABSOLUES
-───────────────
-1. Tout chiffre est tracé à sa source dans les données fournies.
-2. Le triangle ne s'affiche jamais en clair — référencer l'onglet source.
-3. Raisonnement chaîné obligatoire :
-   [Observation] → [Hypothèse] → [Test/Calcul] → [Conclusion chiffrée]
-4. Données insuffisantes → "Données insuffisantes — conclusion impossible."
-   Ne jamais extrapoler sans le signaler explicitement.
-5. Hiérarchie invariante : τ_pur ≤ τ_risque ≤ τ_technique.
-   Toute violation est une anomalie critique à signaler immédiatement.
-6. Chaque affirmation est étayée par un calcul explicite.
-   La précision quantitative prime sur l'exhaustivité qualitative."""
-
-_REGLES_METIER = """
-RÈGLES MÉTIER
-─────────────
-PRIMAUTÉ DU BURNING COST
-  Le BC reflète l'expérience réelle → analyser en premier.
-  Si crédible (≥ 3 années non nulles) → fixe le tarif, la simulation valide.
-  Tranches non-travaillantes / cat → BC souvent nul (R2, normal).
-
-DÉTECTION ANNÉES ATYPIQUES (avant tout calcul)
-  [A] Taux >> voisines N-1 et N+1 simultanément
-  [B] Sinistre CAT dans programme Risk uniquement
-  [C] GNPI de l'année < 50% de la médiane historique
-  [D] Sinistre unique exceptionnel (traiter via TVE/GPD)
-  [E] Changement de périmètre documenté
-  → Présenter calcul AVEC et SANS l'année atypique. Justifier le choix.
-
-RÈGLES PAR TRANCHE
-  Travaillante    : τ_retenu = max(BC, Sim)
-  Cat / Non-trav  : τ_retenu = max(Sim, Marché)
-  τ_risque        = τ_pur + σ_hist × 20%  (R1 — CAS standard)
-  BC = 0 si années non nulles < 3          (R2)
-
-MARKET CURVE
-  Cat uniquement sauf exception documentée.
-  ROL = a × x^(−b) ; b > 0 obligatoire ; R² ≥ 0.45 ; N ≥ 15 points.
-  Filtrer les données ROL au périmètre cohérent avec la tranche tarifée.
-
-ÉLASTICITÉS LOG-LOG (estimation variantes)
-  τ_new ≈ τ_ref × (C_new/C_ref)^e_C × (D_ref/D_new)^e_D × (n_new/n_ref)^e_n
-  Valeurs marché : e_C = 0.55, e_D = 0.35, e_n = 0.08
-  Si élasticités calibrées disponibles → les utiliser en priorité."""
-
-_FORMAT_BRAS = """
-SECTION OBLIGATOIRE EN FIN DE RÉPONSE — "BRAS UTILISÉS"
-  Lister explicitement chaque méthode ou raisonnement mobilisé :
-  • Méthodes actuarielles activées (BC, Sim, Mkt, TVE, credibilité...)
-  • Sources de données exploitées (triangle, GNPI, indices, marché...)
-  • Règles appliquées (R1, R2, R3, élasticités...)
-  • Limites identifiées (données manquantes, hypothèses fragiles...)
-  • Score de cohérence global : X/10 avec justification courte"""
-
-
-# ════════════════════════════════════════════════════════════════════
-# PROMPT 1 — ANALYSE COMPLÈTE AUTONOME
-# Utilisé quand l'actuaire donne son brief + les données brutes
-# ════════════════════════════════════════════════════════════════════
-
-def build_prompt_analyse_autonome(
-    brief_actuariel: str,
-    contexte_cedante: str,
-    donnees_brutes: str = "",
-    contexte_marche: str = "",
-    few_shot: str = "",
-) -> str:
-    """
-    Prompt pour l'analyse complète autonome.
-    L'actuaire a déjà tarifié (R, Excel, manuel).
-    Claude analyse, détecte les anomalies, évalue la cohérence.
-    """
-    return f"""{_IDENTITE}
-
-{_REGLES_ABSOLUES}
-
-{_REGLES_METIER}
-
-═══ CONTEXTE CÉDANTE & PROGRAMME ═══════════════════════════════
-{contexte_cedante}
-
-═══ BRIEF ACTUARIEL (calculé par l'actuaire — ne pas remettre en question) ══
-{brief_actuariel}
-
-═══ DONNÉES BRUTES (pour comprendre le contexte) ══════════════
-{donnees_brutes if donnees_brutes else "Non fournies — raisonner sur le brief uniquement."}
-
-═══ CONTEXTE MARCHÉ ═══════════════════════════════════════════
-{contexte_marche if contexte_marche else "Non fourni."}
-
-═══ EXEMPLES DE RÉFÉRENCE ════════════════════════════════════
-{few_shot if few_shot else "Aucun exemple historique disponible."}
-
-═══ MISSION ══════════════════════════════════════════════════
-1. DIAGNOSTIC PORTEFEUILLE
-   Analyse les données brutes pour comprendre le profil de risque.
-   Identifie les années atypiques (causes A-E), les tendances de sinistralité,
-   la stabilité du GNPI, la cohérence des indices utilisés.
-
-2. ÉVALUATION DE LA TARIFICATION
-   Évalue la cohérence de chaque taux fourni par l'actuaire.
-   Signale tout écart qui mérite attention (pas de remise en question —
-   seulement une observation documentée avec cause probable).
-
-3. ANALYSE CAUSES PROFONDES
-   Pour chaque anomalie détectée : aller jusqu'à la cause racine.
-   Ne pas s'arrêter à "l'écart est élevé" — expliquer POURQUOI.
-   Exemple : "L'écart BC/Sim de 42% s'explique par le sinistre 2024
-   (39.1M AED) qui représente 3.2× le sinistre moyen historique.
-   Sans ce sinistre, l'écart tombe à 8% — cohérent."
-
-4. SCORE DE COHÉRENCE
-   Attribuer un score X/10 à chaque méthode ET au programme global.
-   Justifier chaque score en une phrase.
-
-5. POSITIONNEMENT MARCHÉ
-   Comparer les taux obtenus aux références marché disponibles.
-   Identifier si Atlantic Re est compétitif pour une position leader.
-
-═══ FORMAT DE SORTIE ═════════════════════════════════════════
-## 1. DIAGNOSTIC PORTEFEUILLE
-## 2. ÉVALUATION DE LA TARIFICATION
-   ### T1 — [nom] : [taux retenu]
-   ### T2 — [nom] : [taux retenu]
-   ...
-## 3. ANOMALIES ET CAUSES PROFONDES
-## 4. SCORES DE COHÉRENCE
-   | Méthode | Score | Justification |
-## 5. POSITIONNEMENT MARCHÉ
-## 6. CONCLUSION ACTUARIELLE
-   Verdict : COMPÉTITIF / NÉGOCIER / REVOIR
-   Prime totale estimée : X AED (Y% du GNPI)
-
----
-## BRAS UTILISÉS
-{_FORMAT_BRAS}
-""".strip()
-
-
-# ════════════════════════════════════════════════════════════════════
-# PROMPT 2 — VARIANTES LEADER
-# Utilisé pour proposer des programmes alternatifs compétitifs
-# ════════════════════════════════════════════════════════════════════
-
-def build_prompt_variantes_leader(
-    brief_actuariel: str,
-    contexte_cedante: str,
-    n_variantes: int = 3,
-    elasticites: dict | None = None,
-    objectif_leader: str = "",
-    donnees_brutes: str = "",
-) -> str:
-    """
-    Prompt pour la proposition de variantes commerciales.
-    Objectif : maximiser les chances d'être désigné leader.
-    """
-    e_C = (elasticites or {}).get("e_portee",   0.55)
-    e_D = (elasticites or {}).get("e_priorite", 0.35)
-    e_n = (elasticites or {}).get("e_recon",    0.08)
-    cal = "calibrées sur ce portefeuille" if (elasticites or {}).get("calibre") else "valeurs marché par défaut"
-
-    objectif_str = (
-        f"\nObjectif spécifique : {objectif_leader}\n"
-        if objectif_leader else ""
-    )
-
-    return f"""{_IDENTITE}
-
-{_REGLES_ABSOLUES}
-
-{_REGLES_METIER}
-
-═══ CONTEXTE PROGRAMME ══════════════════════════════════════
-{contexte_cedante}
-
-═══ BRIEF ACTUARIEL (tarification de référence) ═════════════
-{brief_actuariel}
-
-═══ DONNÉES CONTEXTE ════════════════════════════════════════
-{donnees_brutes if donnees_brutes else "Non fournies."}
-{objectif_str}
-═══ ÉLASTICITÉS DISPONIBLES ({cal}) ══════
-  e_portée   = {e_C:.3f}  → +1% portée  ≈ +{e_C:.2f}% taux
-  e_priorité = {e_D:.3f}  → +1% priorité ≈ −{e_D:.2f}% taux
-  e_reconst  = {e_n:.3f}  → +1 reconst.  ≈ +{e_n:.2f}% taux
-
-═══ MISSION — VARIANTES LEADER ══════════════════════════════
-Atlantic Re veut être désigné LEADER sur ce programme.
-Un leader ne l'est pas uniquement grâce au taux — c'est aussi
-la solidité, la notoriété et la qualité de la proposition.
-
-Mais ton rôle ici est actuariel : propose {n_variantes} variantes
-de structures de programme qui permettent à Atlantic Re d'être
-COMPÉTITIF tout en restant TECHNIQUEMENT DÉFENDABLE.
-
-POUR CHAQUE VARIANTE :
-1. Définir la structure : D, C, AAD (optionnel), reconstitutions
-2. Estimer le taux via élasticités log-log (formule ci-dessus)
-3. Vérifier que τ_estimé ≥ 85% du taux de référence correspondant
-4. Identifier l'angle d'attractivité :
-   - "cédante" : meilleure protection à prime comparable
-   - "réassureur" : meilleure rentabilité technique
-   - "équilibre" : optimum coût/protection
-5. Formuler l'argument commercial en UNE PHRASE
-6. Signaler le niveau de risque technique de la variante (faible/modéré/élevé)
-
-CONTRAINTES ABSOLUES
-  • Variations réalistes : ±10 à 25% sur D ou C
-  • Reconstitutions : entre 1 et 3
-  • τ_estimé JAMAIS < 80% du taux de référence retenu par l'actuaire
-  • Si une variante dépasse ce plancher → la signaler comme "non recommandée"
-    mais la présenter quand même avec le risque associé
-
-FORMAT DE SORTIE — JSON pur (aucun texte autour)
-{{
-  "analyse_competitivite": "<paragraphe : Atlantic Re est-il compétitif ? Pourquoi ?>",
-  "variantes": [
-    {{
-      "nom": "Variante A — <titre court>",
-      "angle": "cédante | réassureur | équilibre",
-      "risque_technique": "faible | modéré | élevé",
-      "tranches": [
-        {{
-          "nom": "<nom>",
-          "priorite": <AED>,
-          "portee": <AED>,
-          "nb_reconstitutions": <int>,
-          "AAD": <AED ou null>,
-          "tau_estime": <décimal ex 0.0234>,
-          "prime_estimee": <AED>,
-          "vs_reference": "<ex: −4.2% vs τ_ref>",
-          "methode_estimation": "élasticité log-log | jugement expert"
-        }}
-      ],
-      "prime_totale": <AED>,
-      "taux_global": <décimal>,
-      "argument_commercial": "<une phrase pour la cédante>",
-      "justification_technique": "<pourquoi défendable>",
-      "alerte": "<null ou message si risque identifié>"
-    }}
-  ],
-  "recommandation": "<quelle variante privilégier et pourquoi>",
-  "score_competitivite": <1-10>,
-  "bras_utilises": {{
-    "methodes": ["élasticités log-log", "règle R1", ...],
-    "donnees": ["taux de référence actuaire", "élasticités {cal}", ...],
-    "limites": ["...", "..."],
-    "score_coherence_global": <1-10>,
-    "note_coherence": "<justification>"
-  }}
-}}
-""".strip()
-
-
-# ════════════════════════════════════════════════════════════════════
-# PROMPT 3 — GÉNÉRAL (existant, conservé pour compatibilité)
-# ════════════════════════════════════════════════════════════════════
-
-def build_prompt(role, task, data, contexte="", instructions="",
-                 input_data="", output_instructions="",
-                 contexte_global="", exemples="", contraintes=""):
-    """
-    Prompt engineering général — conservé pour compatibilité avec app.py.
-    Inclut les règles actuarielles et le format de sortie standard.
-    """
-    prompt = f"""
-╔══════════════════════════════════════════════════════════════╗
-║  ATLANTIC RE IA — AGENT ACTUARIEL EXPERT                     ║
-║  Réassurance Non-Proportionnelle XL · Automobile             ║
-╚══════════════════════════════════════════════════════════════╝
-
-{_IDENTITE}
-
-{_REGLES_ABSOLUES}
-
-═══ CONTRAINTES MÉTIER ══════════════════════════════════════
-{contraintes if contraintes else _REGLES_METIER}
-
-═══ CONTEXTE GLOBAL ═════════════════════════════════════════
-{contexte_global if contexte_global else "Portefeuille automobile, réassurance non-proportionnelle."}
-
-═══ CONTEXTE SPÉCIFIQUE ═════════════════════════════════════
-{contexte if contexte else "Non fourni."}
-
-═══ TÂCHE ════════════════════════════════════════════════════
-{task}
-
-═══ DONNÉES D'ANALYSE ═══════════════════════════════════════
-{data}
-{("DONNÉES SUPPLÉMENTAIRES :\n" + input_data) if input_data else ""}
-
-═══ INSTRUCTIONS ════════════════════════════════════════════
-{instructions if instructions else "Appliquer les règles actuarielles — analyse structurée."}
-
-═══ EXEMPLES FEW-SHOT ══════════════════════════════════════
-{exemples if exemples else """
-CAS 1 — Travaillante BC crédible :
-  T1 (13M xs 2M) — BC : 8 ans non-nuls | τ_pur=2.18% σ=1.45% τ_tech=3.26% ✅
-  Sim : τ_pur=3.12% τ_tech=4.59% | Écart 29% → analyser atypiques
-  RETENU : max(3.26%, 4.59%) = 4.59%
-
-CAS 2 — Année atypique cause B :
-  2019 : τ=8.2% vs 2018=1.1%, 2020=1.4% → CAT dans programme Risk
-  BC sans 2019 : τ_tech=2.85% (vs 4.12% avec) → ÉCARTÉ, justifié
-
-CAS 3 — Cat sans données :
-  T2 Cat : BC=0% (R2, normal) | Sim=1.24% | Mkt=1.34% (R²=0.52 N=22)
-  RETENU : max(1.24%, 1.34%) = 1.34%"""}
-
-═══ FORMAT DE SORTIE ════════════════════════════════════════
-{output_instructions if output_instructions else """
-1. ANALYSE PRÉALABLE (années atypiques, crédibilité BC)
-2. SYNTHÈSE BC / SIM / MKT
-3. TARIF RETENU PAR TRANCHE
-4. CONCLUSION (ACCEPTER / NÉGOCIER / RÉVISER + prime totale)
-
----
-BRAS UTILISÉS :
-• Méthodes activées : [liste]
-• Données exploitées : [liste]
-• Limites : [liste]
-• Score cohérence : X/10"""}
-
-La précision quantitative prime sur l'exhaustivité qualitative.
-Chaque affirmation est étayée par un calcul explicite.
-╔══════════════════════════════════════════════════════════════╗
-"""
-    return prompt.strip()
-
-
-# ════════════════════════════════════════════════════════════════════
-# FEW-SHOT DYNAMIQUE — inchangé
-# ════════════════════════════════════════════════════════════════════
-
-def _charger_few_shot_dynamiques(user_email, n_max=3):
-    """Charge les N meilleurs exemples de sessions validées comme few-shot."""
-    try:
-        con, db = _get_conn(); cur = con.cursor(); p = _ph()
-        cur.execute(
-            f"""SELECT s.nom_session, s.gnpi, r.data_json FROM sessions s
-                JOIN resultats r ON r.session_id=s.id
-                WHERE s.user_email={p} AND r.etape='rapport'
-                ORDER BY s.updated_at DESC LIMIT {n_max}""",
-            (user_email,))
-        rows = cur.fetchall(); con.close()
-    except Exception:
-        return ""
-    if not rows:
-        return ""
-    exemples = []
-    for nom, gnpi_h, data_json in rows:
+import numpy as np 
+import pandas as pd
+import json
+from datetime import datetime
+from modules.ui import tableau_resultats, card
+from modules.db import _get_conn, _ph, db_init
+
+class AgentRaisonnement:
+    def planifier(self, contexte):
+        plan = []
+        def add(code, titre, justification, priorite="normale"):
+            plan.append({"code":code,"titre":titre,"justification":justification,"priorite":priorite})
+        add("validation","Valider les paramètres","Contrôler alpha, lambda, GNPI, tranches.","haute")
+        if contexte.get("has_triangle"):
+            add("burning_cost","Calculer le Burning Cost","Triangle disponible — lecture historique.","haute")
+        else:
+            add("missing_triangle","Bloquer le BC","Aucune donnée projetée — BC non simulable.","critique")
+        add("simulation","Lancer la simulation","Comparer expérience historique et vision stochastique.","haute")
+        if contexte.get("has_market"):
+            add("market_curve","Ajuster la Market Curve","Données marché disponibles — benchmark cat.","normale")
+        else:
+            add("market_curve_skip","Ignorer la Market Curve","Aucune donnée marché fiable.","normale")
+        add("critique","Auditer les résultats","Détecter incohérences et taux extrêmes.","haute")
+        if contexte.get("n_rows",0) >= 30:
+            add("machine_learning","Tester des modèles ML","Volume minimal disponible.","normale")
+        else:
+            add("machine_learning_skip","Ne pas surinterpréter le ML","Volume trop faible pour ML robuste.","normale")
+        add("selection","Sélectionner le taux retenu","Appliquer règle prudente par tranche.","haute")
+        add("negociation","Proposer des variantes","Programmes selon intérêt cédante/réassureur.","normale")
+        return plan
+
+
+class AgentCritique:
+    def __init__(self, seuil_ecart_warn=0.30, seuil_ecart_critique=0.50, seuil_taux_extreme=0.50):
+        self.seuil_ecart_warn = seuil_ecart_warn
+        self.seuil_ecart_critique = seuil_ecart_critique
+        self.seuil_taux_extreme = seuil_taux_extreme
+
+    @staticmethod
+    def _map_by_name(rows):
+        return {r.get("tranche",r.get("Tranche","")): r for r in (rows or [])}
+
+    @staticmethod
+    def _num(x, default=0.0):
         try:
-            import json as _j
-            d = _j.loads(data_json)
-            rapport_rows = d.get("rows", []); pt = d.get("prime_totale", 0)
-            if not rapport_rows: continue
-            lines_ex = [
-                f"SESSION : {nom or 'Sans nom'} | "
-                f"GNPI {(gnpi_h or 0):,.0f} | Prime {pt:,.0f}"
-            ]
-            for r in rapport_rows[:4]:
-                nom_t = r.get("tranche", "") or r.get("Tranche", "")
-                typ_t = r.get("type",    "") or r.get("Type",    "")
-                tau   = r.get("taux_retenu", "") or r.get("Taux retenu", "")
-                meth  = r.get("methode", "") or r.get("Méthode", "")
-                lines_ex.append(f"  {nom_t} ({typ_t}) → {tau} via {meth}")
-            exemples.append("\n".join(lines_ex))
-        except Exception:
-            continue
-    if not exemples:
-        return ""
-    return "\n\n".join([f"CAS {i+1} :\n{ex}" for i, ex in enumerate(exemples)])
+            if x is None or x == "": return default
+            if isinstance(x, str):
+                return float(x.replace("%","").replace(",",".").strip())
+            return float(x)
+        except: return default
+
+    def auditer(self, tranches, gnpi, resultats_bc, resultats_sim, resultats_mkt, rapport_rows):
+        alertes = []; decisions = []; score = 100
+        bc_map = self._map_by_name(resultats_bc)
+        sim_map = self._map_by_name(resultats_sim)
+        mkt_map = self._map_by_name(resultats_mkt)
+        rpt_map = self._map_by_name(rapport_rows)
+
+        def alerte(niveau, tranche, message, impact=-5):
+            nonlocal score
+            alertes.append({"niveau":niveau,"tranche":tranche,"message":message})
+            score += impact
+
+        for i, t in enumerate(tranches or []):
+            nom = t.get("nom",f"Tranche {i+1}"); typ = t.get("type","")
+            bc=bc_map.get(nom,{}); sim=sim_map.get(nom,{}); rpt=rpt_map.get(nom,{})
+            bc_pur=self._num(bc.get("taux_pur")); bc_risque=self._num(bc.get("taux_risque"))
+            bc_tech=self._num(bc.get("taux_technique")); sim_tech=self._num(sim.get("taux_technique"))
+            retenu=self._num(rpt.get("taux_retenu"))
+            n_nz = int(self._num(bc.get("n_ann_nonzero"),0))
+
+            if bc_tech>0 and not (bc_pur<=bc_risque<=bc_tech+1e-12):
+                alerte("CRITIQUE",nom,"Hiérarchie BC incohérente : τ_pur ≤ τ_risque ≤ τ_tech non respectée.",-15)
+
+            if n_nz<3 and typ=="travaillante":
+                alerte("WARN",nom,f"BC fragile : {n_nz} année(s) non nulle(s). Simulation prioritaire.",-6)
+            elif n_nz<3 and typ=="cat":
+                decisions.append({"tranche":nom,"decision":"BC nul acceptable pour tranche cat."})
+
+            if bc_tech>0 and sim_tech>0:
+                ecart=abs(bc_tech-sim_tech)/max(bc_tech,1e-12)
+                if ecart>=self.seuil_ecart_critique:
+                    alerte("CRITIQUE",nom,f"Écart BC/Sim très élevé : {ecart:.0%}. Vérifier seuil et stabilisation.",-15)
+                elif ecart>=self.seuil_ecart_warn:
+                    alerte("WARN",nom,f"Écart BC/Sim significatif : {ecart:.0%}. Justification obligatoire.",-8)
+
+            for label,val in [("BC",bc_tech),("Sim",sim_tech),("Retenu",retenu)]:
+                if val<0: alerte("CRITIQUE",nom,f"Taux {label} négatif.",-20)
+                if 0<val>self.seuil_taux_extreme: alerte("CRITIQUE",nom,f"Taux {label} > {self.seuil_taux_extreme:.0%}.",-20)
+
+            if t.get("portee",0)<=0 or t.get("priorite",0)<0:
+                alerte("CRITIQUE",nom,"Priorité ou portée invalide.",-20)
+
+        score=max(0,min(100,score))
+        verdict="ROBUSTE" if score>=85 else "ACCEPTABLE AVEC RÉSERVES" if score>=65 else "À REVOIR"
+        return {"synthese":{"score":score,"verdict":verdict,"nb_alertes":len(alertes),
+                "nb_critiques":sum(1 for a in alertes if a["niveau"]=="CRITIQUE"),
+                "nb_warn":sum(1 for a in alertes if a["niveau"]=="WARN")},
+                "alertes":alertes,"decisions":decisions}
 
 
-# ════════════════════════════════════════════════════════════════════
-# CLAUDE STREAM — inchangé + mode autonome
-# ════════════════════════════════════════════════════════════════════
+class AgentML:
+    def __init__(self, random_state=42): self.random_state=random_state
 
-def claude_stream(api_key, prompt, max_tokens=4000,
-                  session_key="", use_opus=True):
-    """
-    Streaming Claude avec affichage Streamlit.
-    use_opus=True  → claude-opus-4-5  (agent autonome — défaut)
-    use_opus=False → claude-haiku-4-5 (analyses rapides)
-    """
-    model  = "claude-opus-4-5" if use_opus else "claude-haiku-4-5-20251001"
-    client = anthropic.Anthropic(api_key=api_key)
-    placeholder = st.empty()
-    full_text   = ""
-    label       = "Opus (autonome)" if use_opus else "Haiku ⚡"
-    with st.status(f"🤖 Agent Claude {label} en cours...",
-                   expanded=True) as status:
-        st.write("🔗 Connexion...")
-        st.write("📊 Chargement données actuarielles...")
+    def entrainer_depuis_df_proj(self, df, target="Sprime_ultime"):
         try:
-            with client.messages.stream(
-                model=model, max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}]
-            ) as stream:
-                st.write("✍️ Raisonnement en cours...")
-                for text in stream.text_stream:
-                    full_text += text
-                    placeholder.markdown(full_text + "▌")
-            status.update(label="✅ Analyse terminée",
-                          state="complete", expanded=False)
+            from sklearn.model_selection import train_test_split
+            from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+            from sklearn.tree import DecisionTreeRegressor
+            from sklearn.ensemble import RandomForestRegressor
         except Exception as e:
-            status.update(label="❌ Erreur", state="error")
-            st.error(f"Erreur API : {e}")
-            return ""
-    placeholder.markdown(full_text)
-    if session_key:
-        st.session_state[session_key] = full_text
-    return full_text
+            return {"disponible":False,"message":f"scikit-learn indisponible : {e}","modeles":[],"meilleur_modele":None,"importance":[]}
+
+        if df is None or df.empty or target not in df.columns:
+            return {"disponible":False,"message":"Target indisponible.","modeles":[],"meilleur_modele":None,"importance":[]}
+
+        data=df.copy().replace([np.inf,-np.inf],np.nan)
+        y=pd.to_numeric(data[target],errors="coerce"); X=data.drop(columns=[target],errors="ignore")
+        keep=[c for c in X.columns if X[c].notna().mean()>=0.60]; X=X[keep]
+        for c in X.columns:
+            if X[c].dtype=="object": X[c]=X[c].astype(str).fillna("NA")
+            else: X[c]=pd.to_numeric(X[c],errors="coerce")
+        mask=y.notna(); X=X.loc[mask].copy(); y=y.loc[mask].copy()
+        if len(X)<30: return {"disponible":False,"message":"Moins de 30 observations exploitables.","modeles":[],"meilleur_modele":None,"importance":[]}
+        X_enc=pd.get_dummies(X,dummy_na=True).fillna(0)
+
+        X_tr,X_te,y_tr,y_te=train_test_split(X_enc,y,test_size=0.25,random_state=self.random_state)
+        models={"Arbre":DecisionTreeRegressor(max_depth=4,min_samples_leaf=5,random_state=self.random_state),
+                "Random Forest":RandomForestRegressor(n_estimators=250,max_depth=8,min_samples_leaf=3,random_state=self.random_state,n_jobs=-1)}
+        try:
+            from xgboost import XGBRegressor
+            models["XGBoost"]=XGBRegressor(n_estimators=300,max_depth=4,learning_rate=0.05,subsample=0.85,colsample_bytree=0.85,objective="reg:squarederror",random_state=self.random_state)
+        except: pass
+
+        resultats=[]; best_name=None; best_mae=None; best_model=None
+        for name,model in models.items():
+            try:
+                model.fit(X_tr,y_tr); pred=model.predict(X_te)
+                mae=float(mean_absolute_error(y_te,pred)); rmse=float(np.sqrt(mean_squared_error(y_te,pred))); r2=float(r2_score(y_te,pred))
+                resultats.append({"modele":name,"MAE":mae,"RMSE":rmse,"R2":r2,"n_train":int(len(X_tr)),"n_test":int(len(X_te))})
+                if best_mae is None or mae<best_mae: best_mae=mae; best_name=name; best_model=model
+            except Exception as e:
+                resultats.append({"modele":name,"MAE":None,"RMSE":None,"R2":None,"erreur":str(e)})
+
+        importance=[]
+        if best_model is not None and hasattr(best_model,"feature_importances_"):
+            imp=pd.Series(best_model.feature_importances_,index=X_enc.columns).sort_values(ascending=False).head(10)
+            importance=[{"variable":k,"importance":float(v)} for k,v in imp.items()]
+
+        return {"disponible":True,"message":"Benchmark ML exécuté. Interprétation prudente recommandée.",
+                "modeles":resultats,"meilleur_modele":best_name,"importance":importance}
 
 
-# ════════════════════════════════════════════════════════════════════
-# PROMPT INPUTS — inchangé (UI helper)
-# ════════════════════════════════════════════════════════════════════
+class AgentMemoireMetier:
+    @staticmethod
+    def _to_float(x, default=0.0):
+        try:
+            if x is None or x=="": return default
+            if isinstance(x,str):
+                s=x.replace("%","").replace(" ","").replace(",",".")
+                val=float(s); return val/100 if "%"in x or val>1.5 else val
+            return float(x)
+        except: return default
 
-def prompt_inputs(key_prefix, placeholder_contexte="",
-                  placeholder_instructions="",
-                  placeholder_input="", placeholder_output=""):
-    with st.expander("✏️ Personnaliser le prompt", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            contexte = st.text_area("📌 Contexte",
-                placeholder=placeholder_contexte or "Ex: Portefeuille automobile UAE...",
-                height=80, key=f"{key_prefix}_contexte")
-            instructions = st.text_area("📋 Instructions",
-                placeholder=placeholder_instructions or "Ex: Attention à la tranche Cat L1...",
-                height=80, key=f"{key_prefix}_instructions")
-        with c2:
-            input_data = st.text_area("📥 Données supplémentaires",
-                placeholder=placeholder_input or "Ex: Taux marché référence : 3.2%...",
-                height=80, key=f"{key_prefix}_input")
-            output_instructions = st.text_area("📤 Format de sortie",
-                placeholder=placeholder_output or "Ex: Tableau + recommandation chiffrée...",
-                height=80, key=f"{key_prefix}_output")
-    return contexte, instructions, input_data, output_instructions
+    @staticmethod
+    def _row_get(row,*keys,default=None):
+        for k in keys:
+            if isinstance(row,dict) and k in row: return row.get(k)
+        return default
+
+    def charger_rapports_historiques(self, user_email, current_session_id=None, limite=100):
+        try:
+            con,db=_get_conn(); cur=con.cursor(); p=_ph()
+            if current_session_id:
+                cur.execute(f"""SELECT s.id,s.nom_session,s.gnpi,r.data_json FROM sessions s
+                    JOIN resultats r ON r.session_id=s.id
+                    WHERE s.user_email={p} AND r.etape='rapport' AND s.id!={p}
+                    ORDER BY s.updated_at DESC LIMIT {int(limite)}""",(user_email,current_session_id))
+            else:
+                cur.execute(f"""SELECT s.id,s.nom_session,s.gnpi,r.data_json FROM sessions s
+                    JOIN resultats r ON r.session_id=s.id
+                    WHERE s.user_email={p} AND r.etape='rapport'
+                    ORDER BY s.updated_at DESC LIMIT {int(limite)}""",(user_email,))
+            rows=cur.fetchall(); con.close()
+        except: return []
+        historiques=[]
+        for sid,nom,gnpi_h,data_json in rows:
+            try:
+                d=json.loads(data_json); rr=d.get("rows",[]); pt=d.get("prime_totale",0)
+                if rr: historiques.append({"session_id":sid,"nom_session":nom,"gnpi":gnpi_h,"prime_totale":pt,"rows":rr})
+            except: continue
+        return historiques
+
+    def benchmark(self, user_email, tranches, rapport_rows, gnpi, current_session_id=None):
+        historiques=self.charger_rapports_historiques(user_email,current_session_id=current_session_id)
+        if not historiques:
+            return {"disponible":False,"message":"Aucun ancien rapport exploitable dans la mémoire métier.","comparaisons":[],"synthese":{}}
+        current_by_type={}
+        for r in rapport_rows or []:
+            typ=str(self._row_get(r,"type","Type",default="")).lower()
+            taux=self._to_float(self._row_get(r,"taux_retenu","Taux retenu",default=0))
+            if typ and taux>0: current_by_type.setdefault(typ,[]).append(taux)
+        hist_by_type={}; hist_global=[]
+        for h in historiques:
+            rows=h.get("rows",[]); pt=self._to_float(h.get("prime_totale",0)); gh=self._to_float(h.get("gnpi",0))
+            if gh>0 and pt>0: hist_global.append(pt/gh)
+            for r in rows:
+                typ=str(self._row_get(r,"type","Type",default="")).lower()
+                taux=self._to_float(self._row_get(r,"taux_retenu","Taux retenu",default=0))
+                if typ and taux>0: hist_by_type.setdefault(typ,[]).append(taux)
+        comparaisons=[]
+        for typ,vals in current_by_type.items():
+            if typ not in hist_by_type or len(hist_by_type[typ])<2: continue
+            cur_med=float(np.median(vals)); hist_med=float(np.median(hist_by_type[typ]))
+            hist_q25=float(np.quantile(hist_by_type[typ],0.25)); hist_q75=float(np.quantile(hist_by_type[typ],0.75))
+            ecart=(cur_med-hist_med)/max(hist_med,1e-12)
+            comparaisons.append({"type":typ,"taux_dossier":cur_med,"mediane_historique":hist_med,
+                "q25_historique":hist_q25,"q75_historique":hist_q75,"ecart_vs_mediane":ecart,
+                "diagnostic":"au-dessus" if ecart>0.20 else "sous la référence" if ecart<-0.20 else "proche de l'historique",
+                "n_reference":len(hist_by_type[typ])})
+        pt_curr=sum(self._to_float(self._row_get(r,"prime_MAD","Prime (MAD)",default=0)) for r in rapport_rows or [])
+        tg=pt_curr/gnpi if gnpi else 0
+        return {"disponible":True,"message":"Mémoire métier activée.","comparaisons":comparaisons,
+                "synthese":{"nb_dossiers_reference":len(historiques),"taux_global_dossier":tg,
+                "mediane_taux_global_historique":float(np.median(hist_global)) if hist_global else 0,"memoire_active":True}}
 
 
-def guide_prompt(etape, exemples_contexte, exemples_instructions,
-                 exemples_input, exemples_output=None):
-    with st.expander(f"💡 Conseils pour prompter sur : {etape}",
-                     expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**📌 Contexte**")
-            for ex in exemples_contexte: st.markdown(f"- {ex}")
-            st.markdown("**📋 Instructions**")
-            for ex in exemples_instructions: st.markdown(f"- {ex}")
-        with c2:
-            st.markdown("**📥 Données**")
-            for ex in exemples_input: st.markdown(f"- {ex}")
-            if exemples_output:
-                st.markdown("**📤 Format**")
-                for ex in exemples_output: st.markdown(f"- {ex}")
+class AgentChallenger:
+    @staticmethod
+    def _num(x,default=0.0):
+        try:
+            if x is None or x=="": return default
+            if isinstance(x,str):
+                s=x.replace("%","").replace(" ","").replace(",",".")
+                val=float(s); return val/100 if "%"in x or val>1.5 else val
+            return float(x)
+        except: return default
+
+    @staticmethod
+    def _map(rows): return {r.get("tranche",r.get("Tranche","")): r for r in (rows or [])}
+
+    def challenger(self, tranches, resultats_bc, resultats_sim, resultats_mkt, rapport_rows):
+        bc=self._map(resultats_bc); sim=self._map(resultats_sim)
+        mkt=self._map(resultats_mkt); rpt=self._map(rapport_rows)
+        avis=[]
+        for i,t in enumerate(tranches or []):
+            nom=t.get("nom",f"Tranche {i+1}"); typ=t.get("type","")
+            bt=self._num(bc.get(nom,{}).get("taux_technique"))
+            stt=self._num(sim.get(nom,{}).get("taux_technique"))
+            mt=self._num(mkt.get(nom,{}).get("taux",mkt.get(nom,{}).get("taux_tech")))
+            rt=self._num(rpt.get(nom,{}).get("taux_retenu"))
+            n_nz=int(self._num(bc.get(nom,{}).get("n_ann_nonzero"),0))
+            prudent=max(bt,stt,mt)
+            marche=mt if (typ!="travaillante" and mt>0) else stt if stt>0 else bt
+            equilibre=np.mean([x for x in [bt,stt,mt] if x>0]) if any(x>0 for x in [bt,stt,mt]) else 0
+            dispersion=(max(p for p in [prudent,marche,equilibre])-min(p for p in [prudent,marche,equilibre]))/max(equilibre,1e-12) if equilibre else 0
+            conflit="fort" if dispersion>0.35 else "modéré" if dispersion>0.15 else "faible"
+            arbitrage="Conserver le taux retenu" if (rt>=min(prudent,equilibre) or rt==0) else "Relever le taux ou documenter l'écart"
+            if typ=="travaillante" and n_nz<3: arbitrage="Ne pas se reposer sur le BC — jugement expert documenté"
+            avis.append({"tranche":nom,"type":typ,"taux_retenu":rt,"avis_prudentiel":prudent,
+                "avis_marche":marche,"avis_equilibre":equilibre,"conflit":conflit,"arbitrage":arbitrage})
+        return {"avis":avis,"nb_conflits_forts":sum(1 for a in avis if a["conflit"]=="fort")}
+
+
+class AgentOptimisationProgramme:
+    def __init__(self, gnpi): self.gnpi=gnpi
+
+    @staticmethod
+    def _base_rate(t, idx, rbc, rsim, rmkt):
+        nom=t.get("nom","")
+        def lk(rows,key):
+            for r in rows or []:
+                if r.get("tranche")==nom: return float(r.get(key,0) or 0)
+            if idx<len(rows or []): return float((rows or [])[idx].get(key,0) or 0)
+            return 0.0
+        bc=lk(rbc,"taux_technique"); sim=lk(rsim,"taux_technique"); mkt=lk(rmkt,"taux")
+        return max(bc,sim) if t.get("type")=="travaillante" else max(sim,mkt)
+
+    def _estimate_rate(self, t_ref, t_new, base_rate):
+        p0=max(float(t_ref.get("priorite",1)),1); l0=max(float(t_ref.get("portee",1)),1)
+        p1=max(float(t_new.get("priorite",p0)),1); l1=max(float(t_new.get("portee",l0)),1)
+        rec0=max(float(t_ref.get("nb_reconstitutions",1)),1); rec1=max(float(t_new.get("nb_reconstitutions",rec0)),1)
+        adj=(l1/l0)**0.55*(p0/p1)**0.35*(rec1/rec0)**0.08
+        return max(base_rate*adj,0)
+
+    def explorer(self, tranches, rbc, rsim, rmkt, objectif="equilibre", prime_cible=None, top_n=8):
+        if not tranches: return {"alternatives":[],"message":"Programme vide."}
+        alternatives=[]
+        for mp in [0.85,1.00,1.15]:
+            for md in [0.90,1.00,1.10]:
+                for dr in [-1,0,1]:
+                    new_t=[]; prime=0.0; protection=0.0
+                    for i,t in enumerate(tranches):
+                        tn=dict(t)
+                        tn["portee"]=round(float(t.get("portee",0))*mp/500_000)*500_000
+                        tn["priorite"]=round(float(t.get("priorite",0))*md/500_000)*500_000
+                        tn["portee"]=max(tn["portee"],500_000); tn["priorite"]=max(tn["priorite"],0)
+                        tn["nb_reconstitutions"]=int(max(1,min(4,int(t.get("nb_reconstitutions",1))+dr)))
+                        base=self._base_rate(t,i,rbc,rsim,rmkt)
+                        taux=self._estimate_rate(t,tn,base)
+                        prime+=self.gnpi*taux; protection+=tn["portee"]*(1+tn["nb_reconstitutions"]*tn.get("taux_reconstitution",100)/100)
+                        new_t.append(tn)
+                    taux_g=prime/self.gnpi if self.gnpi else 0
+                    pen=abs(prime-prime_cible)/max(prime_cible,1) if prime_cible else 0
+                    if objectif=="cedante": score=protection/1e6-60*taux_g-10*pen
+                    elif objectif=="reassureur": score=100*taux_g-0.03*protection/1e6-5*pen
+                    else: score=protection/1e6-35*taux_g-8*pen
+                    alternatives.append({"label":f"Portée {mp:.0%}|Priorité {md:.0%}|Rec {dr:+d}",
+                        "prime":prime,"taux_global":taux_g,"protection_theorique":protection,"score":score,"tranches":new_t})
+        alternatives=sorted(alternatives,key=lambda x:x["score"],reverse=True)[:top_n]
+        return {"alternatives":alternatives,"message":f"{len(alternatives)} alternatives selon objectif {objectif}."}
+
+
+def afficher_plan_agentique(plan):
+    if not plan: return
+    tableau_resultats([{"Ordre":i,"Étape":p["titre"],"Priorité":p["priorite"],"Justification":p["justification"]}
+        for i,p in enumerate(plan,1)],"Plan de raisonnement agentique")
+
+def afficher_critique_agentique(critique):
+    if not critique: return
+    syn=critique.get("synthese",{})
+    c1,c2,c3=st.columns(3)
+    with c1: card("Score audit",f"{syn.get('score',0)}/100",icone="")
+    with c2: card("Verdict",syn.get("verdict","—"),couleur="#1a1a1a",icone="")
+    with c3: card("Alertes",f"{syn.get('nb_alertes',0)}",couleur="#f59e0b",icone="")
+    alertes=critique.get("alertes",[])
+    if alertes: tableau_resultats([{"Niveau":a["niveau"],"Tranche":a["tranche"],"Message":a["message"]} for a in alertes],"Alertes critiques")
+
+def afficher_memoire_metier(memoire):
+    if not memoire: return
+    st.markdown("#### Mémoire métier inter-dossiers")
+    if not memoire.get("disponible"): st.info(memoire.get("message","Mémoire indisponible.")); return
+    syn=memoire.get("synthese",{})
+    c1,c2,c3=st.columns(3)
+    with c1: card("Dossiers référence",syn.get("nb_dossiers_reference",0),icone="")
+    with c2: card("Taux dossier",f"{syn.get('taux_global_dossier',0):.4%}",couleur="#1a1a1a",icone="")
+    with c3: card("Médiane historique",f"{syn.get('mediane_taux_global_historique',0):.4%}",couleur="#3b82f6",icone="")
+    rows=[{"Type":c["type"],"Dossier":f"{c['taux_dossier']:.4%}","Médiane hist.":f"{c['mediane_historique']:.4%}",
+        "Q25-Q75":f"{c['q25_historique']:.4%}/{c['q75_historique']:.4%}","Écart":f"{c['ecart_vs_mediane']:+.1%}",
+        "Diagnostic":c["diagnostic"],"N":c["n_reference"]} for c in memoire.get("comparaisons",[])]
+    if rows: tableau_resultats(rows)
+
+def afficher_challenger(challenge):
+    if not challenge: return
+    st.markdown("#### Agent challenger contradictoire")
+    rows=[{"Tranche":a["tranche"],"Type":a["type"],"Retenu":f"{a['taux_retenu']:.4%}",
+        "Prudentiel":f"{a['avis_prudentiel']:.4%}","Marché":f"{a['avis_marche']:.4%}",
+        "Équilibre":f"{a['avis_equilibre']:.4%}","Conflit":a["conflit"],"Arbitrage":a["arbitrage"]}
+        for a in challenge.get("avis",[])]
+    if rows: tableau_resultats(rows)
+
+def afficher_optimisation_avancee(opt):
+    if not opt: return
+    st.markdown("#### Optimisation avancée du programme")
+    st.caption(opt.get("message",""))
+    rows=[{"Rang":i,"Scénario":a["label"],"Prime":f"{a['prime']:,.0f} MAD",
+        "Taux global":f"{a['taux_global']:.4%}","Score":f"{a['score']:.2f}"}
+        for i,a in enumerate(opt.get("alternatives",[]),1)]
+    if rows: tableau_resultats(rows)
+
+def afficher_ml_agentique(ml):
+    if not ml: return
+    st.markdown("#### Benchmark Machine Learning")
+    if not ml.get("disponible"): st.info(ml.get("message","ML non disponible.")); return
+    rows=[{"Modèle":r.get("modele"),"MAE":f"{r.get('MAE',0):,.0f}" if r.get("MAE") else "Erreur",
+        "RMSE":f"{r.get('RMSE',0):,.0f}" if r.get("RMSE") else "Erreur",
+        "R²":f"{r.get('R2',0):.4f}" if r.get("R2") else "Erreur",
+        "Statut":"" if r.get("MAE") else r.get("erreur","Erreur")} for r in ml.get("modeles",[])]
+    tableau_resultats(rows,"Comparaison des modèles ML")
+    if ml.get("importance"):
+        tableau_resultats([{"Variable":x["variable"],"Importance":f"{x['importance']:.4f}"} for x in ml["importance"]],
+            f"Variables importantes — {ml.get('meilleur_modele')}")
