@@ -3,7 +3,7 @@ Atlantic Re IA — Agent Python pur
 AgentActuarielPython : pipeline complet BC -> Simulation -> Market Curve -> Rapport -> Variantes.
 
 """
-
+ 
 from __future__ import annotations
 
 from datetime import datetime
