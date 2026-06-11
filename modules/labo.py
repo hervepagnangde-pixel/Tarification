@@ -50,7 +50,8 @@ class AgentLaboTarification:
 
     def __init__(self, tranches_base, gnpi, df_proj, coeffs,
                  alpha, lambda_, seuil, chargement_majeurs=0.0, df_mkt=None,
-                 is_long=True):
+                 is_long=True, loi_sim="pareto", mu_ln=None, sigma_ln=None,
+                 gpd_xi=None, gpd_beta=None):
         self.tranches_base      = tranches_base
         self.gnpi               = gnpi
         self.df_proj            = df_proj
@@ -61,6 +62,11 @@ class AgentLaboTarification:
         self.chargement_majeurs = chargement_majeurs
         self.df_mkt             = df_mkt
         self.is_long            = is_long
+        self.loi_sim            = str(loi_sim or "pareto").lower()
+        self.mu_ln              = mu_ln
+        self.sigma_ln           = sigma_ln
+        self.gpd_xi             = gpd_xi
+        self.gpd_beta           = gpd_beta
         self.grille             = []
         self.resultats          = []
         self.df_ml              = None
@@ -146,6 +152,11 @@ class AgentLaboTarification:
             "alpha":               float(self.alpha),
             "lambda_":             float(self.lambda_),
             "seuil_modelisation":  float(self.seuil),
+            "loi_simulation":      str(getattr(self, "loi_sim", "pareto") or "pareto").lower(),
+            "mu_ln":               self.mu_ln,
+            "sigma_ln":            self.sigma_ln,
+            "gpd_xi":              self.gpd_xi,
+            "gpd_beta":            self.gpd_beta,
             "k_securite":          float(k_sec),
             "seuil_stab":          float(seuil_s),
         }
@@ -211,17 +222,56 @@ class AgentLaboTarification:
         alp   = float(s.get("alpha", self.alpha))
         lam   = float(s.get("lambda_", self.lambda_))
         seu   = float(s.get("seuil_modelisation", self.seuil))
+        loi   = str(s.get("loi_simulation", getattr(self, "loi_sim", "pareto")) or "pareto").lower()
+        mu_ln = s.get("mu_ln", getattr(self, "mu_ln", None))
+        sigma_ln = s.get("sigma_ln", getattr(self, "sigma_ln", None))
+        gpd_xi = s.get("gpd_xi", getattr(self, "gpd_xi", None))
+        gpd_beta = s.get("gpd_beta", getattr(self, "gpd_beta", None))
         k     = float(s.get("k_securite", 0.20))
         bk    = s["brokage"]; fg = s["frais"]; mg = s["marge"]; rt = s["retrocession"]
 
-        np.random.seed(42)
+        rng = np.random.default_rng(42)
+        if lam <= 0 or seu <= 0:
+            return {"taux_pur_sim":0.0,"taux_technique_sim":0.0,"sigma_sim":0.0,"valide_sim":False,
+                    "message":"Paramètres fréquence-sévérité invalides"}
+        if loi == "pareto" and alp <= 0:
+            return {"taux_pur_sim":0.0,"taux_technique_sim":0.0,"sigma_sim":0.0,"valide_sim":False,
+                    "message":"Alpha Pareto invalide"}
+        if loi == "lognormale":
+            mu_ln = float(mu_ln if mu_ln is not None else np.log(max(seu,1)))
+            sigma_ln = float(sigma_ln if sigma_ln is not None else 1.0)
+            if sigma_ln <= 0:
+                return {"taux_pur_sim":0.0,"taux_technique_sim":0.0,"sigma_sim":0.0,"valide_sim":False,
+                        "message":"Sigma lognormal invalide"}
+        if loi == "gpd":
+            gpd_xi = float(gpd_xi if gpd_xi is not None else 0.0)
+            gpd_beta = float(gpd_beta if gpd_beta is not None else max(seu*0.5,1))
+            if gpd_beta <= 0:
+                return {"taux_pur_sim":0.0,"taux_technique_sim":0.0,"sigma_sim":0.0,"valide_sim":False,
+                        "message":"Beta GPD invalide"}
+
+        def generer(n):
+            if n <= 0:
+                return np.array([], dtype=float)
+            if loi == "pareto":
+                U = rng.uniform(size=n)
+                return seu * (U ** (-1.0 / alp))
+            if loi == "lognormale":
+                return np.maximum(rng.lognormal(mu_ln, sigma_ln, size=n), seu)
+            if loi == "gpd":
+                U = rng.uniform(size=n)
+                if abs(gpd_xi) < 1e-10:
+                    return seu - gpd_beta * np.log(np.clip(U, 1e-12, 1.0))
+                return seu + gpd_beta / gpd_xi * ((1 - np.clip(U,1e-12,1-1e-12)) ** (-gpd_xi) - 1)
+            raise ValueError(f"Loi de sévérité inconnue : {loi}")
+
         charges = []
         for _ in range(n_sim):
-            N_sin = np.random.poisson(lam); S = 0.0
+            N_sin = rng.poisson(lam); S = 0.0
             if N_sin > 0:
-                U = np.random.uniform(size=N_sin); Sp = seu * (U ** (-1.0/alp))
-                ic = np.random.choice(len(self.coeffs), size=N_sin, replace=True)
-                for j in range(N_sin):
+                Sp = generer(int(N_sin))
+                ic = rng.choice(len(self.coeffs), size=int(N_sin), replace=True)
+                for j in range(int(N_sin)):
                     sp = Sp[j]; c = self.coeffs[ic[j]]
                     if sp <= D: si = 0
                     elif sp <= D+P: si = c*(sp-D)
@@ -236,8 +286,13 @@ class AgentLaboTarification:
         tp  = P0 / self.gnpi
         tr  = tp + k * (sig / self.gnpi)
         tt  = tr / max(1 - bk - fg - mg - rt, 0.01)
+        params = {"loi": loi, "lambda": round(lam,6), "seuil": round(seu,2)}
+        if loi == "pareto": params["alpha"] = round(alp,6)
+        elif loi == "lognormale": params.update({"mu": round(mu_ln,6), "sigma": round(sigma_ln,6)})
+        elif loi == "gpd": params.update({"xi": round(gpd_xi,6), "beta": round(gpd_beta,2)})
         return {"taux_pur_sim":round(tp,6),"taux_technique_sim":round(tt,6),
-                "sigma_sim":round(sig/self.gnpi,6),"valide_sim":True}
+                "sigma_sim":round(sig/self.gnpi,6),"valide_sim":True,
+                "loi_severite": loi, "parametres_simulation": params}
 
     # ── 4. MARKET CURVE ─────────────────────────────────────────────
 
@@ -1708,7 +1763,7 @@ def _labo_display_section():
                         bar.progress(int((i+1)/n*100), f"{i+1}/{n} scénarios...")
                     res   = labo.executer_batch(n_sim=int(n_sim_labo), progress_cb=_cb)
                     df_ml = labo.construire_dataset()
-                    bar.progress(100, "Terminé ✓")
+                    bar.progress(100, "Terminé ")
                     st.session_state["labo_resultats"] = res
                     st.session_state["labo_df_ml"]     = df_ml
                     st.rerun()
@@ -1786,7 +1841,7 @@ def _labo_display_section():
                     "RMSE (pts)": f"{v.get('RMSE',0)*100:.4f}" if "RMSE" in v else "—",
                     "R²":         f"{v.get('R2',0):.4f}" if "R2" in v else "—",
                     "N train":    v.get("n_train","—"),
-                    "✓ Meilleur": "" if nom == best else "",
+                    " Meilleur": "" if nom == best else "",
                 } for nom, v in st.session_state["labo_metriques"].items()])
 
                 imp_dict = st.session_state.get("labo_importance", {})
@@ -1827,7 +1882,7 @@ def _labo_display_section():
                 n_reco = st.slider("Nb résultats max", 5, 30, 15, key="reco_n")
             with col_rco3:
                 st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-                if st.button("🔍 Trouver les conditions optimales", type="primary",
+                if st.button(" Trouver les conditions optimales", type="primary",
                              key="btn_reco_conditions", use_container_width=True):
                     labo_reco = AgentLaboTarification(
                         tranches_base=tranches_input, gnpi=gnpi,
@@ -2119,7 +2174,7 @@ Algorithme évolutionnaire qui explore simultanément les **3 objectifs actuarie
                         multi_tranche = nsga_multi,
                         progress_cb = _nsga_cb,
                     )
-                bar_nsga.progress(100, "Terminé ✓")
+                bar_nsga.progress(100, "Terminé ")
                 st.session_state["nsga_result"] = result
 
             if "nsga_result" in st.session_state:
