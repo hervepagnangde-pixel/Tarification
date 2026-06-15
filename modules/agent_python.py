@@ -294,9 +294,13 @@ class AgentActuarielPython:
             if n_nz < 3:
                 tp = tr = tt = sigma = 0.0
                 charge_moy = 0.0
+                Pr_Rec = 0.0
+                Rec = 0.0
+                chargement_majeurs_bc = 0.0
                 self._alerte("WARN", f"{nom} : BC non crédible, seulement {n_nz} année(s) non nulle(s).")
             else:
                 charge_moy = float(df_ch["charge"].mean())
+                chargement_majeurs_bc = self.chargement_majeurs
                 tp = charge_moy / max(self.gnpi, 1.0)
                 sigma = float(np.std(charges_nonzero)) / max(self.gnpi, 1.0)
                 tr = tp + sigma * 0.20
@@ -322,7 +326,7 @@ class AgentActuarielPython:
                     "taux_pur": round(tp, 6),
                     "taux_risque": round(tr, 6),
                     "taux_technique": round(tt, 6),
-                    "chargement_majeurs": round(self.chargement_majeurs, 6),
+                    "chargement_majeurs": round(chargement_majeurs_bc, 6),
                     "detail_annuel": charges_finales,
                 }
             )
