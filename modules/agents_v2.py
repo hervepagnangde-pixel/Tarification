@@ -304,15 +304,22 @@ class AgentOptimisationProgramme:
                         tn["nb_reconstitutions"]=int(max(1,min(4,int(t.get("nb_reconstitutions",1))+dr)))
                         base=self._base_rate(t,i,rbc,rsim,rmkt)
                         taux=self._estimate_rate(t,tn,base)
-                        prime+=self.gnpi*taux; protection+=tn["portee"]*(1+tn["nb_reconstitutions"]*tn.get("taux_reconstitution",100)/100)
+                        prime_t = self.gnpi * taux
+                        tn["_taux"] = taux
+                        tn["_prime"] = prime_t
+                        tn["_base_rate"] = base
+                        prime += prime_t
+                        protection += tn["portee"] * (1 + tn["nb_reconstitutions"] * tn.get("taux_reconstitution", 100) / 100)
                         new_t.append(tn)
                     taux_g=prime/self.gnpi if self.gnpi else 0
                     pen=abs(prime-prime_cible)/max(prime_cible,1) if prime_cible else 0
                     if objectif=="cedante": score=protection/1e6-60*taux_g-10*pen
                     elif objectif=="reassureur": score=100*taux_g-0.03*protection/1e6-5*pen
                     else: score=protection/1e6-35*taux_g-8*pen
+                    comparabilite = max(0.0, 100.0 - 100.0 * abs(mp - 1.0) - 100.0 * abs(md - 1.0) - 12.0 * abs(dr))
                     alternatives.append({"label":f"Portée {mp:.0%}|Priorité {md:.0%}|Rec {dr:+d}",
-                        "prime":prime,"taux_global":taux_g,"protection_theorique":protection,"score":score,"tranches":new_t})
+                        "prime":prime,"taux_global":taux_g,"protection_theorique":protection,
+                        "score":score,"indice_comparabilite":comparabilite,"tranches":new_t})
         alternatives=sorted(alternatives,key=lambda x:x["score"],reverse=True)[:top_n]
         return {"alternatives":alternatives,"message":f"{len(alternatives)} alternatives selon objectif {objectif}."}
 
@@ -356,13 +363,62 @@ def afficher_challenger(challenge):
     if rows: tableau_resultats(rows)
 
 def afficher_optimisation_avancee(opt):
-    if not opt: return
+    if not opt:
+        return
+
     st.markdown("#### Recherche de programmes alternatifs comparables")
-    st.caption(opt.get("message",""))
-    rows=[{"Rang":i,"Scénario":a["label"],"Prime":f"{a['prime']:,.0f} MAD",
-        "Taux global":f"{a['taux_global']:.4%}","Score":f"{a['score']:.2f}"}
-        for i,a in enumerate(opt.get("alternatives",[]),1)]
-    if rows: tableau_resultats(rows)
+    st.caption(opt.get("message", ""))
+
+    alternatives = opt.get("alternatives", []) or []
+
+    rows = [{
+        "Rang": i,
+        "Scénario": a.get("label", f"Alternative {i}"),
+        "Prime": f"{float(a.get('prime', 0.0) or 0.0):,.0f} MAD",
+        "Taux global": f"{float(a.get('taux_global', 0.0) or 0.0):.4%}",
+        "Protection": f"{float(a.get('protection_theorique', 0.0) or 0.0):,.0f}",
+        "Comparabilité": f"{float(a.get('indice_comparabilite', 0.0) or 0.0):.0f}/100",
+        "Score": f"{float(a.get('score', 0.0) or 0.0):.2f}",
+    } for i, a in enumerate(alternatives, 1)]
+
+    if rows:
+        tableau_resultats(rows)
+
+    if alternatives:
+        st.markdown("##### Structure détaillée des alternatives")
+
+        choix = st.selectbox(
+            "Afficher la structure détaillée",
+            options=list(range(len(alternatives))),
+            format_func=lambda idx: (
+                f"Rang {idx + 1} — {alternatives[idx].get('label', f'Alternative {idx + 1}')}"
+            ),
+            key="select_structure_alternative_agentique"
+        )
+
+        alt = alternatives[choix]
+        tranches_alt = alt.get("tranches", []) or []
+
+        if tranches_alt:
+            rows_struct = []
+            for j, t in enumerate(tranches_alt, 1):
+                rows_struct.append({
+                    "Rang": j,
+                    "Tranche": t.get("nom", f"Tranche {j}"),
+                    "Type": t.get("type", ""),
+                    "Priorité": f"{float(t.get('priorite', 0.0) or 0.0):,.0f}",
+                    "Portée": f"{float(t.get('portee', 0.0) or 0.0):,.0f}",
+                    "AAD": f"{float(t.get('AAD', 0.0) or 0.0):,.0f}" if t.get("AAD") else "—",
+                    "AAL": f"{float(t.get('AAL', 0.0) or 0.0):,.0f}" if t.get("AAL") else "—",
+                    "Reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
+                    "Taux reconstitution": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
+                    "Taux estimé": f"{float(t.get('_taux', 0.0) or 0.0):.4%}",
+                    "Prime estimée": f"{float(t.get('_prime', 0.0) or 0.0):,.0f}",
+                })
+
+            tableau_resultats(rows_struct, f"Structure détaillée — {alt.get('label', 'Alternative')}")
+        else:
+            st.info("Aucune structure détaillée disponible pour cette alternative.")
 
 def afficher_ml_actuariel(ml):
     if not ml: return
