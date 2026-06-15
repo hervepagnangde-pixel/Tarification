@@ -173,8 +173,8 @@ if st.session_state["page"] == "landing":
             </svg>
         </div>
         <h1 style="font-size:42px;font-weight:800;margin:0 0 8px 0;letter-spacing:-1px;font-family:Inter,sans-serif">
-            <span style="color:#1a1a1a">I</span><span style="color:#2d8a4e">A</span>
-            <span style="color:#1a1a1a">TARI</span><span style="color:#2d8a4e">F</span>
+            <span style="color:white">I</span><span style="color:#2d8a4e">A</span>
+            <span style="color:white">TARI</span><span style="color:#2d8a4e">F</span>
         </h1>
         <p style="color:#aaa;font-size:16px;margin:0 0 8px 0">Moteur de tarification · Réassurance Non-Proportionnelle</p>
         <p style="color:#666;font-size:13px;margin:0 0 40px 0">Atlantic Re · Automobile · Maroc</p>
