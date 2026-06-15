@@ -4775,7 +4775,7 @@ with tab_full:
             taux_manuels3 = st.text_area(
                 "Taux par tranche issus de la tarification manuelle",
                 placeholder="Exemple :\nT1 : BC 3.20%, Simulation 3.45%, taux retenu 3.50%\nT2 Cat : Simulation 1.10%, Market Curve 1.25%, taux retenu 1.25%",
-                height=120,
+                height=120, 
                 key="taux_manuels_externes3",
             )
             params_manuels3 = st.text_area(
