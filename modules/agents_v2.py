@@ -340,18 +340,49 @@ def afficher_critique_actuariel(critique):
     if alertes: tableau_resultats([{"Niveau":a["niveau"],"Tranche":a["tranche"],"Message":a["message"]} for a in alertes],"Alertes critiques")
 
 def afficher_memoire_metier(memoire):
-    if not memoire: return
+    if not memoire:
+        return
+
     st.markdown("#### Mémoire métier inter-dossiers")
-    if not memoire.get("disponible"): st.info(memoire.get("message","Mémoire indisponible.")); return
-    syn=memoire.get("synthese",{})
-    c1,c2,c3=st.columns(3)
-    with c1: card("Dossiers référence",syn.get("nb_dossiers_reference",0),icone="")
-    with c2: card("Taux dossier",f"{syn.get('taux_global_dossier',0):.4%}",couleur="#1a1a1a",icone="")
-    with c3: card("Médiane historique",f"{syn.get('mediane_taux_global_historique',0):.4%}",couleur="#3b82f6",icone="")
-    rows=[{"Type":c["type"],"Dossier":f"{c['taux_dossier']:.4%}","Médiane hist.":f"{c['mediane_historique']:.4%}",
-        "Q25-Q75":f"{c['q25_historique']:.4%}/{c['q75_historique']:.4%}","Écart":f"{c['ecart_vs_mediane']:+.1%}",
-        "Diagnostic":c["diagnostic"],"N":c["n_reference"]} for c in memoire.get("comparaisons",[])]
-    if rows: tableau_resultats(rows)
+
+    if not memoire.get("disponible"):
+        st.info(memoire.get("message", "Mémoire indisponible."))
+        return
+
+    syn = memoire.get("synthese", {}) or {}
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        card("Dossiers référence", syn.get("nb_dossiers_reference", 0), icone="")
+    with c2:
+        card("Taux dossier", f"{float(syn.get('taux_global_dossier', 0) or 0):.4%}", couleur="#1a1a1a", icone="")
+    with c3:
+        card("Médiane historique", f"{float(syn.get('mediane_taux_global_historique', 0) or 0):.4%}", couleur="#3b82f6", icone="")
+
+    st.caption(
+        "Nb réf. hist. = nombre d'observations historiques disponibles pour le type de tranche considéré. "
+        "Ces observations servent au calcul de la médiane historique et des quartiles Q25-Q75."
+    )
+
+    rows = []
+    for c in memoire.get("comparaisons", []) or []:
+        rows.append({
+            "Type": c.get("type", ""),
+            "Dossier": f"{float(c.get('taux_dossier', 0) or 0):.4%}",
+            "Médiane hist.": f"{float(c.get('mediane_historique', 0) or 0):.4%}",
+            "Q25-Q75": (
+                f"{float(c.get('q25_historique', 0) or 0):.4%}/"
+                f"{float(c.get('q75_historique', 0) or 0):.4%}"
+            ),
+            "Écart": f"{float(c.get('ecart_vs_mediane', 0) or 0):+.1%}",
+            "Diagnostic": c.get("diagnostic", ""),
+            "Nb réf. hist.": int(c.get("n_reference", 0) or 0),
+        })
+
+    if rows:
+        tableau_resultats(rows)
+    else:
+        st.info("Aucune comparaison exploitable par type de tranche.")
 
 def afficher_challenger(challenge):
     if not challenge: return
@@ -371,10 +402,28 @@ def afficher_optimisation_avancee(opt):
 
     alternatives = opt.get("alternatives", []) or []
 
+    def _fmt_mad(x):
+        return f"{float(x or 0):,.0f} MAD"
+
+    def _structure_resume(tranches_alt, max_items=3):
+        if not tranches_alt:
+            return "—"
+        morceaux = []
+        for j, t in enumerate(tranches_alt[:max_items], 1):
+            nom = t.get("nom", f"T{j}")
+            priorite = float(t.get("priorite", 0.0) or 0.0) / 1_000_000
+            portee = float(t.get("portee", 0.0) or 0.0) / 1_000_000
+            rec = int(t.get("nb_reconstitutions", 0) or 0)
+            morceaux.append(f"{nom}: {portee:.1f}M xs {priorite:.1f}M, Rec {rec}")
+        if len(tranches_alt) > max_items:
+            morceaux.append(f"+{len(tranches_alt) - max_items} tranche(s)")
+        return " | ".join(morceaux)
+
     rows = [{
         "Rang": i,
         "Scénario": a.get("label", f"Alternative {i}"),
-        "Prime": f"{float(a.get('prime', 0.0) or 0.0):,.0f} MAD",
+        "Structure": _structure_resume(a.get("tranches", []) or [], max_items=2),
+        "Prime": _fmt_mad(a.get("prime", 0.0)),
         "Taux global": f"{float(a.get('taux_global', 0.0) or 0.0):.4%}",
         "Protection": f"{float(a.get('protection_theorique', 0.0) or 0.0):,.0f}",
         "Comparabilité": f"{float(a.get('indice_comparabilite', 0.0) or 0.0):.0f}/100",
@@ -386,6 +435,10 @@ def afficher_optimisation_avancee(opt):
 
     if alternatives:
         st.markdown("##### Structure détaillée des alternatives")
+        st.caption(
+            "Sélectionnez une alternative pour afficher la composition complète du programme : priorité, portée, "
+            "reconstitutions, taux estimé et prime estimée par tranche."
+        )
 
         choix = st.selectbox(
             "Afficher la structure détaillée",
@@ -411,9 +464,9 @@ def afficher_optimisation_avancee(opt):
                     "AAD": f"{float(t.get('AAD', 0.0) or 0.0):,.0f}" if t.get("AAD") else "—",
                     "AAL": f"{float(t.get('AAL', 0.0) or 0.0):,.0f}" if t.get("AAL") else "—",
                     "Reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
-                    "Taux reconstitution": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
+                    "Taux rec.": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
                     "Taux estimé": f"{float(t.get('_taux', 0.0) or 0.0):.4%}",
-                    "Prime estimée": f"{float(t.get('_prime', 0.0) or 0.0):,.0f}",
+                    "Prime estimée": _fmt_mad(t.get("_prime", 0.0)),
                 })
 
             tableau_resultats(rows_struct, f"Structure détaillée — {alt.get('label', 'Alternative')}")
