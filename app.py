@@ -3201,7 +3201,7 @@ with tab3:
                                          n_boot=n_boot_v, alpha_ci=1-alpha_ci_pct/100)
                     if ic:
                         tau_r = next((r["taux_technique"] for r in st.session_state["resultats_bc"]
-                                      if r["tranche"]==t_bc["nom"]),0)
+                                      if r["tranche"]==t_bc["nom"]),0) 
                         rows_ic.append({"Tranche":t_bc["nom"],
                             "τ BC central":f"{tau_r:.4%}",
                             f"IC {alpha_ci_pct}% bas":f"{ic['ic_lo']:.4%}",
