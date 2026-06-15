@@ -139,7 +139,7 @@ def build_prompt(role, task, data, contexte="", instructions="",
     et recommandation de structures comparables. Il ne remplace pas les calculs.
     """
     prompt = f"""
-ATLANTIC RE IA — ASSISTANT D'INTERPRETATION ACTUARIELLE
+IA TARIF — ASSISTANT D'INTERPRETATION ACTUARIELLE
 Réassurance non-proportionnelle XL · Automobile · Marchés émergents
 
 IDENTITE ET ROLE
