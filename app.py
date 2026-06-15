@@ -1594,7 +1594,7 @@ with tab1:
 # ════════════════════════════════════════════
 
 with tab2:
-    st.header("Données de base & Transformation triangle")
+    st.header("Données de base et transformations")
     type_branche = st.radio("Type de branche",
         ["Développement long (As-If + Stabilisation + Projection CL)",
          "Développement court (As-If uniquement, pas de projection)"],
