@@ -1,7 +1,7 @@
 """
 IA TARIF — Application principale (app.py)
 Point d'entrée Streamlit. Tous les modules métier sont dans modules/.
-
+ 
 Structure : 
   modules/db.py, pdf_gen.py, notifications.py, auth.py, ui.py
   modules/prompts.py, actuarial.py, optimization.py, resources.py 
