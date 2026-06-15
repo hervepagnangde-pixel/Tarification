@@ -58,8 +58,7 @@ def prompt_inputs(key_prefix, placeholder_contexte="", placeholder_instructions=
         st.markdown("##### Références de tarification manuelle externe")
         st.caption(
             "Cette zone sert à renseigner les résultats obtenus hors de l'application "
-            "sous R, Excel, SAS ou tout autre outil. Ces informations servent de référence "
-            "de comparaison pour le LLM ; elles ne doivent pas être recalculées ni inventées."
+            "sous R, Excel, SAS ou tout autre outil. Ces informations servent de référence comparaison."
         )
         manuel = st.text_area(
             "Résultats manuels externes",
