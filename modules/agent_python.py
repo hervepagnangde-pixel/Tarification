@@ -1,5 +1,5 @@
 """
-Atlantic Re IA — Agent Python pur
+IA TARIF — Agent Python pur
 AgentActuarielPython : pipeline complet BC -> Simulation -> Market Curve -> Rapport -> Variantes.
 
 Module sans LLM, utilisable hors ligne.
