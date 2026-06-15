@@ -1594,7 +1594,7 @@ with tab1:
 # ════════════════════════════════════════════
 
 with tab2:
-    st.header("Données de base et transformations")
+    st.header("Données de base & Transformation triangle")
     type_branche = st.radio("Type de branche",
         ["Développement long (As-If + Stabilisation + Projection CL)",
          "Développement court (As-If uniquement, pas de projection)"],
@@ -2940,7 +2940,7 @@ with tab3:
     st.markdown("""<div style="background:rgba(45,138,78,0.08);border-left:4px solid #2d8a4e;
         border-radius:0 8px 8px 0;padding:10px 16px;margin-bottom:12px;font-size:12px">
         <b>R1</b> — τ_risque = τ_pur + σ_hist × 20% (écart-type BC annuels non nuls × chargement sécurité) —
-        <b>R2</b> — Si années non nulles < 3 → τ_BC = 0 (données insuffisantes)
+        <b>R2</b> — Si années non nulles < 3 → charge moyenne = 0, Pr_Rec = 0, Rec = 0 et τ_BC = 0
         </div>""", unsafe_allow_html=True)
 
     if "df_proj" not in st.session_state:
@@ -3056,8 +3056,13 @@ with tab3:
                         t_info["nom"], {}).get(
                         "chargement",
                         st.session_state.get("chargement_majeurs", 0.0))
-                    # R2 — Moins de 3 années non nulles → BC = 0 (données insuffisantes)
+                    # R2 — Moins de 3 années non nulles → BC non crédible :
+                    # on annule la charge BC, la reconstitution et les taux BC.
                     if n_ann_nonzero < 3:
+                        charge_moy = 0.0
+                        Pr_Rec = 0.0
+                        Rec = 0.0
+                        charg_maj = 0.0
                         taux_pur = taux_risque = taux_technique = 0.0
                         sigma_hist = 0.0
                     else:
@@ -3214,6 +3219,7 @@ with tab3:
         st.divider()
         guide_prompt("Burning Cost",
             ["Comparer avec taux marché attendu 2-4%", "Signaler si BC < simulation de plus de 30%", "Identifier les années atypiques"],
+            ["Taux BC N-1 : R&C=2.5%, CatL1=0%", "Objectif prime totale < 12M MAD", "Taux Partner Re 2025 : R&C=2.30%"],
             ["Tableau par tranche avec verdict //", "Recommandation unique par tranche", "Maximum 1 page"])
 
         st.markdown("###  Analyse Claude — Burning Cost")
@@ -3226,7 +3232,7 @@ with tab3:
 
         if api_key and st.button(" Recommandations Claude — BC"):
             prompt = build_prompt(
-                role="Expert actuaire senior en reassurance de traités non-proportionnelle en excédent de sinistres cas de l'automobile, 15 ans d'experience tarification par risque et par évènement ( CAT) ",
+                role="Expert actuaire senior en reassurance non-proportionnelle automobile, 15 ans d'experience XL et cat.",
                 task="1. Evalue le niveau du taux vs normes marche\n2. Verifie coherence inter-tranches\n3. Analyse impact Rec\n4. Verdict : OK | A verifier | Probleme",
                 data=f"BC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nProgramme : {json.dumps(tranches_input, indent=2)}\nGNPI : {gnpi:,} MAD",
                 contexte=ctx_bc, instructions=inst_bc, input_data=inp_bc, output_instructions=out_bc,
@@ -5665,7 +5671,7 @@ Si écartement → présenter BC avec ET sans année atypique + justification do
 
 ═══ CADRE MÉTHODOLOGIQUE ════════════════════════════════════
 R1 : τ_risque = τ_pur + σ_hist × 20%
-R2 : BC = 0 si années non-nulles < 3 (NORMAL pour cat)
+R2 : si années non-nulles < 3, alors charge moyenne = 0, Pr_Rec = 0, Rec = 0, chargement BC = 0 et τ_BC = 0 (NORMAL pour cat)
 R3 : Sinistres majeurs par EVT/GPD (Pickands-Balkema-de Haan, 1974)
 R4 : Courbe de référence marché = tranches CAT / non-travaillantes (ROL = a × x^-b)
 R5 : As-If sur incréments (Finger 2006) — PAS sur cumulatifs
