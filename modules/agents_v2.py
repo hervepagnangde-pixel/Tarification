@@ -1,5 +1,5 @@
 """
-Atlantic Re IA — Agents V2 module
+IA TARIF — Agents V2 module
 AgentRaisonnement, AgentCritique, AgentML, AgentMemoireMetier,
 AgentChallenger, AgentOptimisationProgramme + affichage.
 """
