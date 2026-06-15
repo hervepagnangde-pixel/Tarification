@@ -3217,26 +3217,76 @@ with tab3:
 
 
         st.divider()
+        st.divider()
+
         guide_prompt("Burning Cost",
-            ["Comparer avec taux marché attendu 2-4%", "Signaler si BC < simulation de plus de 30%", "Identifier les années atypiques"],
-            ["Tableau par tranche avec verdict //", "Recommandation unique par tranche", "Maximum 1 page"])
+            [
+                "Portefeuille automobile long-tail",
+                "Programme XL non-proportionnel",
+                "Analyse basée sur l'expérience historique",
+                "Règle R2 : si moins de 3 années ont une charge historique non nulle, le Burning Cost est jugé non crédible"
+            ],
+            [
+                "Comparer avec le niveau de taux marché attendu",
+                "Signaler si le BC est inférieur à la simulation de plus de 30%",
+                "Identifier les années atypiques",
+                "Vérifier que la règle R2 est correctement appliquée : charge moyenne, reconstitution et taux BC doivent être nuls si moins de 3 années non nulles"
+            ],
+            [
+                "Taux BC N-1 : R&C=2.5%, CatL1=0%",
+                "Objectif prime totale < 12M MAD",
+                "Taux leader anonymisé 2025 : R&C=2.30%",
+                "Années historiques non nulles par tranche",
+                "Montant de charge moyenne, Pr_Rec, Rec et taux technique"
+            ],
+            [
+                "Tableau par tranche avec verdict",
+                "Recommandation unique par tranche",
+                "Maximum 1 page",
+                "Ne pas recalculer les résultats fournis par l'application",
+                "Ne pas inventer de benchmark marché non fourni"
+            ]
+        )
 
         st.markdown("###  Analyse Claude — Burning Cost")
+
         ctx_bc, inst_bc, inp_bc, out_bc = prompt_inputs(
             key_prefix="bc",
             placeholder_contexte="Ex: Sinistralité exceptionnelle 2020...",
             placeholder_instructions="Ex: Comparer avec taux marché 3-4%...",
             placeholder_input="Ex: Taux BC N-1 : R&C=2.5%",
-            placeholder_output="Ex: Tableau par tranche + verdict OK/ALERTE/RÉVISER")
+            placeholder_output="Ex: Tableau par tranche + verdict OK/ALERTE/RÉVISER"
+        )
 
         if api_key and st.button(" Recommandations Claude — BC"):
             prompt = build_prompt(
                 role="Expert actuaire senior en reassurance non-proportionnelle automobile, 15 ans d'experience XL et cat.",
-                task="1. Evalue le niveau du taux vs normes marche\n2. Verifie coherence inter-tranches\n3. Analyse impact Rec\n4. Verdict : OK | A verifier | Probleme",
-                data=f"BC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nProgramme : {json.dumps(tranches_input, indent=2)}\nGNPI : {gnpi:,} MAD",
-                contexte=ctx_bc, instructions=inst_bc, input_data=inp_bc, output_instructions=out_bc,
-                contexte_global=st.session_state.get("instructions_globales",""),
-                contraintes="- tau_tech < tau_risque (Rec reduit - NORMAL)\n- BC=0 tranche cat NORMAL\n- Ne pas inventer comparatifs marche")
+                task=(
+                    "1. Evaluer le niveau du taux vs les références disponibles\n"
+                    "2. Vérifier la cohérence inter-tranches\n"
+                    "3. Analyser l'impact des reconstitutions\n"
+                    "4. Contrôler l'application de la règle R2\n"
+                    "5. Donner un verdict : OK | A vérifier | Problème"
+                ),
+                data=(
+                    f"BC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\n"
+                    f"Programme : {json.dumps(tranches_input, indent=2)}\n"
+                    f"GNPI : {gnpi:,} MAD"
+                ),
+                contexte=ctx_bc,
+                instructions=inst_bc,
+                input_data=inp_bc,
+                output_instructions=out_bc,
+                contexte_global=st.session_state.get("instructions_globales", ""),
+                contraintes=(
+                    "- Si n_ann_nonzero < 3, la règle R2 impose : charge moyenne = 0, Pr_Rec = 0, Rec = 0 et taux BC = 0\n"
+                    "- tau_tech peut être inférieur à tau_risque si l'effet de reconstitution réduit le taux, mais seulement si R2 ne s'applique pas\n"
+                    "- BC=0 sur tranche cat peut être normal si l'expérience historique est insuffisante\n"
+                    "- Ne pas inventer de comparatifs marché\n"
+                    "- Ne pas modifier les résultats chiffrés fournis par l'application"
+                )
+            )
+
             claude_stream(api_key, prompt, max_tokens=2000, session_key="analyse_bc")
 
         if "analyse_bc" in st.session_state:
