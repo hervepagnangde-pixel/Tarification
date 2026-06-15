@@ -1,5 +1,5 @@
 """
-Atlantic Re IA — Actuarial computations module
+IA TARIF — Actuarial computations module
 Tooltips, glossaire, Hill/MEF/GPD, Bühlmann-Straub, Bootstrap CI,
 selectionner_seuil_pareto, identifier_sinistres_majeurs, 
 section_analyse_distributions.
@@ -203,7 +203,7 @@ def generer_pptx_rapport(gnpi_val, tranches, resultats_bc, resultats_sim,
 const pptxgen = require("pptxgenjs");
 const prs = new pptxgen();
 prs.layout = 'LAYOUT_16x9';
-prs.author = 'Atlantic Re IA';
+prs.author = 'IA TARIF';
 prs.title = 'Rapport Tarification XL {annee}';
 
 const NAV = "0d2b3e", TEAL = "00b5a5", WHITE = "FFFFFF", GRAY = "f2f8f7", MGRAY = "5a7a8a";
@@ -274,7 +274,7 @@ s6.addText([
   {{text:"{prime_totale:,.0f} MAD\\n\\n", options:{{fontSize:22,bold:true,color:WHITE}}}},
   {{text:"Taux global\\n",    options:{{bold:true,fontSize:14,color:TEAL}}}},
   {{text:"{taux_global:.4%}\\n\\n",       options:{{fontSize:22,bold:true,color:WHITE}}}},
-  {{text:"Généré par Atlantic Re IA · {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+  {{text:"Généré par IA TARIF · {datetime.now().strftime('%d/%m/%Y %H:%M')}",
      options:{{fontSize:10,color:"9ab5c5",italic:true}}}}
 ], {{x:0.8,y:1.8,w:4.5,h:3.5,valign:"top"}});
 s6.addText("Sélection : max(BC, Sim) travaillante\\nmax(Sim, Marché) cat / non-travaillante\\n\\nBC = méthode de référence\\nSimulation = validation & prudence\\nMarket curve = benchmark externe cat", {{x:5.5,y:2.0,w:4.0,h:3.0,fontSize:13,color:"c8dce6",fontFace:"Calibri",valign:"top"}});
