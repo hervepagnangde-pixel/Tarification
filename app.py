@@ -3219,7 +3219,6 @@ with tab3:
         st.divider()
         guide_prompt("Burning Cost",
             ["Comparer avec taux marché attendu 2-4%", "Signaler si BC < simulation de plus de 30%", "Identifier les années atypiques"],
-            ["Taux BC N-1 : R&C=2.5%, CatL1=0%", "Objectif prime totale < 12M MAD", "Taux Partner Re 2025 : R&C=2.30%"],
             ["Tableau par tranche avec verdict //", "Recommandation unique par tranche", "Maximum 1 page"])
 
         st.markdown("###  Analyse Claude — Burning Cost")
@@ -3715,7 +3714,7 @@ with tab4:
         guide_prompt("Simulation fréquence-sévérité",
             ["Alpha calibré sur données 2016-2025", "Lambda estimé sur portefeuille 183M MAD", "Seuil TVE retenu : p80 x D"],
             ["Analyser impact AAL sur tranche cat", "Comparer BC vs Simulation par tranche", "Recommander montant optimal des conditions"],
-            ["Alpha R=1.45, Lambda R=3.2", "Résultats simulation N-1 : R&C=3.1%", "Période de retour majeurs : 20 ans"],
+            ["Alpha R=1.45, Lambda R=3.2", "Résultats simulation N-1 : R&C=3.1%", "Période de retour majeurs : 10 ans"],
             ["Impact par condition en points de taux", "Classement NECESSAIRE/A AJUSTER/INUTILE", "Recommandation chiffrée par condition"])
 
         st.markdown("###  Analyse Claude — Simulation & Conditions")
