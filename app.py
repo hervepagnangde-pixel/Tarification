@@ -3214,7 +3214,6 @@ with tab3:
         st.divider()
         guide_prompt("Burning Cost",
             ["Comparer avec taux marché attendu 2-4%", "Signaler si BC < simulation de plus de 30%", "Identifier les années atypiques"],
-            ["Taux BC N-1 : R&C=2.5%, CatL1=0%", "Objectif prime totale < 12M MAD", "Taux Partner Re 2025 : R&C=2.30%"],
             ["Tableau par tranche avec verdict //", "Recommandation unique par tranche", "Maximum 1 page"])
 
         st.markdown("###  Analyse Claude — Burning Cost")
@@ -3227,7 +3226,7 @@ with tab3:
 
         if api_key and st.button(" Recommandations Claude — BC"):
             prompt = build_prompt(
-                role="Expert actuaire senior en reassurance non-proportionnelle automobile, 15 ans d'experience XL et cat.",
+                role="Expert actuaire senior en reassurance de traités non-proportionnelle en excédent de sinistres cas de l'automobile, 15 ans d'experience tarification par risque et par évènement ( CAT) ",
                 task="1. Evalue le niveau du taux vs normes marche\n2. Verifie coherence inter-tranches\n3. Analyse impact Rec\n4. Verdict : OK | A verifier | Probleme",
                 data=f"BC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nProgramme : {json.dumps(tranches_input, indent=2)}\nGNPI : {gnpi:,} MAD",
                 contexte=ctx_bc, instructions=inst_bc, input_data=inp_bc, output_instructions=out_bc,
