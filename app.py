@@ -3201,7 +3201,7 @@ with tab3:
                                          n_boot=n_boot_v, alpha_ci=1-alpha_ci_pct/100)
                     if ic:
                         tau_r = next((r["taux_technique"] for r in st.session_state["resultats_bc"]
-                                      if r["tranche"]==t_bc["nom"]),0) 
+                                      if r["tranche"]==t_bc["nom"]),0)
                         rows_ic.append({"Tranche":t_bc["nom"],
                             "τ BC central":f"{tau_r:.4%}",
                             f"IC {alpha_ci_pct}% bas":f"{ic['ic_lo']:.4%}",
@@ -3217,76 +3217,27 @@ with tab3:
 
 
         st.divider()
-        st.divider()
-
         guide_prompt("Burning Cost",
-            [
-                "Portefeuille automobile long-tail",
-                "Programme XL non-proportionnel",
-                "Analyse basée sur l'expérience historique",
-                "Règle R2 : si moins de 3 années ont une charge historique non nulle, le Burning Cost est jugé non crédible"
-            ],
-            [
-                "Comparer avec le niveau de taux marché attendu",
-                "Signaler si le BC est inférieur à la simulation de plus de 30%",
-                "Identifier les années atypiques",
-                "Vérifier que la règle R2 est correctement appliquée : charge moyenne, reconstitution et taux BC doivent être nuls si moins de 3 années non nulles"
-            ],
-            [
-                "Taux BC N-1 : R&C=2.5%, CatL1=0%",
-                "Objectif prime totale < 12M MAD",
-                "Taux leader anonymisé 2025 : R&C=2.30%",
-                "Années historiques non nulles par tranche",
-                "Montant de charge moyenne, Pr_Rec, Rec et taux technique"
-            ],
-            [
-                "Tableau par tranche avec verdict",
-                "Recommandation unique par tranche",
-                "Maximum 1 page",
-                "Ne pas recalculer les résultats fournis par l'application",
-                "Ne pas inventer de benchmark marché non fourni"
-            ]
-        )
+            ["Comparer avec taux marché attendu 2-4%", "Signaler si BC < simulation de plus de 30%", "Identifier les années atypiques"],
+            ["Taux BC N-1 : R&C=2.5%, CatL1=0%", "Objectif prime totale < 12M MAD", "Taux Partner Re 2025 : R&C=2.30%"],
+            ["Tableau par tranche avec verdict //", "Recommandation unique par tranche", "Maximum 1 page"])
 
         st.markdown("###  Analyse Claude — Burning Cost")
-
         ctx_bc, inst_bc, inp_bc, out_bc = prompt_inputs(
             key_prefix="bc",
             placeholder_contexte="Ex: Sinistralité exceptionnelle 2020...",
             placeholder_instructions="Ex: Comparer avec taux marché 3-4%...",
             placeholder_input="Ex: Taux BC N-1 : R&C=2.5%",
-            placeholder_output="Ex: Tableau par tranche + verdict OK/ALERTE/RÉVISER"
-        )
+            placeholder_output="Ex: Tableau par tranche + verdict OK/ALERTE/RÉVISER")
 
         if api_key and st.button(" Recommandations Claude — BC"):
             prompt = build_prompt(
                 role="Expert actuaire senior en reassurance non-proportionnelle automobile, 15 ans d'experience XL et cat.",
-                task=(
-                    "1. Evaluer le niveau du taux vs les références disponibles\n"
-                    "2. Vérifier la cohérence inter-tranches\n"
-                    "3. Analyser l'impact des reconstitutions\n"
-                    "4. Contrôler l'application de la règle R2\n"
-                    "5. Donner un verdict : OK | A vérifier | Problème"
-                ),
-                data=(
-                    f"BC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\n"
-                    f"Programme : {json.dumps(tranches_input, indent=2)}\n"
-                    f"GNPI : {gnpi:,} MAD"
-                ),
-                contexte=ctx_bc,
-                instructions=inst_bc,
-                input_data=inp_bc,
-                output_instructions=out_bc,
-                contexte_global=st.session_state.get("instructions_globales", ""),
-                contraintes=(
-                    "- Si n_ann_nonzero < 3, la règle R2 impose : charge moyenne = 0, Pr_Rec = 0, Rec = 0 et taux BC = 0\n"
-                    "- tau_tech peut être inférieur à tau_risque si l'effet de reconstitution réduit le taux, mais seulement si R2 ne s'applique pas\n"
-                    "- BC=0 sur tranche cat peut être normal si l'expérience historique est insuffisante\n"
-                    "- Ne pas inventer de comparatifs marché\n"
-                    "- Ne pas modifier les résultats chiffrés fournis par l'application"
-                )
-            )
-
+                task="1. Evalue le niveau du taux vs normes marche\n2. Verifie coherence inter-tranches\n3. Analyse impact Rec\n4. Verdict : OK | A verifier | Probleme",
+                data=f"BC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nProgramme : {json.dumps(tranches_input, indent=2)}\nGNPI : {gnpi:,} MAD",
+                contexte=ctx_bc, instructions=inst_bc, input_data=inp_bc, output_instructions=out_bc,
+                contexte_global=st.session_state.get("instructions_globales",""),
+                contraintes="- tau_tech < tau_risque (Rec reduit - NORMAL)\n- BC=0 tranche cat NORMAL\n- Ne pas inventer comparatifs marche")
             claude_stream(api_key, prompt, max_tokens=2000, session_key="analyse_bc")
 
         if "analyse_bc" in st.session_state:
@@ -3764,7 +3715,7 @@ with tab4:
         guide_prompt("Simulation fréquence-sévérité",
             ["Alpha calibré sur données 2016-2025", "Lambda estimé sur portefeuille 183M MAD", "Seuil TVE retenu : p80 x D"],
             ["Analyser impact AAL sur tranche cat", "Comparer BC vs Simulation par tranche", "Recommander montant optimal des conditions"],
-            ["Alpha R=1.45, Lambda R=3.2", "Résultats simulation N-1 : R&C=3.1%", "Période de retour majeurs : 10 ans"],
+            ["Alpha R=1.45, Lambda R=3.2", "Résultats simulation N-1 : R&C=3.1%", "Période de retour majeurs : 20 ans"],
             ["Impact par condition en points de taux", "Classement NECESSAIRE/A AJUSTER/INUTILE", "Recommandation chiffrée par condition"])
 
         st.markdown("###  Analyse Claude — Simulation & Conditions")
@@ -4573,105 +4524,167 @@ with tab_agent:
             with c2: card("Taux global",  f"{pt/gnpi:.4%}", couleur="#1a1a1a", icone=None)
 
         # ── PROGRAMMES ALTERNATIFS COMPARABLES ──
-        variantes = st.session_state.get("agent_py_variantes", {})
-        if variantes:
+        # Les cartes ci-dessous sont volontairement alimentées par le même objet que
+        # le tableau supérieur : agent_optimisation_avancee["alternatives"].
+        # Cela évite d'afficher deux classements différents pour une même recommandation.
+        opt_avancee = st.session_state.get("agent_optimisation_avancee", {}) or {}
+        alternatives = opt_avancee.get("alternatives", []) or []
+
+        if alternatives:
             st.markdown("---")
             st.markdown("#### Recherche de programmes alternatifs comparables")
             st.caption(
-                "Les structures proposées restent proches du programme initial. "
-                "Elles sont classées selon la stabilité, la convergence des méthodes, "
-                "la variance retenue et la comparabilité technique."
+                "Les structures affichées ci-dessous proviennent du même classement que le tableau supérieur. "
+                "Les cartes reprennent donc uniquement des alternatives déjà présentes dans la liste classée."
             )
 
-            variantes_affichees = {
-                k: v for k, v in variantes.items()
-                if k not in {"programme_recommande", "recommande"}
-            }
-            if not variantes_affichees:
-                variantes_affichees = variantes
+            variantes_py = st.session_state.get("agent_py_variantes", {}) or {}
+            programme_initial = None
+            if isinstance(variantes_py, dict):
+                programme_initial = variantes_py.get("programme_initial")
 
-            colors_v = ["#1a1a1a", "#2d8a4e", "#3b82f6", "#f59e0b", "#7c3aed", "#0f766e"]
-            cols = st.columns(min(len(variantes_affichees), len(colors_v)))
+            if not isinstance(programme_initial, dict):
+                programme_initial = {
+                    "label": "Programme initial",
+                    "description": "Programme proposé initialement.",
+                    "prime": float(st.session_state.get("prime_totale", 0.0) or 0.0),
+                    "taux_global": (
+                        float(st.session_state.get("prime_totale", 0.0) or 0.0)
+                        / max(float(gnpi or 1.0), 1.0)
+                    ),
+                    "score": 0.0,
+                    "indice_comparabilite": 100.0,
+                    "tranches": tranches_input,
+                }
 
-            for col, (key, v), color in zip(cols, variantes_affichees.items(), colors_v):
+            prime_initiale = float(programme_initial.get("prime", 0.0) or 0.0)
+            alternatives_cartes = alternatives[:4]
+
+            cards_data = [("programme_initial", programme_initial)] + [
+                (f"structure_comparable_{i}", alt)
+                for i, alt in enumerate(alternatives_cartes, 1)
+            ]
+
+            colors_v = ["#1a1a1a", "#2d8a4e", "#3b82f6", "#f59e0b", "#7c3aed"]
+            cols = st.columns(min(len(cards_data), len(colors_v)))
+
+            for col, (key, v), color in zip(cols, cards_data, colors_v):
                 if not isinstance(v, dict):
                     v = {"label": str(key), "description": str(v)}
-                label = v.get("label", str(key).replace("_", " ").title())
-                description = (
-                    v.get("description")
-                    or v.get("angle")
-                    or v.get("diagnostic")
-                    or "Structure comparable au programme initial."
-                )
+
+                is_initial = key == "programme_initial"
+
+                if is_initial:
+                    label = "Programme initial"
+                    scenario = "Structure de référence"
+                    description = "Programme proposé initialement."
+                    score_v = float(v.get("score", 0.0) or 0.0)
+                    comparabilite = float(v.get("indice_comparabilite", 100.0) or 100.0)
+                else:
+                    rang = int(key.replace("structure_comparable_", ""))
+                    label = f"Structure comparable {rang}"
+                    scenario = v.get("label", f"Alternative rang {rang}")
+                    description = "Alternative issue du classement supérieur."
+                    score_v = float(v.get("score", 0.0) or 0.0)
+                    comparabilite = float(v.get("indice_comparabilite", 0.0) or 0.0)
+
                 taux_global_v = float(v.get("taux_global", 0.0) or 0.0)
                 prime_v = float(v.get("prime", 0.0) or 0.0)
 
-                if key in {"programme_initial", "ref", "reference"}:
+                if is_initial:
                     delta_str = "Référence"
-                elif "ecart_prime_vs_initial" in v:
-                    delta_str = f"{float(v.get('ecart_prime_vs_initial', 0.0)):+.1%} vs prime initiale"
-                elif "ecart_ref_pts" in v:
-                    delta_str = f"{float(v.get('ecart_ref_pts', 0.0)):+.2f} pts"
                 else:
-                    delta_str = "Écart non renseigné"
+                    delta_prime = (prime_v - prime_initiale) / max(prime_initiale, 1.0)
+                    delta_str = f"{delta_prime:+.1%} vs prime initiale"
 
-                convergence = v.get("indice_convergence_methodes")
-                comparabilite = v.get("indice_comparabilite")
-                indicateurs = []
-                if convergence is not None:
-                    indicateurs.append(f"Convergence : {float(convergence):.0f}/100")
-                if comparabilite is not None:
-                    indicateurs.append(f"Comparabilité : {float(comparabilite):.0f}/100")
-                indicateurs_html = "<br>".join(indicateurs) if indicateurs else ""
+                col.markdown(f"""
+                <div style="
+                    background:white;
+                    border-radius:10px;
+                    padding:14px 14px;
+                    border-top:4px solid {color};
+                    box-shadow:0 2px 10px rgba(0,0,0,0.06);
+                    min-height:230px;">
+                    <div style="font-size:12px;font-weight:800;color:{color};margin-bottom:8px">
+                        {label}
+                    </div>
+                    <div style="font-size:11px;color:#6b7280;line-height:1.35;margin-bottom:10px">
+                        {description}
+                    </div>
+                    <div style="font-size:10px;color:#4b5563;line-height:1.35;margin-bottom:10px">
+                        <b>Scénario :</b><br>{scenario}
+                    </div>
+                    <div style="font-size:22px;font-weight:800;color:#111827;margin-bottom:4px">
+                        {taux_global_v:.4%}
+                    </div>
+                    <div style="font-size:11px;color:#6b7280;margin-bottom:6px">
+                        {prime_v:,.0f} MAD
+                    </div>
+                    <div style="font-size:11px;color:{'#6b7280' if is_initial else color};font-weight:700">
+                        {delta_str}
+                    </div>
+                    <div style="font-size:10px;color:#6b7280;margin-top:8px;line-height:1.35">
+                        Score : {score_v:.2f}<br>
+                        Comparabilité : {comparabilite:.0f}/100
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
-                with col:
-                    st.markdown(f"""<div style="border-top:3px solid {color};background:white;
-                        border-radius:0 0 8px 8px;padding:14px 12px;
-                        box-shadow:0 2px 8px rgba(0,0,0,0.06);margin-bottom:8px">
-                        <div style="font-size:13px;font-weight:700;color:{color}">{label}</div>
-                        <div style="font-size:11px;color:#555;margin:4px 0">{description}</div>
-                        <div style="font-size:18px;font-weight:700;color:#1a1a1a;margin:8px 0">
-                            {taux_global_v:.4%}</div>
-                        <div style="font-size:11px;color:#888">{prime_v:,.0f} MAD</div>
-                        <div style="font-size:11px;color:{color};font-weight:600;margin-top:4px">
-                            {delta_str}</div>
-                        <div style="font-size:10px;color:#555;margin-top:4px">{indicateurs_html}</div>
-                        </div>""", unsafe_allow_html=True)
+            st.markdown("##### Détail des structures proposées")
 
-            programme_recommande = variantes.get("programme_recommande") or variantes.get("recommande")
-            if isinstance(programme_recommande, dict):
-                st.info(
-                    "Programme recommandé : "
-                    f"{programme_recommande.get('label', 'structure comparable retenue')} — "
-                    f"{programme_recommande.get('diagnostic', 'sous réserve de validation actuarielle finale.')}"
-                )
+            for i, alt in enumerate(alternatives_cartes, 1):
+                label_alt = alt.get("label", f"Structure comparable {i}")
+                prime_alt = float(alt.get("prime", 0.0) or 0.0)
+                taux_alt = float(alt.get("taux_global", 0.0) or 0.0)
+                score_alt = float(alt.get("score", 0.0) or 0.0)
+                tranches_alt = alt.get("tranches", []) or []
 
-            with st.expander("Détail des structures comparables — paramètres et justification", expanded=False):
-                rows_v = []
-                for key, v in variantes_affichees.items():
-                    for t in v.get("tranches", []):
-                        rows_v.append({
-                            "Structure": v.get("label", str(key).replace("_", " ").title()),
-                            "Tranche": t.get("nom", ""),
-                            "Priorité (MAD)": f"{float(t.get('priorite', 0) or 0):,.0f}",
-                            "Portée (MAD)": f"{float(t.get('portee', 0) or 0):,.0f}",
-                            "Reconst.": t.get("nb_reconstitutions", "—"),
-                            "AAL": f"{float(t.get('AAL', 0) or 0):,.0f}" if t.get("AAL") else "—",
-                            "AAD": f"{float(t.get('AAD', 0) or 0):,.0f}" if t.get("AAD") else "—",
-                            "Taux": f"{float(t.get('_taux', 0) or 0):.4%}",
-                            "Prime": f"{float(t.get('_prime', 0) or 0):,.0f}",
-                            "Diagnostic": v.get("diagnostic", ""),
-                        })
-                if rows_v:
-                    tableau_resultats(rows_v)
-                else:
-                    st.info("Aucune structure comparable à afficher.")
+                with st.expander(
+                    f"Structure comparable {i} — {label_alt} | "
+                    f"Prime {prime_alt:,.0f} MAD | Taux {taux_alt:.4%} | Score {score_alt:.2f}",
+                    expanded=(i == 1)
+                ):
+                    if tranches_alt:
+                        rows_struct = []
+                        for j, t in enumerate(tranches_alt, 1):
+                            rows_struct.append({
+                                "Rang": j,
+                                "Tranche": t.get("nom", f"Tranche {j}"),
+                                "Type": t.get("type", ""),
+                                "Priorité": f"{float(t.get('priorite', 0.0) or 0.0):,.0f}",
+                                "Portée": f"{float(t.get('portee', 0.0) or 0.0):,.0f}",
+                                "AAD": f"{float(t.get('AAD', 0.0) or 0.0):,.0f}" if t.get("AAD") else "—",
+                                "AAL": f"{float(t.get('AAL', 0.0) or 0.0):,.0f}" if t.get("AAL") else "—",
+                                "Reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
+                                "Taux reconstitution": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
+                                "Taux estimé": f"{float(t.get('_taux', 0.0) or 0.0):.4%}",
+                                "Prime estimée": f"{float(t.get('_prime', 0.0) or 0.0):,.0f}",
+                            })
 
-            st.markdown("**Justifications actuarielles :**")
-            for key, v in variantes_affichees.items():
-                if not isinstance(v, dict):
-                    v = {"label": str(key), "description": str(v)}
-                st.markdown(f"**{v.get('label', str(key))}** — {v.get('description', v.get('diagnostic', ''))}")
+                        tableau_resultats(rows_struct, f"Structure détaillée — alternative {i}")
+                    else:
+                        st.info("Aucune structure détaillée disponible pour cette alternative.")
+
+            best_alt = alternatives[0]
+            best_label = best_alt.get("label", "Alternative classée 1")
+            best_prime = float(best_alt.get("prime", 0.0) or 0.0)
+            best_taux = float(best_alt.get("taux_global", 0.0) or 0.0)
+
+            st.markdown(f"""
+            <div style="
+                background:#e8f3ff;
+                border-left:4px solid #1d75bd;
+                border-radius:8px;
+                padding:14px 18px;
+                margin-top:14px;
+                color:#134b7c;
+                font-size:14px;">
+                <b>Programme recommandé :</b> {best_label}<br>
+                Prime estimée : <b>{best_prime:,.0f} MAD</b> ·
+                Taux global : <b>{best_taux:.4%}</b>.<br>
+                Cette recommandation correspond au meilleur rang du tableau supérieur.
+            </div>
+            """, unsafe_allow_html=True)
         # ── Journal des décisions ──
         with st.expander("Journal des décisions actuarielles", expanded=False):
             log_data = [{"Etape": e["etape"], "Décision": e["decision"],
@@ -4775,7 +4788,7 @@ with tab_full:
             taux_manuels3 = st.text_area(
                 "Taux par tranche issus de la tarification manuelle",
                 placeholder="Exemple :\nT1 : BC 3.20%, Simulation 3.45%, taux retenu 3.50%\nT2 Cat : Simulation 1.10%, Market Curve 1.25%, taux retenu 1.25%",
-                height=120, 
+                height=120,
                 key="taux_manuels_externes3",
             )
             params_manuels3 = st.text_area(
