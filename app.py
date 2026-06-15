@@ -4524,9 +4524,8 @@ with tab_agent:
             with c2: card("Taux global",  f"{pt/gnpi:.4%}", couleur="#1a1a1a", icone=None)
 
         # ── PROGRAMMES ALTERNATIFS COMPARABLES ──
-        # Les cartes ci-dessous sont volontairement alimentées par le même objet que
-        # le tableau supérieur : agent_optimisation_avancee["alternatives"].
-        # Cela évite d'afficher deux classements différents pour une même recommandation.
+        # Les cartes ci-dessous utilisent le même objet que le tableau supérieur :
+        # agent_optimisation_avancee["alternatives"]. Cela évite deux classements divergents.
         opt_avancee = st.session_state.get("agent_optimisation_avancee", {}) or {}
         alternatives = opt_avancee.get("alternatives", []) or []
 
@@ -4534,14 +4533,12 @@ with tab_agent:
             st.markdown("---")
             st.markdown("#### Recherche de programmes alternatifs comparables")
             st.caption(
-                "Les structures affichées ci-dessous proviennent du même classement que le tableau supérieur. "
-                "Les cartes reprennent donc uniquement des alternatives déjà présentes dans la liste classée."
+                "Les cinq structures comparables affichées ci-dessous sont les cinq premières alternatives "
+                "du classement supérieur. Les cartes et le détail des structures proviennent donc du même moteur."
             )
 
             variantes_py = st.session_state.get("agent_py_variantes", {}) or {}
-            programme_initial = None
-            if isinstance(variantes_py, dict):
-                programme_initial = variantes_py.get("programme_initial")
+            programme_initial = variantes_py.get("programme_initial") if isinstance(variantes_py, dict) else None
 
             if not isinstance(programme_initial, dict):
                 programme_initial = {
@@ -4557,80 +4554,108 @@ with tab_agent:
                     "tranches": tranches_input,
                 }
 
+            def _fmt_mad_local(x):
+                return f"{float(x or 0):,.0f} MAD"
+
+            def _structure_resume_local(tranches_alt, max_items=3):
+                if not tranches_alt:
+                    return "Structure non disponible"
+                morceaux = []
+                for j, t in enumerate(tranches_alt[:max_items], 1):
+                    nom = t.get("nom", f"T{j}")
+                    priorite = float(t.get("priorite", 0.0) or 0.0) / 1_000_000
+                    portee = float(t.get("portee", 0.0) or 0.0) / 1_000_000
+                    rec = int(t.get("nb_reconstitutions", 0) or 0)
+                    morceaux.append(f"{nom}: {portee:.1f}M xs {priorite:.1f}M · Rec {rec}")
+                if len(tranches_alt) > max_items:
+                    morceaux.append(f"+{len(tranches_alt) - max_items} tranche(s)")
+                return "<br>".join(morceaux)
+
             prime_initiale = float(programme_initial.get("prime", 0.0) or 0.0)
-            alternatives_cartes = alternatives[:4]
+            alternatives_cartes = alternatives[:5]
 
             cards_data = [("programme_initial", programme_initial)] + [
                 (f"structure_comparable_{i}", alt)
                 for i, alt in enumerate(alternatives_cartes, 1)
             ]
 
-            colors_v = ["#1a1a1a", "#2d8a4e", "#3b82f6", "#f59e0b", "#7c3aed"]
-            cols = st.columns(min(len(cards_data), len(colors_v)))
+            colors_v = ["#1a1a1a", "#2d8a4e", "#3b82f6", "#f59e0b", "#7c3aed", "#0ea5e9"]
+            nb_cols = 3
 
-            for col, (key, v), color in zip(cols, cards_data, colors_v):
-                if not isinstance(v, dict):
-                    v = {"label": str(key), "description": str(v)}
+            for start in range(0, len(cards_data), nb_cols):
+                cols = st.columns(nb_cols)
+                for col, (key, v), color in zip(cols, cards_data[start:start + nb_cols], colors_v[start:start + nb_cols]):
+                    if not isinstance(v, dict):
+                        v = {"label": str(key), "description": str(v)}
 
-                is_initial = key == "programme_initial"
+                    is_initial = key == "programme_initial"
 
-                if is_initial:
-                    label = "Programme initial"
-                    scenario = "Structure de référence"
-                    description = "Programme proposé initialement."
-                    score_v = float(v.get("score", 0.0) or 0.0)
-                    comparabilite = float(v.get("indice_comparabilite", 100.0) or 100.0)
-                else:
-                    rang = int(key.replace("structure_comparable_", ""))
-                    label = f"Structure comparable {rang}"
-                    scenario = v.get("label", f"Alternative rang {rang}")
-                    description = "Alternative issue du classement supérieur."
-                    score_v = float(v.get("score", 0.0) or 0.0)
-                    comparabilite = float(v.get("indice_comparabilite", 0.0) or 0.0)
+                    if is_initial:
+                        label = "Programme initial"
+                        scenario = "Structure de référence"
+                        description = "Programme proposé initialement."
+                        score_v = float(v.get("score", 0.0) or 0.0)
+                        comparabilite = float(v.get("indice_comparabilite", 100.0) or 100.0)
+                    else:
+                        rang = int(key.replace("structure_comparable_", ""))
+                        label = f"Structure comparable {rang}"
+                        scenario = v.get("label", f"Alternative rang {rang}")
+                        description = "Alternative issue du classement supérieur."
+                        score_v = float(v.get("score", 0.0) or 0.0)
+                        comparabilite = float(v.get("indice_comparabilite", 0.0) or 0.0)
 
-                taux_global_v = float(v.get("taux_global", 0.0) or 0.0)
-                prime_v = float(v.get("prime", 0.0) or 0.0)
+                    taux_global_v = float(v.get("taux_global", 0.0) or 0.0)
+                    prime_v = float(v.get("prime", 0.0) or 0.0)
+                    tranches_v = v.get("tranches", []) or []
+                    if is_initial and not tranches_v:
+                        tranches_v = tranches_input
 
-                if is_initial:
-                    delta_str = "Référence"
-                else:
-                    delta_prime = (prime_v - prime_initiale) / max(prime_initiale, 1.0)
-                    delta_str = f"{delta_prime:+.1%} vs prime initiale"
+                    if is_initial:
+                        delta_str = "Référence"
+                    else:
+                        delta_prime = (prime_v - prime_initiale) / max(prime_initiale, 1.0)
+                        delta_str = f"{delta_prime:+.1%} vs prime initiale"
 
-                col.markdown(f"""
-                <div style="
-                    background:white;
-                    border-radius:10px;
-                    padding:14px 14px;
-                    border-top:4px solid {color};
-                    box-shadow:0 2px 10px rgba(0,0,0,0.06);
-                    min-height:230px;">
-                    <div style="font-size:12px;font-weight:800;color:{color};margin-bottom:8px">
-                        {label}
-                    </div>
-                    <div style="font-size:11px;color:#6b7280;line-height:1.35;margin-bottom:10px">
-                        {description}
-                    </div>
-                    <div style="font-size:10px;color:#4b5563;line-height:1.35;margin-bottom:10px">
-                        <b>Scénario :</b><br>{scenario}
-                    </div>
-                    <div style="font-size:22px;font-weight:800;color:#111827;margin-bottom:4px">
-                        {taux_global_v:.4%}
-                    </div>
-                    <div style="font-size:11px;color:#6b7280;margin-bottom:6px">
-                        {prime_v:,.0f} MAD
-                    </div>
-                    <div style="font-size:11px;color:{'#6b7280' if is_initial else color};font-weight:700">
-                        {delta_str}
-                    </div>
-                    <div style="font-size:10px;color:#6b7280;margin-top:8px;line-height:1.35">
-                        Score : {score_v:.2f}<br>
-                        Comparabilité : {comparabilite:.0f}/100
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                    structure_html = _structure_resume_local(tranches_v, max_items=3)
 
-            st.markdown("##### Détail des structures proposées")
+                    col.markdown(f"""
+                    <div style="
+                        background:white;
+                        border-radius:10px;
+                        padding:14px 14px;
+                        border-top:4px solid {color};
+                        box-shadow:0 2px 10px rgba(0,0,0,0.06);
+                        min-height:270px;
+                        margin-bottom:12px;">
+                        <div style="font-size:12px;font-weight:800;color:{color};margin-bottom:8px">
+                            {label}
+                        </div>
+                        <div style="font-size:11px;color:#6b7280;line-height:1.35;margin-bottom:8px">
+                            {description}
+                        </div>
+                        <div style="font-size:10px;color:#4b5563;line-height:1.35;margin-bottom:8px">
+                            <b>Scénario :</b><br>{scenario}
+                        </div>
+                        <div style="font-size:10px;color:#334155;line-height:1.45;margin-bottom:10px">
+                            <b>Structure :</b><br>{structure_html}
+                        </div>
+                        <div style="font-size:22px;font-weight:800;color:#111827;margin-bottom:4px">
+                            {taux_global_v:.4%}
+                        </div>
+                        <div style="font-size:11px;color:#6b7280;margin-bottom:6px">
+                            {_fmt_mad_local(prime_v)}
+                        </div>
+                        <div style="font-size:11px;color:{'#6b7280' if is_initial else color};font-weight:700">
+                            {delta_str}
+                        </div>
+                        <div style="font-size:10px;color:#6b7280;margin-top:8px;line-height:1.35">
+                            Score : {score_v:.2f}<br>
+                            Comparabilité : {comparabilite:.0f}/100
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            st.markdown("##### Détail des cinq structures comparables")
 
             for i, alt in enumerate(alternatives_cartes, 1):
                 label_alt = alt.get("label", f"Structure comparable {i}")
@@ -4641,7 +4666,7 @@ with tab_agent:
 
                 with st.expander(
                     f"Structure comparable {i} — {label_alt} | "
-                    f"Prime {prime_alt:,.0f} MAD | Taux {taux_alt:.4%} | Score {score_alt:.2f}",
+                    f"Prime {_fmt_mad_local(prime_alt)} | Taux {taux_alt:.4%} | Score {score_alt:.2f}",
                     expanded=(i == 1)
                 ):
                     if tranches_alt:
@@ -4656,9 +4681,9 @@ with tab_agent:
                                 "AAD": f"{float(t.get('AAD', 0.0) or 0.0):,.0f}" if t.get("AAD") else "—",
                                 "AAL": f"{float(t.get('AAL', 0.0) or 0.0):,.0f}" if t.get("AAL") else "—",
                                 "Reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
-                                "Taux reconstitution": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
+                                "Taux rec.": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
                                 "Taux estimé": f"{float(t.get('_taux', 0.0) or 0.0):.4%}",
-                                "Prime estimée": f"{float(t.get('_prime', 0.0) or 0.0):,.0f}",
+                                "Prime estimée": _fmt_mad_local(t.get("_prime", 0.0)),
                             })
 
                         tableau_resultats(rows_struct, f"Structure détaillée — alternative {i}")
@@ -4680,7 +4705,7 @@ with tab_agent:
                 color:#134b7c;
                 font-size:14px;">
                 <b>Programme recommandé :</b> {best_label}<br>
-                Prime estimée : <b>{best_prime:,.0f} MAD</b> ·
+                Prime estimée : <b>{_fmt_mad_local(best_prime)}</b> ·
                 Taux global : <b>{best_taux:.4%}</b>.<br>
                 Cette recommandation correspond au meilleur rang du tableau supérieur.
             </div>
