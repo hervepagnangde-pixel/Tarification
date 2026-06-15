@@ -1,5 +1,5 @@
 """
-Atlantic Re IA — Application principale (app.py)
+IA TARIF — Application principale (app.py)
 Point d'entrée Streamlit. Tous les modules métier sont dans modules/.
 
 Structure : 
@@ -78,9 +78,9 @@ from modules.tools_exec import (
 # ═══════════════════════════════════════════════════════════════════════════════
 try:
     icon = Image.open("icon.png")
-    st.set_page_config(page_title="Atlantic Re IA", layout="wide", page_icon=icon)
+    st.set_page_config(page_title="IA TARIF", layout="wide", page_icon=icon)
 except:
-    st.set_page_config(page_title="Atlantic Re IA", layout="wide")
+    st.set_page_config(page_title="IA TARIF", layout="wide")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -115,7 +115,7 @@ if not st.session_state["authenticated"]:
     with col2:
         st.markdown("<div style='text-align:center; padding:40px 0 20px 0'>", unsafe_allow_html=True)
         st.markdown("# ")
-        st.markdown("### Atlantic Re IA")
+        st.markdown("### IA TARIF")
         st.caption("Tarification Réassurance Non-Proportionnelle")
         st.markdown("</div>", unsafe_allow_html=True)
         st.divider()
@@ -353,7 +353,7 @@ with st.sidebar:
             1. [myaccount.google.com](https://myaccount.google.com) → **Sécurité**
             2. **Validation en 2 étapes** (doit être activée)
             3. → **Mots de passe des applications**
-            4. Créer → Nom : "Atlantic Re IA" → **Générer**
+            4. Créer → Nom : "IA TARIF" → **Générer**
             5. Copier les **16 caractères** (ex: `abcd efgh ijkl mnop`)
             6. Dans Secrets Streamlit : `SMTP_PASS = "abcdefghijklmnop"` (sans espaces)
             """)
@@ -363,8 +363,8 @@ with st.sidebar:
     if st.button(" Tester l'envoi email", key="btn_test_smtp", use_container_width=True):
         with st.spinner("Envoi en cours..."):
             ok, msg_smtp = envoyer_notification_email(
-                "Test Atlantic Re IA",
-                "<p>Test de configuration email depuis Atlantic Re IA.</p>"
+                "Test IA TARIF",
+                "<p>Test de configuration email depuis IA TARIF.</p>"
                 f"<p>Utilisateur : {st.session_state.get('user_email','')}</p>",
                 "hervepagnangde@gmail.com"
             )
@@ -387,7 +387,7 @@ with st.sidebar:
         st.caption("Configurez SLACK_WEBHOOK_URL ou TEAMS_WEBHOOK_URL dans les Secrets pour activer.")
     if st.button(" Test webhook", key="btn_test_webhook", use_container_width=True):
         wh_r = envoyer_webhook_notification(
-            "Test Atlantic Re IA",
+            "Test IA TARIF",
             f"Test depuis la sidebar · Utilisateur : {st.session_state.get('user_email','')}",
             niveau="info")
         if wh_r:
@@ -449,7 +449,7 @@ st.markdown(f"""
     padding:20px 28px;margin-bottom:16px;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
     <div>
-      <div style="font-size:17px;font-weight:700;color:white"> Atlantic Re IA — Tarification XL</div>
+      <div style="font-size:17px;font-weight:700;color:white"> IA TARIF — Tarification XL</div>
       <div style="font-size:12px;color:rgba(255,255,255,0.6);margin-top:4px">{etapes_status}</div>
       <div style="font-size:12px;color:#f59e0b;margin-top:6px"> Prochaine : <b style="color:white">{prochaine}</b></div>
     </div>
@@ -2472,7 +2472,7 @@ with tab2:
     # ═══════════════════════════════════════════════════════════════════
     # MODÈLE ACTUARIEL COMPLET — Méthode QBE Re (étapes A→I)
     # Basé sur : "Modélisation sinistres corporels — Excédent de Sinistres"
-    # Auteur original : QBE Re / EGS — Adapté Atlantic Re IA
+    # Auteur original : QBE Re / EGS — Adapté IA TARIF
     # ═══════════════════════════════════════════════════════════════════
     if "df_proj" in st.session_state:
         st.markdown("---")
@@ -4658,7 +4658,7 @@ with tab_agent:
             if notif_msg.strip():
                 user = st.session_state.get("user_email","Agent")
                 ok, msg = envoyer_notification_email(
-                    f"Message de {user} — Atlantic Re IA",
+                    f"Message de {user} — IA TARIF",
                     f"<p><b>De :</b> {user}</p><p><b>Message :</b> {notif_msg}</p>",
                     "hervepagnangde@gmail.com")
                 if ok: st.success(" Email envoyé")
@@ -5476,7 +5476,7 @@ Catégories : réassurance, actuariat, cours, finance, Maroc.""",
                 inputs.get("requete",""), inputs.get("type_recherche","methode"))
         elif nom == "envoyer_notification_agent":
             return _executer_notification_email(
-                inputs.get("sujet","Notification Atlantic Re IA"),
+                inputs.get("sujet","Notification IA TARIF"),
                 inputs.get("contenu",""),
                 inputs.get("niveau","info"),
                 st.session_state.get("user_email",""))
