@@ -423,7 +423,7 @@ def afficher_optimisation_avancee(opt):
         "Rang": i,
         "Scénario": a.get("label", f"Alternative {i}"),
         "Structure": _structure_resume(a.get("tranches", []) or [], max_items=2),
-        "Prime": _fmt_aed(a.get("prime", 0.0)),
+        "Prime XL": _fmt_aed(a.get("prime", 0.0)),
         "Taux global": f"{float(a.get('taux_global', 0.0) or 0.0):.4%}",
         "Protection": f"{float(a.get('protection_theorique', 0.0) or 0.0):,.0f}",
         "Comparabilité": f"{float(a.get('indice_comparabilite', 0.0) or 0.0):.0f}/100",
@@ -437,7 +437,7 @@ def afficher_optimisation_avancee(opt):
         st.markdown("##### Structure détaillée des alternatives")
         st.caption(
             "Sélectionnez une alternative pour afficher la composition complète du programme : priorité, portée, "
-            "reconstitutions, taux estimé et prime estimée par tranche."
+            "reconstitutions, taux estimé et prime XL estimée par tranche."
         )
 
         choix = st.selectbox(
@@ -466,7 +466,7 @@ def afficher_optimisation_avancee(opt):
                     "Reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
                     "Taux rec.": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
                     "Taux estimé": f"{float(t.get('_taux', 0.0) or 0.0):.4%}",
-                    "Prime estimée": _fmt_aed(t.get("_prime", 0.0)),
+                    "Prime XL estimée": _fmt_aed(t.get("_prime", 0.0)),
                 })
 
             tableau_resultats(rows_struct, f"Structure détaillée — {alt.get('label', 'Alternative')}")
