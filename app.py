@@ -4,7 +4,7 @@ Point d'entrée Streamlit. Tous les modules métier sont dans modules/.
 
 Structure : 
   modules/db.py, pdf_gen.py, notifications.py, auth.py, ui.py
-  modules/prompts.py, actuarial.py, optimization.py, resources.py  
+  modules/prompts.py, actuarial.py, optimization.py, resources.py 
   modules/agents_v2.py, labo.py, agent_python.py, tools_exec.py
 """
 import streamlit as st
@@ -1192,7 +1192,7 @@ def _labo_display_section():
                             "Taux cible":           f"{taux_cible_opt:.4%}",
                             "Écart":                f"{abs(tau_star-taux_cible_opt)*100:.4f} pts",
                             "Itérations":           nb,
-                            "Prime estimée (AED)":  f"{gnpi*tau_star:,.0f}",
+                            "Prime XL estimée (AED)":  f"{gnpi*tau_star:,.0f}",
                         }])
                         # Tracer la convergence
                         iters = res_r.get("iterations",[])
@@ -2917,7 +2917,7 @@ E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
 
                 st.markdown("""
                 <div style="background:#e8f7f4;border-left:4px solid #00b5a5;padding:12px 16px;font-size:12px;margin-top:12px">
-                <b>Pour obtenir la prime de réassurance finale (chargée) :</b><br>
+                <b>Pour obtenir la prime XL de réassurance finale (chargée) :</b><br>
                 τ_final = τ_technique + GSM (Grands Sinistres Matériels) + Frais fixes gestion + Courtage + Rémunération capital<br>
                 <i>Source : QBE Re — Conclusion de la présentation</i>
                 </div>""", unsafe_allow_html=True)
@@ -4239,7 +4239,7 @@ with tab6:
                 if st.button(" Notifier Slack/Teams", use_container_width=True, key="btn_wh_rapport"):
                     wh_results = envoyer_webhook_notification(
                         f"Rapport finalisé — {st.session_state.get('user_email','')}",
-                        f"Prime : {prime_totale:,.0f} AED | Taux : {prime_totale/gnpi:.4%} | GNPI : {gnpi:,.0f} AED",
+                        f"Prime XL : {prime_totale:,.0f} AED | Taux : {prime_totale/gnpi:.4%} | GNPI : {gnpi:,.0f} AED",
                         niveau="rapport_final")
                     if wh_results:
                         for svc, ok_w, msg_w in wh_results:
@@ -4267,7 +4267,7 @@ with tab6:
             prompt = build_prompt(
                 role="Expert senior tarification reassurance non-proportionnelle, specialiste automobile marches emergents.",
                 task="1. SYNTHESE EXECUTIVE (5 lignes max)\n2. ANALYSE PAR TRANCHE (BC/Sim/Marche -> Verdict)\n3. COHERENCE INTER-METHODES\n4. ANOMALIES\n5. TABLEAU FINAL\n6. RECOMMANDATION GLOBALE",
-                data=f"Rapport : {json.dumps(rows_rapport, indent=2)}\nBC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nSim : {json.dumps(st.session_state['resultats_sim'], indent=2)}\nGNPI : {gnpi:,} AED | Prime : {prime_totale:,.0f} AED | Taux global : {prime_totale/gnpi:.4%}",
+                data=f"Rapport : {json.dumps(rows_rapport, indent=2)}\nBC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nSim : {json.dumps(st.session_state['resultats_sim'], indent=2)}\nGNPI : {gnpi:,} AED | Prime XL : {prime_totale:,.0f} AED | Taux global : {prime_totale/gnpi:.4%}",
                 contexte=ctx_r, instructions=inst_r, input_data=inp_r, output_instructions=out_r,
                 contexte_global=st.session_state.get("instructions_globales",""),
                 contraintes="- Ne jamais recommander taux < taux pur\n- BC=0 cat = normal\n- Mentionner incertitudes et limites")
@@ -4683,7 +4683,7 @@ with tab_agent:
                                 "Reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
                                 "Taux rec.": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
                                 "Taux estimé": f"{float(t.get('_taux', 0.0) or 0.0):.4%}",
-                                "Prime estimée": _fmt_aed_local(t.get("_prime", 0.0)),
+                                "Prime XL estimée": _fmt_aed_local(t.get("_prime", 0.0)),
                             })
 
                         tableau_resultats(rows_struct, f"Structure détaillée — alternative {i}")
@@ -4705,7 +4705,7 @@ with tab_agent:
                 color:#134b7c;
                 font-size:14px;">
                 <b>Programme recommandé :</b> {best_label}<br>
-                Prime estimée : <b>{_fmt_aed_local(best_prime)}</b> ·
+                Prime XL estimée : <b>{_fmt_aed_local(best_prime)}</b> ·
                 Taux global : <b>{best_taux:.4%}</b>.<br>
                 Cette recommandation correspond au meilleur rang du tableau supérieur.
             </div>
