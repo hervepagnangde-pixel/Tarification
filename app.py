@@ -176,7 +176,7 @@ if st.session_state["page"] == "landing":
             Atlantic Re <span style="color:#2d8a4e">IA</span>
         </h1>
         <p style="color:#aaa;font-size:16px;margin:0 0 8px 0">Moteur de tarification · Réassurance Non-Proportionnelle</p>
-        <p style="color:#666;font-size:13px;margin:0 0 40px 0">Atlantic Re · Automobile · UEA</p>
+        <p style="color:#666;font-size:13px;margin:0 0 40px 0">Atlantic Re · Automobile · UAE</p>
         <div style="display:flex;gap:16px;margin-bottom:48px;flex-wrap:wrap;justify-content:center">
             <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);border-radius:12px;padding:16px 20px;min-width:140px">
                 <div style="font-size:24px;margin-bottom:6px"></div>
