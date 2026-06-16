@@ -224,7 +224,7 @@ class AgentMemoireMetier:
                 "q25_historique":hist_q25,"q75_historique":hist_q75,"ecart_vs_mediane":ecart,
                 "diagnostic":"au-dessus" if ecart>0.20 else "sous la référence" if ecart<-0.20 else "proche de l'historique",
                 "n_reference":len(hist_by_type[typ])})
-        pt_curr=sum(self._to_float(self._row_get(r,"prime_MAD","Prime (MAD)",default=0)) for r in rapport_rows or [])
+        pt_curr=sum(self._to_float(self._row_get(r,"prime_AED","Prime (AED)",default=0)) for r in rapport_rows or [])
         tg=pt_curr/gnpi if gnpi else 0
         return {"disponible":True,"message":"Mémoire métier activée.","comparaisons":comparaisons,
                 "synthese":{"nb_dossiers_reference":len(historiques),"taux_global_dossier":tg,
@@ -402,8 +402,8 @@ def afficher_optimisation_avancee(opt):
 
     alternatives = opt.get("alternatives", []) or []
 
-    def _fmt_mad(x):
-        return f"{float(x or 0):,.0f} MAD"
+    def _fmt_aed(x):
+        return f"{float(x or 0):,.0f} AED"
 
     def _structure_resume(tranches_alt, max_items=3):
         if not tranches_alt:
@@ -423,7 +423,7 @@ def afficher_optimisation_avancee(opt):
         "Rang": i,
         "Scénario": a.get("label", f"Alternative {i}"),
         "Structure": _structure_resume(a.get("tranches", []) or [], max_items=2),
-        "Prime": _fmt_mad(a.get("prime", 0.0)),
+        "Prime": _fmt_aed(a.get("prime", 0.0)),
         "Taux global": f"{float(a.get('taux_global', 0.0) or 0.0):.4%}",
         "Protection": f"{float(a.get('protection_theorique', 0.0) or 0.0):,.0f}",
         "Comparabilité": f"{float(a.get('indice_comparabilite', 0.0) or 0.0):.0f}/100",
@@ -466,7 +466,7 @@ def afficher_optimisation_avancee(opt):
                     "Reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
                     "Taux rec.": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
                     "Taux estimé": f"{float(t.get('_taux', 0.0) or 0.0):.4%}",
-                    "Prime estimée": _fmt_mad(t.get("_prime", 0.0)),
+                    "Prime estimée": _fmt_aed(t.get("_prime", 0.0)),
                 })
 
             tableau_resultats(rows_struct, f"Structure détaillée — {alt.get('label', 'Alternative')}")
