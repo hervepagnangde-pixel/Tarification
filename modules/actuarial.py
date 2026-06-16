@@ -180,7 +180,7 @@ def generer_pptx_rapport(gnpi_val, tranches, resultats_bc, resultats_sim,
              "sim": str(r.get("Taux Sim.","") or f"{r.get('taux_sim',0):.4%}"),
              "mkt": str(r.get("Taux Marché","") or f"{r.get('taux_mkt',0):.4%}"),
              "ret": str(r.get("Taux retenu","") or f"{r.get('taux_retenu',0):.4%}"),
-             "prime": str(r.get("Prime (MAD)","") or f"{r.get('prime_MAD',0):,.0f}")}
+             "prime": str(r.get("Prime (AED)","") or f"{r.get('prime_AED',0):,.0f}")}
             for _, r in df_rapport.iterrows()
         ], ensure_ascii=False)
 
@@ -218,8 +218,8 @@ s1.background = {{color: NAV}};
 s1.addShape(prs.ShapeType.rect, {{x:0,y:4.5,w:10,h:1.125,fill:{{color:TEAL}}}});
 s1.addText("ATLANTIC RE", {{x:0.5,y:0.8,w:9,h:1.2,fontSize:48,bold:true,color:WHITE,fontFace:"Georgia"}});
 s1.addText("Rapport de Tarification {annee}", {{x:0.5,y:2.0,w:9,h:0.7,fontSize:24,color:TEAL,fontFace:"Calibri"}});
-s1.addText("Réassurance Non-Proportionnelle · Automobile · Maroc", {{x:0.5,y:2.7,w:9,h:0.5,fontSize:14,color:WHITE,fontFace:"Calibri"}});
-s1.addText("GNPI : {gnpi_val:,.0f} MAD  |  Prime totale : {prime_totale:,.0f} MAD  |  Taux global : {taux_global:.4%}", {{x:0.5,y:4.6,w:9,h:0.4,fontSize:12,color:NAV,fontFace:"Calibri"}});
+s1.addText("Réassurance Non-Proportionnelle · Automobile · UEA", {{x:0.5,y:2.7,w:9,h:0.5,fontSize:14,color:WHITE,fontFace:"Calibri"}});
+s1.addText("GNPI : {gnpi_val:,.0f} AED  |  Prime totale : {prime_totale:,.0f} AED  |  Taux global : {taux_global:.4%}", {{x:0.5,y:4.6,w:9,h:0.4,fontSize:12,color:NAV,fontFace:"Calibri"}});
 
 // ── Slide 2 : Programme ───────────────────────────────
 let s2 = prs.addSlide();
@@ -259,7 +259,7 @@ s5.addShape(prs.ShapeType.rect, {{x:0,y:0,w:10,h:0.9,fill:{{color:NAV}}}});
 s5.addText("Synthèse de Tarification", {{x:0.4,y:0,w:9,h:0.9,fontSize:22,bold:true,color:WHITE,valign:"middle"}});
 s5.addShape(prs.ShapeType.rect, {{x:0,y:0.85,w:10,h:0.06,fill:{{color:TEAL}}}});
 if(rapport.length > 0) {{
-  const rptRows = [["Tranche","BC","Simulation","Marché","Retenu","Prime (MAD)"].map(h=>{{text:h,options:{{bold:true,color:WHITE,fill:{{color:NAV}}}}}})]
+  const rptRows = [["Tranche","BC","Simulation","Marché","Retenu","Prime (AED)"].map(h=>{{text:h,options:{{bold:true,color:WHITE,fill:{{color:NAV}}}}}})]
     .concat(rapport.map(r=>[r.t,r.bc,r.sim,r.mkt,r.ret,r.prime].map(v=>{{return{{text:v}}}})));
   s5.addTable(rptRows, {{x:0.4,y:1.4,w:9.2,colW:[2.0,1.4,1.4,1.4,1.4,1.6],border:{{pt:0.5,color:"d0e8e2"}},rowH:0.45,fontSize:12,fontFace:"Calibri",color:"1a1a1a"}});
 }}
@@ -271,7 +271,7 @@ s6.addShape(prs.ShapeType.rect, {{x:0,y:0,w:10,h:0.06,fill:{{color:TEAL}}}});
 s6.addText("Conclusion & Recommandations", {{x:0.5,y:0.5,w:9,h:1,fontSize:30,bold:true,color:WHITE,fontFace:"Georgia"}});
 s6.addText([
   {{text:"Prime totale\\n",   options:{{bold:true,fontSize:14,color:TEAL}}}},
-  {{text:"{prime_totale:,.0f} MAD\\n\\n", options:{{fontSize:22,bold:true,color:WHITE}}}},
+  {{text:"{prime_totale:,.0f} AED\\n\\n", options:{{fontSize:22,bold:true,color:WHITE}}}},
   {{text:"Taux global\\n",    options:{{bold:true,fontSize:14,color:TEAL}}}},
   {{text:"{taux_global:.4%}\\n\\n",       options:{{fontSize:22,bold:true,color:WHITE}}}},
   {{text:"Généré par IA TARIF · {datetime.now().strftime('%d/%m/%Y %H:%M')}",
@@ -585,7 +585,7 @@ def _threshold_table(data, thresholds_pct):
         u = np.percentile(data, pct)
         exc = data[data > u]; n_exc = len(exc)
         if n_exc < 5:
-            rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
+            rows.append({"Seuil %": f"p{pct}", "Seuil AED": f"{u:,.0f}", "N exc.": n_exc,
                          "Alpha Hill": "—", "KS stat": "—", "p-val KS": "—", "AD stat": "—", "Qualite": "Insuf."})
             continue
         alpha_h = n_exc / np.sum(np.log(exc / u))
@@ -613,7 +613,7 @@ def _threshold_table(data, thresholds_pct):
         except: ad_stat = np.nan
         qual = "Bon" if pval_ks>0.05 and not np.isnan(ad_stat) and ad_stat<2.5 else \
                "Acceptable" if pval_ks>0.01 else "Rejeté"
-        rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
+        rows.append({"Seuil %": f"p{pct}", "Seuil AED": f"{u:,.0f}", "N exc.": n_exc,
                      "Alpha Hill": f"{alpha_h:.4f}", "KS stat": f"{ks_s:.4f}",
                      "p-val KS": f"{pval_ks:.4f}",
                      "AD stat": f"{ad_stat:.4f}" if not np.isnan(ad_stat) else "—", "Qualite": qual})
@@ -743,7 +743,7 @@ def section_analyse_distributions():
         st.pyplot(fig_sd, use_container_width=True); plt.close(fig_sd)
 
         st.info(
-            f"Gertensgarbe → k* = {k_gert}  |  u suggéré = {u_gert:,.0f} MAD  |  "
+            f"Gertensgarbe → k* = {k_gert}  |  u suggéré = {u_gert:,.0f} AED  |  "
             f"α = {alpha_gert:.4f}  |  "
             "Cherchez la zone stable du Hill et la linéarité du MEF pour confirmer u."
         )
@@ -756,9 +756,9 @@ def section_analyse_distributions():
 
         best_row = next((r for r in rows_s if r["Qualite"] == "Bon"), None)
         if best_row:
-            st.success(f"Recommandé : {best_row['Seuil %']} = {best_row['Seuil MAD']} MAD — α={best_row['Alpha Hill']}")
+            st.success(f"Recommandé : {best_row['Seuil %']} = {best_row['Seuil AED']} AED — α={best_row['Alpha Hill']}")
             if st.button("Appliquer", key="btn_apply_seuil"):
-                st.session_state["seuil_est"] = float(best_row["Seuil MAD"].replace(",","").replace(" ",""))
+                st.session_state["seuil_est"] = float(best_row["Seuil AED"].replace(",","").replace(" ",""))
                 st.session_state["alpha_est"] = float(best_row["Alpha Hill"])
                 st.rerun()
 
@@ -788,7 +788,7 @@ def section_analyse_distributions():
                 else: continue
                 axes_c[0].plot(x_s, y, "--", color=col, lw=1.8, label=f"{nom} p={f['pval']:.3f}")
             except: pass
-        axes_c[0].set_xlabel("MAD"); axes_c[0].set_ylabel("F(x)")
+        axes_c[0].set_xlabel("AED"); axes_c[0].set_ylabel("F(x)")
         axes_c[0].set_title("CDF Sévérité"); axes_c[0].legend(fontsize=8); axes_c[0].grid(alpha=0.3)
         # QQ-Plot
         log_x = np.log(np.sort(sev_data)/seuil_0); n_q = len(log_x)
@@ -837,7 +837,7 @@ def section_analyse_distributions():
         with c2: lambda_m = st.slider("Lambda", 0.5, 30.0, float(lambda_0), 0.5,  key="lambda_manual")
         with c3:
             p40 = int(np.percentile(all_sev, 40)); p92 = int(np.percentile(all_sev, 92))
-            seuil_m = st.slider("Seuil MAD", p40, p92, int(seuil_0), 50000, key="seuil_manual")
+            seuil_m = st.slider("Seuil AED", p40, p92, int(seuil_0), 50000, key="seuil_manual")
 
         exc_m = all_sev[all_sev > seuil_m]
         if len(exc_m) >= 5:
@@ -846,7 +846,7 @@ def section_analyse_distributions():
             ax_mn.plot(xs_m, np.arange(1,len(xs_m)+1)/len(xs_m), "k-", lw=2, label="Empirique")
             ax_mn.plot(xs_m, np.clip(1-(xs_m/seuil_m)**(-alpha_m),0,1), "r--", lw=1.8,
                        label=f"Pareto(α={alpha_m:.2f})")
-            ax_mn.set_xlabel("MAD"); ax_mn.set_title("CDF Sévérité — paramètres manuels")
+            ax_mn.set_xlabel("AED"); ax_mn.set_title("CDF Sévérité — paramètres manuels")
             ax_mn.legend(); ax_mn.grid(alpha=0.3)
             st.pyplot(fig_mn); plt.close()
         if st.button("Appliquer ces paramètres", type="primary", key="apply_manual"):
