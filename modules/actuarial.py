@@ -218,7 +218,7 @@ s1.background = {{color: NAV}};
 s1.addShape(prs.ShapeType.rect, {{x:0,y:4.5,w:10,h:1.125,fill:{{color:TEAL}}}});
 s1.addText("ATLANTIC RE", {{x:0.5,y:0.8,w:9,h:1.2,fontSize:48,bold:true,color:WHITE,fontFace:"Georgia"}});
 s1.addText("Rapport de Tarification {annee}", {{x:0.5,y:2.0,w:9,h:0.7,fontSize:24,color:TEAL,fontFace:"Calibri"}});
-s1.addText("Réassurance Non-Proportionnelle · Automobile · UEA", {{x:0.5,y:2.7,w:9,h:0.5,fontSize:14,color:WHITE,fontFace:"Calibri"}});
+s1.addText("Réassurance Non-Proportionnelle · Automobile · UAE", {{x:0.5,y:2.7,w:9,h:0.5,fontSize:14,color:WHITE,fontFace:"Calibri"}});
 s1.addText("GNPI : {gnpi_val:,.0f} AED  |  Prime totale : {prime_totale:,.0f} AED  |  Taux global : {taux_global:.4%}", {{x:0.5,y:4.6,w:9,h:0.4,fontSize:12,color:NAV,fontFace:"Calibri"}});
 
 // ── Slide 2 : Programme ───────────────────────────────
