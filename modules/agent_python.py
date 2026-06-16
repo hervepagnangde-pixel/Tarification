@@ -103,7 +103,7 @@ class AgentActuarielPython:
             return default
 
     @staticmethod
-    def _arrondir_mad(x, pas=500_000, minimum=0.0):
+    def _arrondir_aed(x, pas=500_000, minimum=0.0):
         try:
             return max(round(float(x) / pas) * pas, minimum)
         except Exception:
@@ -688,11 +688,11 @@ class AgentActuarielPython:
                     "taux_mkt": round(mkt, 6),
                     "taux_retenu": round(taux, 6),
                     "methode": meth,
-                    "prime_MAD": round(prime, 2),
+                    "prime_AED": round(prime, 2),
                     "ecart_bc_sim_pct": round(ecart, 1),
                 }
             )
-            self._log("Sélection", f"{nom}: {meth}, prime={prime:,.0f} MAD.")
+            self._log("Sélection", f"{nom}: {meth}, prime={prime:,.0f} AED.")
 
         self.rapport_rows = rows
         self.prime_totale = pt
@@ -766,8 +766,8 @@ class AgentActuarielPython:
                 C0 = float(t.get("portee", 0.0) or 0.0)
                 rec0 = int(t.get("nb_reconstitutions", 0) or 0)
 
-                D1 = self._arrondir_mad(D0 * mult_D, minimum=500_000)
-                C1 = self._arrondir_mad(C0 * mult_C, minimum=500_000)
+                D1 = self._arrondir_aed(D0 * mult_D, minimum=500_000)
+                C1 = self._arrondir_aed(C0 * mult_C, minimum=500_000)
                 rec1 = int(max(0, min(5, rec0 + delta_rec)))
 
                 t_alt["priorite"] = D1
@@ -863,8 +863,8 @@ class AgentActuarielPython:
             "=" * 60,
             "RAPPORT DE TARIFICATION — AGENT PYTHON AUTONOME",
             "=" * 60,
-            f"GNPI         : {self.gnpi:,.0f} MAD",
-            f"Prime totale : {self.prime_totale:,.0f} MAD",
+            f"GNPI         : {self.gnpi:,.0f} AED",
+            f"Prime totale : {self.prime_totale:,.0f} AED",
             f"Taux global  : {taux_global:.4%}",
             f"Tranches     : {len(self.tranches)}",
             "=" * 60,
@@ -872,8 +872,8 @@ class AgentActuarielPython:
             "PARAMÈTRES",
             f"Alpha        : {self.alpha:.4f}",
             f"Lambda       : {self.lambda_:.4f}",
-            f"Seuil        : {self.seuil:,.0f} MAD",
-            f"Pm proxy     : {self.Pm_proxy:,.0f} MAD",
+            f"Seuil        : {self.seuil:,.0f} AED",
+            f"Pm proxy     : {self.Pm_proxy:,.0f} AED",
             f"Charg. majeurs : {self.chargement_majeurs:.4%}",
             "",
             "RÉSULTATS PAR TRANCHE",
@@ -886,7 +886,7 @@ class AgentActuarielPython:
                 f"[{str(r.get('type','')).upper()}] {r.get('tranche','')}",
                 f"BC={r.get('taux_bc',0):.4%} | Simulation={r.get('taux_sim',0):.4%} | Marché={r.get('taux_mkt',0):.4%}",
                 f"Retenu : {r.get('taux_retenu',0):.4%} ({r.get('methode','')})",
-                f"Prime  : {r.get('prime_MAD',0):,.0f} MAD | Statut : {statut} | Ecart BC/Sim : {r.get('ecart_bc_sim_pct',0):.0f}%",
+                f"Prime  : {r.get('prime_AED',0):,.0f} AED | Statut : {statut} | Ecart BC/Sim : {r.get('ecart_bc_sim_pct',0):.0f}%",
             ]
 
         if self.anomalies:
