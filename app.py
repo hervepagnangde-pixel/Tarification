@@ -172,12 +172,11 @@ if st.session_state["page"] == "landing":
                 <text x="80" y="113" text-anchor="middle" fill="white" font-size="10" font-weight="bold">IA</text>
             </svg>
         </div>
-        <h1 style="font-size:42px;font-weight:800;margin:0 0 8px 0;letter-spacing:-1px;font-family:Inter,sans-serif">
-            <span style="color:white">I</span><span style="color:#2d8a4e">A</span>
-            <span style="color:white">TARI</span><span style="color:#2d8a4e">F</span>
+        <h1 style="color:white;font-size:42px;font-weight:800;margin:0 0 8px 0;letter-spacing:-1px;font-family:Inter,sans-serif">
+            Atlantic Re <span style="color:#2d8a4e">IA</span>
         </h1>
         <p style="color:#aaa;font-size:16px;margin:0 0 8px 0">Moteur de tarification · Réassurance Non-Proportionnelle</p>
-        <p style="color:#666;font-size:13px;margin:0 0 40px 0">Atlantic Re · Automobile · Maroc</p>
+        <p style="color:#666;font-size:13px;margin:0 0 40px 0">Atlantic Re · Automobile · UEA</p>
         <div style="display:flex;gap:16px;margin-bottom:48px;flex-wrap:wrap;justify-content:center">
             <div style="background:rgba(45,138,78,0.1);border:1px solid rgba(45,138,78,0.3);border-radius:12px;padding:16px 20px;min-width:140px">
                 <div style="font-size:24px;margin-bottom:6px"></div>
@@ -235,7 +234,7 @@ with st.sidebar:
                            help="Analyses copilote : Haiku (économique) | Agent autonome : Opus (puissant)")
     if api_key:
         st.caption(" Haiku pour analyses |  Opus pour agents autonomes uniquement")
-    gnpi    = st.number_input(" GNPI (MAD)", value=183_000_000, step=1_000_000)
+    gnpi    = st.number_input(" GNPI (AED)", value=183_000_000, step=1_000_000)
     st.session_state['gnpi'] = gnpi
     st.divider()
     st.markdown("###  Statut des étapes")
@@ -424,7 +423,7 @@ kpi_html = ""
 if pt_exec:
     kpi_html += f"""<div class="exec-kpi-item">
       <div style="font-size:11px;color:#5a7a8a;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Prime totale</div>
-      <div style="font-size:22px;font-weight:800;color:#0d2b3e">{pt_exec:,.0f} <span style="font-size:13px;font-weight:400">MAD</span></div></div>"""
+      <div style="font-size:22px;font-weight:800;color:#0d2b3e">{pt_exec:,.0f} <span style="font-size:13px;font-weight:400">AED</span></div></div>"""
     kpi_html += f"""<div class="exec-kpi-item">
       <div style="font-size:11px;color:#5a7a8a;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Taux global</div>
       <div style="font-size:22px;font-weight:800;color:#0d2b3e">{tg_exec:.4%}</div></div>"""
@@ -460,7 +459,7 @@ st.markdown(f"""
 
 # Audit log à la connexion
 db_audit(st.session_state.get("user_email",""), "session_active",
-         f"GNPI={gnpi:,.0f} MAD", st.session_state.get("db_session_id"))
+         f"GNPI={gnpi:,.0f} AED", st.session_state.get("db_session_id"))
 
 # ── Analyse actuarielle assistée sur demande uniquement (évite les appels automatiques coûteux) ──
 if "accueil_ia_msg" in st.session_state:
@@ -481,7 +480,7 @@ if api_key:
             prompt_accueil = build_prompt(
                 role="Assistant actuariel expert en reassurance non-proportionnelle automobile.",
                 task="Genere un message d'accueil intelligent : 1. Etat de la session 2. Prochaine action recommandee 3. Point d'attention si anomalie. Maximum 8 lignes.",
-                data=f"Etapes completes : {etapes_faites_2}\nEtapes restantes : {etapes_manquantes_2}\nGNPI : {gnpi:,} MAD",
+                data=f"Etapes completes : {etapes_faites_2}\nEtapes restantes : {etapes_manquantes_2}\nGNPI : {gnpi:,} AED",
                 contexte_global=st.session_state.get("instructions_globales",""),
                 contraintes="- Maximum 8 lignes\n- Concis\n- Ne pas inventer")
             with st.spinner(" Analyse en cours..."):
@@ -589,7 +588,7 @@ def _threshold_table(data, thresholds_pct):
         u = np.percentile(data, pct)
         exc = data[data > u]; n_exc = len(exc)
         if n_exc < 5:
-            rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
+            rows.append({"Seuil %": f"p{pct}", "Seuil AED": f"{u:,.0f}", "N exc.": n_exc,
                          "Alpha Hill": "—", "KS stat": "—", "p-val KS": "—", "AD stat": "—", "Qualite": "Insuf."})
             continue
         alpha_h = n_exc / np.sum(np.log(exc / u))
@@ -601,7 +600,7 @@ def _threshold_table(data, thresholds_pct):
                                                np.log(np.clip(1-cdf_v[::-1],1e-10,1-1e-10))))
         except: ad_stat = np.nan
         qual = "Bon" if pval_ks>0.05 and not np.isnan(ad_stat) and ad_stat<2.5 else                "Acceptable" if pval_ks>0.01 else "Rejeté"
-        rows.append({"Seuil %": f"p{pct}", "Seuil MAD": f"{u:,.0f}", "N exc.": n_exc,
+        rows.append({"Seuil %": f"p{pct}", "Seuil AED": f"{u:,.0f}", "N exc.": n_exc,
                      "Alpha Hill": f"{alpha_h:.4f}", "KS stat": f"{ks_s:.4f}",
                      "p-val KS": f"{pval_ks:.4f}",
                      "AD stat": f"{ad_stat:.4f}" if not np.isnan(ad_stat) else "—", "Qualite": qual})
@@ -665,9 +664,9 @@ def section_analyse_distributions():
 
         best_row = next((r for r in rows_s if r["Qualite"] == "Bon"), None)
         if best_row:
-            st.success(f"Recommandé : {best_row['Seuil %']} = {best_row['Seuil MAD']} MAD — α={best_row['Alpha Hill']}")
+            st.success(f"Recommandé : {best_row['Seuil %']} = {best_row['Seuil AED']} AED — α={best_row['Alpha Hill']}")
             if st.button("Appliquer", key="btn_apply_seuil"):
-                st.session_state["seuil_est"] = float(best_row["Seuil MAD"].replace(",","").replace(" ",""))
+                st.session_state["seuil_est"] = float(best_row["Seuil AED"].replace(",","").replace(" ",""))
                 st.session_state["alpha_est"] = float(best_row["Alpha Hill"])
                 st.rerun()
 
@@ -697,7 +696,7 @@ def section_analyse_distributions():
                 else: continue
                 axes_c[0].plot(x_s, y, "--", color=col, lw=1.8, label=f"{nom} p={f['pval']:.3f}")
             except: pass
-        axes_c[0].set_xlabel("MAD"); axes_c[0].set_ylabel("F(x)")
+        axes_c[0].set_xlabel("AED"); axes_c[0].set_ylabel("F(x)")
         axes_c[0].set_title("CDF Sévérité"); axes_c[0].legend(fontsize=8); axes_c[0].grid(alpha=0.3)
         # QQ-Plot
         log_x = np.log(np.sort(sev_data)/seuil_0); n_q = len(log_x)
@@ -746,7 +745,7 @@ def section_analyse_distributions():
         with c2: lambda_m = st.slider("Lambda", 0.5, 30.0, float(lambda_0), 0.5,  key="lambda_manual")
         with c3:
             p40 = int(np.percentile(all_sev, 40)); p92 = int(np.percentile(all_sev, 92))
-            seuil_m = st.slider("Seuil MAD", p40, p92, int(seuil_0), 50000, key="seuil_manual")
+            seuil_m = st.slider("Seuil AED", p40, p92, int(seuil_0), 50000, key="seuil_manual")
 
         exc_m = all_sev[all_sev > seuil_m]
         if len(exc_m) >= 5:
@@ -755,7 +754,7 @@ def section_analyse_distributions():
             ax_mn.plot(xs_m, np.arange(1,len(xs_m)+1)/len(xs_m), "k-", lw=2, label="Empirique")
             ax_mn.plot(xs_m, np.clip(1-(xs_m/seuil_m)**(-alpha_m),0,1), "r--", lw=1.8,
                        label=f"Pareto(α={alpha_m:.2f})")
-            ax_mn.set_xlabel("MAD"); ax_mn.set_title("CDF Sévérité — paramètres manuels")
+            ax_mn.set_xlabel("AED"); ax_mn.set_title("CDF Sévérité — paramètres manuels")
             ax_mn.legend(); ax_mn.grid(alpha=0.3)
             st.pyplot(fig_mn); plt.close()
         if st.button("Appliquer ces paramètres", type="primary", key="apply_manual"):
@@ -965,7 +964,7 @@ def _labo_display_section():
                     "τ Sim":      f"{r.get('taux_technique_sim',0):.4%}",
                     "τ Mkt":      f"{r.get('taux_technique_mkt',0):.4%}" if r.get("valide_mkt") else "—",
                     "τ Retenu":   f"{r.get('taux_retenu',0):.4%}",
-                    "Prime (MAD)":f"{r.get('prime_MAD',0):,.0f}",
+                    "Prime (AED)":f"{r.get('prime_AED',0):,.0f}",
                     "Méthode":    r.get("methode_retenue",""),
                 } for r in res])
                 st.dataframe(df_show, use_container_width=True, height=280)
@@ -1183,7 +1182,7 @@ def _labo_display_section():
                         D_star = res_r["D_star"]; tau_star = res_r["tau_star"]
                         nb = res_r.get("nb_iter",0)
                         st.success(
-                            f"**D\\* = {D_star:,.0f} MAD** → τ\\* = {tau_star:.4%} "
+                            f"**D\\* = {D_star:,.0f} AED** → τ\\* = {tau_star:.4%} "
                             f"(convergé en {nb} itérations)"
                         )
                         tableau_resultats([{
@@ -1193,7 +1192,7 @@ def _labo_display_section():
                             "Taux cible":           f"{taux_cible_opt:.4%}",
                             "Écart":                f"{abs(tau_star-taux_cible_opt)*100:.4f} pts",
                             "Itérations":           nb,
-                            "Prime estimée (MAD)":  f"{gnpi*tau_star:,.0f}",
+                            "Prime estimée (AED)":  f"{gnpi*tau_star:,.0f}",
                         }])
                         # Tracer la convergence
                         iters = res_r.get("iterations",[])
@@ -1204,7 +1203,7 @@ def _labo_display_section():
                                       "o-", color="#2d8a4e", ms=4)
                             ax_d.axhline(taux_cible_opt*100, color="red",
                                          ls="--", label=f"Cible {taux_cible_opt:.2%}")
-                            ax_d.set_xlabel("Priorité D (MAD)")
+                            ax_d.set_xlabel("Priorité D (AED)")
                             ax_d.set_ylabel("τ technique (%)")
                             ax_d.set_title("Convergence dichotomie")
                             ax_d.legend(); ax_d.grid(alpha=0.2)
@@ -1254,7 +1253,7 @@ def _labo_display_section():
                                 "Prime cédée":     f"{optimal.get('prime_pct',0):.4%}",
                                 "Var retenue":     f"{optimal.get('var_retenue',0):.6f}",
                                 "Score De Finetti":f"{optimal.get('score_finetti',0):.4f}",
-                                "Prime (MAD)":     f"{gnpi*optimal.get('tau_pred',0):,.0f}",
+                                "Prime (AED)":     f"{gnpi*optimal.get('tau_pred',0):,.0f}",
                             }])
                         st.caption(
                             "**Borch (1969)** : pour une prime nette fixée, le stop-loss (XL) "
@@ -1288,10 +1287,10 @@ def _labo_display_section():
                             "D* De Finetti":    f"{opt_f.get('D',0):,.0f}" if opt_f else "—",
                             "τ* De Finetti":    f"{tau_f:.4%}" if tau_f else "—",
                             "τ Retenu":         f"{tau_retenu:.4%}" if tau_retenu else "—",
-                            "Prime (MAD)":      f"{gnpi*(tau_retenu or 0):,.0f}",
+                            "Prime (AED)":      f"{gnpi*(tau_retenu or 0):,.0f}",
                         })
                     tableau_resultats(rows_mt)
-                    st.metric("Prime totale programme", f"{prime_totale:,.0f} MAD",
+                    st.metric("Prime totale programme", f"{prime_totale:,.0f} AED",
                               f"{prime_totale/gnpi:.4%} du GNPI")
                     st.caption(
                         "Le programme multi-tranches consolide la protection : "
@@ -1430,7 +1429,7 @@ Algorithme évolutionnaire qui explore simultanément les **3 objectifs actuarie
                             "τ total":  f"{sol['O1_tau']:.4%}",
                             "Var":      f"{sol['O2_var']:.2e}",
                             "Prot %":   f"{sol['O3_prot']*100:.1f}",
-                            "Prime (MAD)": f"{gnpi*sol['O1_tau']:,.0f}",
+                            "Prime (AED)": f"{gnpi*sol['O1_tau']:,.0f}",
                         }
                         for ti in range(n_t):
                             p = f"T{ti+1}"
@@ -1455,7 +1454,7 @@ Algorithme évolutionnaire qui explore simultanément les **3 objectifs actuarie
                             "τ total":     f"{best['O1_tau']:.4%}",
                             "Var retenue": f"{best['O2_var']:.2e}",
                             "Protection":  f"{best['O3_prot']*100:.1f}%",
-                            "Prime (MAD)": f"{gnpi*best['O1_tau']:,.0f}",
+                            "Prime (AED)": f"{gnpi*best['O1_tau']:,.0f}",
                         }]
                         for ti in range(n_t):
                             p = f"T{ti+1}"
@@ -1514,17 +1513,17 @@ with tab1:
                 nom      = st.text_input("Nom", value=f"Tranche {i+1}", key=f"nom_{i}")
                 type_idx = ["travaillante","non_travaillante","cat"].index(d["type"])
                 type_t   = st.selectbox("Type", ["travaillante","non_travaillante","cat"], index=type_idx, key=f"type_{i}")
-                priorite = st.number_input("Priorité (MAD)", value=float(d["priorite"]), step=500_000.0,
+                priorite = st.number_input("Priorité (AED)", value=float(d["priorite"]), step=500_000.0,
                                            format="%.0f", key=f"prio_{i}")
-                portee   = st.number_input("Portée (MAD)",   value=float(d["portee"]),   step=500_000.0,
+                portee   = st.number_input("Portée (AED)",   value=float(d["portee"]),   step=500_000.0,
                                            format="%.0f", key=f"port_{i}")
             with c2:
                 st.markdown("**Conditions contractuelles**")
                 has_aal  = st.checkbox("AAL", key=f"aal_{i}")
-                aal_val  = st.number_input("Montant AAL (MAD)", value=0.0, step=100_000.0,
+                aal_val  = st.number_input("Montant AAL (AED)", value=0.0, step=100_000.0,
                                            format="%.2f", key=f"aal_v_{i}", disabled=not has_aal)
                 has_aad  = st.checkbox("AAD", key=f"aad_{i}")
-                aad_val  = st.number_input("Montant AAD (MAD)", value=0.0, step=100_000.0,
+                aad_val  = st.number_input("Montant AAD (AED)", value=0.0, step=100_000.0,
                                            format="%.2f", key=f"aad_v_{i}", disabled=not has_aad)
                 has_indices = st.checkbox("Clause d'indexation", key=f"idx_{i}")
             with c3:
@@ -2093,9 +2092,9 @@ with tab2:
                 total_brut=("total","sum"),
                 S_prime_moy=("S_prime_k","mean")
             ).reset_index()
-            recap.columns = ["UW Year","Nb sinistres","Dev max obs.","Total brut (MAD)","S'k moyen (MAD)"]
-            recap["Total brut (MAD)"] = recap["Total brut (MAD)"].apply(lambda x: f"{x:,.0f}")
-            recap["S'k moyen (MAD)"]  = recap["S'k moyen (MAD)"].apply(lambda x: f"{x:,.0f}")
+            recap.columns = ["UW Year","Nb sinistres","Dev max obs.","Total brut (AED)","S'k moyen (AED)"]
+            recap["Total brut (AED)"] = recap["Total brut (AED)"].apply(lambda x: f"{x:,.0f}")
+            recap["S'k moyen (AED)"]  = recap["S'k moyen (AED)"].apply(lambda x: f"{x:,.0f}")
             st.markdown("**Résumé par année de survenance — si les années ne correspondent pas à votre fichier, vérifiez ci-dessous :**")
             st.dataframe(recap, use_container_width=True)
 
@@ -2110,7 +2109,7 @@ with tab2:
         c3b.metric("Années",       st.session_state['df_liq']['annee_surv'].nunique())
         branch_label = "Longue" if st.session_state.get("is_long") else "Courte"
         st.info(f" Branche : **{branch_label}** | I_cotation({st.session_state.get('annee_cotation')}) = {st.session_state.get('I_cotation',1):.4f}")
-        st.info(f"Seuil modélisation : {st.session_state.get('seuil_est',0):,.0f} MAD | Alpha : {st.session_state.get('alpha_est',0):.4f} | Lambda : {st.session_state.get('lambda_est',0):.4f}")
+        st.info(f"Seuil modélisation : {st.session_state.get('seuil_est',0):,.0f} AED | Alpha : {st.session_state.get('alpha_est',0):.4f} | Lambda : {st.session_state.get('lambda_est',0):.4f}")
 
         if "df_proj" in st.session_state:
             import matplotlib.pyplot as plt
@@ -2248,7 +2247,7 @@ with tab2:
                 st.pyplot(fig); plt.close()
 
                 st.info(
-                    f"Gertensgarbe → k* = {k_gert}  |  u suggéré = {u_gert:,.0f} MAD  |  "
+                    f"Gertensgarbe → k* = {k_gert}  |  u suggéré = {u_gert:,.0f} AED  |  "
                     f"α = {alpha_gert:.4f}  |  "
                     "Cherchez la zone stable du Hill et la linéarité du MEF pour confirmer u."
                 )
@@ -2266,7 +2265,7 @@ with tab2:
                 with col_u1:
                     u_default = st.session_state.get("u_gpd_retenu", round(u_gert / 10000) * 10000)
                     u_choisi = st.number_input(
-                        "u retenu (MAD)",
+                        "u retenu (AED)",
                         value=float(u_default),
                         min_value=float(np.percentile(charges_all, 10)),
                         max_value=float(np.percentile(charges_all, 99)),
@@ -2282,7 +2281,7 @@ with tab2:
                 # Preview instantané du fit GPD avec le u choisi
                 excesses_preview = charges_all[charges_all >= u_choisi] - u_choisi
                 n_exc_prev = len(excesses_preview)
-                st.caption(f"Avec u = {u_choisi:,.0f} MAD → {n_exc_prev} excédances ({n_exc_prev/n_all:.1%} des sinistres)")
+                st.caption(f"Avec u = {u_choisi:,.0f} AED → {n_exc_prev} excédances ({n_exc_prev/n_all:.1%} des sinistres)")
                 if n_exc_prev < 5:
                     st.warning("Moins de 5 excédances — relevez u ou réduisez-le.")
                 else:
@@ -2296,8 +2295,8 @@ with tab2:
                         Pm_prev = u_choisi + sig_prev * np.log(ms_prev)
                     Pm_prev = max(Pm_prev, float(np.percentile(charges_all, 95)))
                     st.markdown(
-                        f"**Aperçu GPD** : xi = {xi_prev:.4f} | sigma = {sig_prev:,.0f} MAD | "
-                        f"P(X>u) = {survie_prev:.4f} | **Pm = {Pm_prev:,.0f} MAD** "
+                        f"**Aperçu GPD** : xi = {xi_prev:.4f} | sigma = {sig_prev:,.0f} AED | "
+                        f"P(X>u) = {survie_prev:.4f} | **Pm = {Pm_prev:,.0f} AED** "
                         f"({sum(charges_all >= Pm_prev)} sinistres au-dessus)"
                     )
 
@@ -2330,20 +2329,20 @@ with tab2:
                 if diag and diag.get("u", 0) > 0:
                     with st.expander("Étape 3 — Résultats GPD et diagnostics", expanded=True):
                         c1,c2,c3,c4 = st.columns(4)
-                        c1.metric("Pm (niveau de retour)", f"{res['Pm']:,.0f} MAD")
+                        c1.metric("Pm (niveau de retour)", f"{res['Pm']:,.0f} AED")
                         c2.metric("xi (forme GPD)",        f"{diag['xi']:.4f}")
-                        c3.metric("sigma (échelle)",       f"{diag['sigma_gpd']:,.0f} MAD")
+                        c3.metric("sigma (échelle)",       f"{diag['sigma_gpd']:,.0f} AED")
                         c4.metric("N excédances",          diag['n_excesses'])
 
                         tableau_resultats([{"Indicateur": k, "Valeur": v} for k,v in {
-                            "Seuil u retenu (MAD)":  f"{diag['u']:,.0f}",
+                            "Seuil u retenu (AED)":  f"{diag['u']:,.0f}",
                             "xi (forme GPD)":        f"{diag['xi']:.4f}",
-                            "sigma (échelle, MAD)":  f"{diag['sigma_gpd']:.2f}",
+                            "sigma (échelle, AED)":  f"{diag['sigma_gpd']:.2f}",
                             "P(X > u)":              f"{diag['survie_P_X_gt_u']:.6f}",
                             "Observations > u":      diag['n_excesses'],
                             "Fréquence annuelle":    f"{diag['freq_annuelle']:.4f} sin/an",
                             "m":                     f"{diag['m']:.2f}",
-                            "Pm retour 20 ans":      f"{diag['Pm']:,.0f} MAD",
+                            "Pm retour 20 ans":      f"{diag['Pm']:,.0f} AED",
                             "Nb sinistres majeurs":  res["n_majeurs"],
                             "Nb sinistres courants": res["n_courants"],
                         }.items()])
@@ -2368,8 +2367,8 @@ with tab2:
                             ax_g[1].scatter(q_g, exc_s, color="#2d8a4e", s=20, alpha=0.7)
                             mn_g = min(q_g.min(), exc_s.min()); mx_g = max(q_g.max(), exc_s.max())
                             ax_g[1].plot([mn_g,mx_g],[mn_g,mx_g],"r--",lw=1.5)
-                            ax_g[1].set_xlabel("Quantiles GPD théoriques (MAD)")
-                            ax_g[1].set_ylabel("Quantiles empiriques (MAD)")
+                            ax_g[1].set_xlabel("Quantiles GPD théoriques (AED)")
+                            ax_g[1].set_ylabel("Quantiles empiriques (AED)")
                             ax_g[1].set_title("QQ-plot GPD"); ax_g[1].grid(alpha=0.3)
                             plt.tight_layout(); st.pyplot(fig_g); plt.close()
                             st.caption("Alignement diagonal = bon ajustement. Déviation en queue haute = sous-estimation des extrêmes → relever u.")
@@ -2381,9 +2380,9 @@ with tab2:
                             st.caption("Chargement = sum((1/T) × min(max(Xj − D, 0), C)) / GNPI | T = période de retour")
                             tableau_resultats([{
                                 "Tranche":    n,  "Type": ct["type"],
-                                "D (MAD)":    f"{ct['D']:,.0f}",
-                                "C (MAD)":    f"{ct['C']:,.0f}",
-                                "Pm (MAD)":   f"{res['Pm']:,.0f}",
+                                "D (AED)":    f"{ct['D']:,.0f}",
+                                "C (AED)":    f"{ct['C']:,.0f}",
+                                "Pm (AED)":   f"{res['Pm']:,.0f}",
                                 "N majeurs":  res["n_majeurs"],
                                 "Chargement": f"{ct['chargement']:.6f}",
                                 "Charg. %":   f"{ct['chargement']:.4%}",
@@ -2437,7 +2436,7 @@ with tab2:
                 anomalies_tri.append({
                     "Type": " Montants extrêmes (> 50× médiane)",
                     "N": len(extreme),
-                    "Impact": f"Max = {df_liq_check['total'].max():,.0f} MAD — Vérifier si erreur de saisie",
+                    "Impact": f"Max = {df_liq_check['total'].max():,.0f} AED — Vérifier si erreur de saisie",
                     "Sévérité": "Critique"})
             # 5. Trous dans le développement (années de règlement manquantes)
             devs_obs = sorted(df_liq_check["dev"].unique())
@@ -2613,7 +2612,7 @@ with tab2:
             </div>""", unsafe_allow_html=True)
             col_e1, col_e2 = st.columns(2)
             with col_e1:
-                gnpi_annot = st.number_input("GNPI année de cotation (MAD)", value=float(gnpi),
+                gnpi_annot = st.number_input("GNPI année de cotation (AED)", value=float(gnpi),
                     step=1_000_000.0, key="gnpi_expo_annot")
             with col_e2:
                 nb_vehicules = st.number_input("Nb véhicules-années (si connu)", value=0, step=1000, key="nb_veh")
@@ -2633,7 +2632,7 @@ with tab2:
                     expo_corrigee = gnpi_ann * (I_cot / max(I_ann, 1e-6))
                     rows_expo.append({
                         "Année": ann,
-                        "GNPI observé (MAD)": f"{gnpi_ann:,.0f}",
+                        "GNPI observé (AED)": f"{gnpi_ann:,.0f}",
                         "GNPI corrigé cotation": f"{expo_corrigee:,.0f}",
                         "Ratio exposition": f"{expo_corrigee/gnpi_annot:.4f}",
                     })
@@ -2663,7 +2662,7 @@ with tab2:
                 lambda_moyen = float(np.mean(lambdas)) if lambdas else lambda_est
                 st.metric("λ moyen (fréquence annuelle sinistres > Amin)", f"{lambda_moyen:.4f}")
                 st.caption(
-                    f"λ = {lambda_moyen:.4f} sinistres/an au-dessus du seuil Amin ≈ {Amin:,.0f} MAD. "
+                    f"λ = {lambda_moyen:.4f} sinistres/an au-dessus du seuil Amin ≈ {Amin:,.0f} AED. "
                     "Une loi de Poisson(λ) est ajustée pour chaque année de développement. "
                     "Méthode QBE Re : Σ_k P(N_k=n) × cadence(k) permet la décomposition temporelle."
                 )
@@ -2705,7 +2704,7 @@ with tab2:
                 ax_g1.plot(x_range, cdf_emp, "k-", lw=2, label="Empirique")
                 ax_g1.plot(x_range, cdf_par, "--", color="#00b5a5", lw=2,
                            label=f"Pareto(α={alpha_hat:.3f})")
-                ax_g1.set_xlabel("Montant sinistre (MAD)"); ax_g1.set_ylabel("F(x)")
+                ax_g1.set_xlabel("Montant sinistre (AED)"); ax_g1.set_ylabel("F(x)")
                 ax_g1.set_title("CDF Sévérité au-dessus du seuil")
                 ax_g1.legend(); ax_g1.grid(alpha=0.2)
                 # QQ-Plot
@@ -2744,8 +2743,8 @@ E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
                         "D (priorité)": f"{D:,.0f}",
                         "C (portée)": f"{C:,.0f}",
                         "P(X>D)": f"{(seuil_mod/D)**alpha_hat:.4%}" if D>seuil_mod else "100%",
-                        "E[f(X)] Pareto": f"{e_fx:,.0f} MAD",
-                        "Prime pure (λ×E[f])": f"{prime_pure_pareto:,.0f} MAD",
+                        "E[f(X)] Pareto": f"{e_fx:,.0f} AED",
+                        "Prime pure (λ×E[f])": f"{prime_pure_pareto:,.0f} AED",
                         "Taux Pareto": f"{prime_pure_pareto/gnpi:.4%}",
                     }])
                 st.session_state["alpha_pareto_g"] = alpha_hat
@@ -2768,7 +2767,7 @@ E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
                 # Construire la cadence : par développement k, proportion des sinistres payés
                 devs_h = sorted(df_liq_h["dev"].unique())
                 rows_cadence = []
-                total_ult_mad = df_proj_h["Sprime_ultime"].sum() if "Sprime_ultime" in df_proj_h.columns else 1.0
+                total_ult_aed = df_proj_h["Sprime_ultime"].sum() if "Sprime_ultime" in df_proj_h.columns else 1.0
 
                 cumul_paye = 0.0
                 for dev in devs_h:
@@ -2780,10 +2779,10 @@ E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
                     else:
                         paye_k = 0.0
                     cumul_paye += paye_k
-                    cadence_k = cumul_paye / max(total_ult_mad, 1.0)
+                    cadence_k = cumul_paye / max(total_ult_aed, 1.0)
                     rows_cadence.append({
                         "Développement k": dev,
-                        "Paiements As-If (MAD)": f"{paye_k:,.0f}",
+                        "Paiements As-If (AED)": f"{paye_k:,.0f}",
                         "Cumul paiements": f"{cumul_paye:,.0f}",
                         "Cadence (% ultime)": f"{cadence_k:.2%}",
                         "En attente": f"{1-cadence_k:.2%}",
@@ -2882,7 +2881,7 @@ E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
 
                     n_ann = len(charges_finales)
                     if n_ann == 0:
-                        rows_prime_pure.append({"Tranche":t["nom"],"τ pure QBE":"—","Prime (MAD)":"—"})
+                        rows_prime_pure.append({"Tranche":t["nom"],"τ pure QBE":"—","Prime (AED)":"—"})
                         continue
                     charge_moy = np.mean(charges_finales)
                     sigma       = np.std([c for c in charges_finales if c > 0]) if any(c>0 for c in charges_finales) else 0.0
@@ -2901,7 +2900,7 @@ E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
                         "τ pur QBE":             f"{tau_pur:.4%}",
                         "τ risque (R1)":         f"{tau_risque:.4%}",
                         "τ technique":           f"{tau_tech:.4%}",
-                        "Prime pure (MAD)":      f"{prime:,.0f}",
+                        "Prime pure (AED)":      f"{prime:,.0f}",
                     })
 
                 tableau_resultats(rows_prime_pure, "Prime pure — Méthode QBE Re complète (IBNR inclus)")
@@ -2912,7 +2911,7 @@ E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
                     if r.get("τ technique","—") != "—"
                 )
                 col_q1, col_q2, col_q3 = st.columns(3)
-                with col_q1: card("Prime totale QBE", f"{prime_totale_qbe:,.0f} MAD", icone="")
+                with col_q1: card("Prime totale QBE", f"{prime_totale_qbe:,.0f} AED", icone="")
                 with col_q2: card("Taux global QBE",  f"{prime_totale_qbe/gnpi:.4%}", couleur="#0d2b3e", icone=None)
                 with col_q3: card("Sinistres IBNR", f"{int(round(ibnr_n))}", couleur="#00b5a5", icone=None)
 
@@ -3097,7 +3096,7 @@ with tab3:
         tableau_resultats([{
             "Tranche": r["tranche"], "Type": r["type"],
             "Ans non-nuls": f"{r.get('n_ann_nonzero',0)} {'' if r.get('n_ann_nonzero',0)<3 else ''}",
-            "Charge moy.": f"{r.get('charge_moy', r.get('charge_moy_MAD', 0)):,.0f} MAD",
+            "Charge moy.": f"{r.get('charge_moy', r.get('charge_moy_AED', 0)):,.0f} AED",
             "σ hist.": f"{r.get('sigma_hist',0):.4%}",
             "Rec": f"{r['Rec']:.4%}",
             "Taux pur": f"{r['taux_pur']:.4%}", "Taux risque": f"{r['taux_risque']:.4%}",
@@ -3164,7 +3163,7 @@ with tab3:
                 if detail:
                     df_det = pd.DataFrame(detail)
                     df_det["charge"] = df_det["charge"].apply(lambda x: f"{x:,.0f}")
-                    df_det.columns   = ["UW Year","Charge XL nette (MAD)"]
+                    df_det.columns   = ["UW Year","Charge XL nette (AED)"]
                     with st.expander(f"  {r['tranche']} | {r['type']} | tau_pur={r['taux_pur']:.4%}", expanded=False):
                         st.dataframe(df_det, use_container_width=True)
 
@@ -3220,7 +3219,7 @@ with tab3:
         st.divider()
         guide_prompt("Burning Cost",
             ["Comparer avec taux marché attendu 2-4%", "Signaler si BC < simulation de plus de 30%", "Identifier les années atypiques"],
-            ["Taux BC N-1 : R&C=2.5%, CatL1=0%", "Objectif prime totale < 12M MAD", "Taux Partner Re 2025 : R&C=2.30%"],
+            ["Taux BC N-1 : R&C=2.5%, CatL1=0%", "Objectif prime totale < 12M AED", "Taux Partner Re 2025 : R&C=2.30%"],
             ["Tableau par tranche avec verdict //", "Recommandation unique par tranche", "Maximum 1 page"])
 
         st.markdown("###  Analyse Claude — Burning Cost")
@@ -3235,7 +3234,7 @@ with tab3:
             prompt = build_prompt(
                 role="Expert actuaire senior en reassurance non-proportionnelle automobile, 15 ans d'experience XL et cat.",
                 task="1. Evalue le niveau du taux vs normes marche\n2. Verifie coherence inter-tranches\n3. Analyse impact Rec\n4. Verdict : OK | A verifier | Probleme",
-                data=f"BC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nProgramme : {json.dumps(tranches_input, indent=2)}\nGNPI : {gnpi:,} MAD",
+                data=f"BC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nProgramme : {json.dumps(tranches_input, indent=2)}\nGNPI : {gnpi:,} AED",
                 contexte=ctx_bc, instructions=inst_bc, input_data=inp_bc, output_instructions=out_bc,
                 contexte_global=st.session_state.get("instructions_globales",""),
                 contraintes="- tau_tech < tau_risque (Rec reduit - NORMAL)\n- BC=0 tranche cat NORMAL\n- Ne pas inventer comparatifs marche")
@@ -3282,16 +3281,16 @@ with tab4:
                 diag = st.session_state["diag_tve"]
                 cols_diag = st.columns(4)
                 cols_diag[0].metric("Hill (stabilité CV)",
-                                    f"{diag.get('seuil_hill',0):,.0f} MAD",
+                                    f"{diag.get('seuil_hill',0):,.0f} AED",
                                     delta=f"α={diag.get('alpha_hill',0):.4f} · k={diag.get('k_hill',0)}")
                 cols_diag[1].metric("MEF (linéarité R²)",
-                                    f"{diag.get('seuil_mef',0):,.0f} MAD",
+                                    f"{diag.get('seuil_mef',0):,.0f} AED",
                                     delta=f"R²={diag.get('mef_r2',0):.3f}")
                 cols_diag[2].metric("Gertensgarbe-Werner",
-                                    f"{diag.get('seuil_gert',0):,.0f} MAD",
+                                    f"{diag.get('seuil_gert',0):,.0f} AED",
                                     delta=f"α={diag.get('alpha_gert',0):.4f} · k*={diag.get('k_gert',0)}")
                 cols_diag[3].metric("Consensus (médiane)",
-                                    f"{diag.get('seuil_optimal',0):,.0f} MAD",
+                                    f"{diag.get('seuil_optimal',0):,.0f} AED",
                                     delta=" Recommandé")
 
                 st.info(
@@ -3314,7 +3313,7 @@ with tab4:
                     min_value=int(s_min), max_value=int(s_max),
                     value=int(st.session_state.get("seuil_est", np.percentile(X_ch, 80))),
                     step=max(1, int((s_max - s_min) / 200)),
-                    format="%d MAD",
+                    format="%d AED",
                     key="seuil_slider_interactif"
                 )
                 n_exc_slider = int(np.sum(X_ch > seuil_slider))
@@ -3362,7 +3361,7 @@ with tab4:
                                label=f"k={k_slider} → α={hills_sl[min(k_slider-1,len(hills_sl)-1)]:.4f}")
                 ax_sl1.set_xlabel("Order Statistics")
                 ax_sl1.set_ylabel("Tail Index α(k)")
-                ax_sl1.set_title(f"Hill Plot — seuil {seuil_slider:,.0f} MAD")
+                ax_sl1.set_title(f"Hill Plot — seuil {seuil_slider:,.0f} AED")
                 ax_sl1.legend(fontsize=8)
                 ax_sl1.grid(alpha=0.2, linestyle="--")
 
@@ -3424,7 +3423,7 @@ with tab4:
                     lambda_new = float(n_exc_slider / len(
                         data_pctiles["annee_surv"].unique()))
                     st.session_state["lambda_est"] = lambda_new
-                    st.success(f" Seuil = {seuil_slider:,.0f} MAD | α = {alpha_at_slider:.4f} | λ = {lambda_new:.4f}")
+                    st.success(f" Seuil = {seuil_slider:,.0f} AED | α = {alpha_at_slider:.4f} | λ = {lambda_new:.4f}")
                     st.rerun()
 
             # Seuil de modélisation — choix par liste
@@ -3434,17 +3433,17 @@ with tab4:
                 seuil_options = {}
                 if "diag_tve" in st.session_state:
                     d = st.session_state["diag_tve"]
-                    seuil_options[f" Hill (k={d.get('k_hill',0)}) = {d.get('seuil_hill',0):,.0f} MAD"] = float(d.get('seuil_hill', seuil_default))
-                    seuil_options[f" MEF (R²={d.get('mef_r2',0):.2f}) = {d.get('seuil_mef',0):,.0f} MAD"] = float(d.get('seuil_mef', seuil_default))
-                    seuil_options[f" Gertensgarbe (k*={d.get('k_gert',0)}) = {d.get('seuil_gert',0):,.0f} MAD"] = float(d.get('seuil_gert', seuil_default))
-                    seuil_options[f" Consensus TVE = {d.get('seuil_optimal',0):,.0f} MAD"] = float(d.get('seuil_optimal', seuil_default))
+                    seuil_options[f" Hill (k={d.get('k_hill',0)}) = {d.get('seuil_hill',0):,.0f} AED"] = float(d.get('seuil_hill', seuil_default))
+                    seuil_options[f" MEF (R²={d.get('mef_r2',0):.2f}) = {d.get('seuil_mef',0):,.0f} AED"] = float(d.get('seuil_mef', seuil_default))
+                    seuil_options[f" Gertensgarbe (k*={d.get('k_gert',0)}) = {d.get('seuil_gert',0):,.0f} AED"] = float(d.get('seuil_gert', seuil_default))
+                    seuil_options[f" Consensus TVE = {d.get('seuil_optimal',0):,.0f} AED"] = float(d.get('seuil_optimal', seuil_default))
                 for p in [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]:
-                    seuil_options[f"Q{int(p*100)} = {np.quantile(X_ch, p):,.0f} MAD"] = float(np.quantile(X_ch, p))
+                    seuil_options[f"Q{int(p*100)} = {np.quantile(X_ch, p):,.0f} AED"] = float(np.quantile(X_ch, p))
                 seuil_options[" Saisie manuelle"] = -1.0
                 seuil_label  = st.selectbox("Seuil de modélisation", list(seuil_options.keys()), key="seuil_select_label")
                 seuil_choisi = seuil_options[seuil_label]
                 if seuil_choisi < 0:
-                    seuil_choisi = st.number_input("Seuil manuel (MAD)", value=float(seuil_default),
+                    seuil_choisi = st.number_input("Seuil manuel (AED)", value=float(seuil_default),
                                                    step=50_000.0, format="%.0f", key="seuil_manuel_input")
                 if st.button(" Appliquer ce seuil (liste)", key="btn_apply_list_seuil"):
                     st.session_state["seuil_est"] = seuil_choisi
@@ -3454,7 +3453,7 @@ with tab4:
                         st.session_state["alpha_est"] = float(n_exc_new / np.sum(np.log(exc_new / seuil_choisi)))
                         st.session_state["lambda_est"] = float(n_exc_new / len(
                             data_pctiles["annee_surv"].unique()))
-                    st.success(f" Seuil = {seuil_choisi:,.0f} MAD | Excédances : {n_exc_new}")
+                    st.success(f" Seuil = {seuil_choisi:,.0f} AED | Excédances : {n_exc_new}")
                     st.rerun()
 
         # ══ Section B : Choix de la loi de sévérité ══════════════════════
@@ -3524,17 +3523,17 @@ with tab4:
                 if loi_retenue == "pareto":
                     st.info(f" **Pareto** | α = {st.session_state.get('alpha_est',1.5):.4f} | "
                             f"λ = {st.session_state.get('lambda_est',5.0):.4f} | "
-                            f"Seuil = {st.session_state.get('seuil_est',0):,.0f} MAD")
+                            f"Seuil = {st.session_state.get('seuil_est',0):,.0f} AED")
                 elif loi_retenue == "lognormale":
                     st.info(f" **Lognormale** | μ = {st.session_state.get('loi_mu', 0):.4f} | "
                             f"σ = {st.session_state.get('loi_sigma', 0):.4f} | "
                             f"λ = {st.session_state.get('lambda_est',5.0):.4f} | "
-                            f"Seuil = {st.session_state.get('seuil_est',0):,.0f} MAD")
+                            f"Seuil = {st.session_state.get('seuil_est',0):,.0f} AED")
                 elif loi_retenue == "gpd":
                     st.info(f" **GPD** | ξ = {st.session_state.get('gpd_xi', 0):.4f} | "
                             f"β = {st.session_state.get('gpd_beta', 0):,.0f} | "
                             f"λ = {st.session_state.get('lambda_est',5.0):.4f} | "
-                            f"Seuil = {st.session_state.get('seuil_est',0):,.0f} MAD")
+                            f"Seuil = {st.session_state.get('seuil_est',0):,.0f} AED")
 
         is_long_sim = st.session_state.get("is_long", True)
         loi_active  = st.session_state.get("loi_sim", "pareto")
@@ -3558,7 +3557,7 @@ with tab4:
                     f"Seuil={st.session_state['seuil_est']:,.0f} | α={st.session_state['alpha_est']:.4f} | λ={st.session_state['lambda_est']:.4f}")
             with c1: st.number_input("α (Alpha Pareto)",  value=float(st.session_state["alpha_est"]),  step=0.01,     format="%.4f", key="alpha_input")
             with c2: st.number_input("λ (Lambda Poisson)", value=float(st.session_state["lambda_est"]), step=0.1,      format="%.4f", key="lambda_input")
-            with c3: st.number_input("Seuil (MAD)",        value=float(st.session_state["seuil_est"]),  step=50_000.0, format="%.0f", key="seuil_input")
+            with c3: st.number_input("Seuil (AED)",        value=float(st.session_state["seuil_est"]),  step=50_000.0, format="%.0f", key="seuil_input")
             # Alias pour la simulation
             xi_v = None; beta_v = None
             mu_ln_v = None; sigma_ln_v = None
@@ -3714,7 +3713,7 @@ with tab4:
 
         st.divider()
         guide_prompt("Simulation fréquence-sévérité",
-            ["Alpha calibré sur données 2016-2025", "Lambda estimé sur portefeuille 183M MAD", "Seuil TVE retenu : p80 x D"],
+            ["Alpha calibré sur données 2016-2025", "Lambda estimé sur portefeuille 183M AED", "Seuil TVE retenu : p80 x D"],
             ["Analyser impact AAL sur tranche cat", "Comparer BC vs Simulation par tranche", "Recommander montant optimal des conditions"],
             ["Alpha R=1.45, Lambda R=3.2", "Résultats simulation N-1 : R&C=3.1%", "Période de retour majeurs : 20 ans"],
             ["Impact par condition en points de taux", "Classement NECESSAIRE/A AJUSTER/INUTILE", "Recommandation chiffrée par condition"])
@@ -3805,7 +3804,7 @@ with tab5:
             with st.spinner(" Construction en cours..."):
                 df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('xlsx') else pd.read_csv(f_mkt)
                 df_mkt.columns = [c.strip() for c in df_mkt.columns]
-                for col in ['ROLs', 'midpoints', 'Garantie en MAD', 'Priorité en MAD']:
+                for col in ['ROLs', 'midpoints', 'Garantie en AED', 'Priorité en AED']:
                     if col in df_mkt.columns and df_mkt[col].dtype == object:
                         df_mkt[col] = (df_mkt[col].astype(str).str.replace('%','').str.replace(' ','').str.replace(',','.')
                                        .apply(lambda x: float(x)/100 if x not in ['nan',''] and float(x) > 1.5
@@ -3860,9 +3859,9 @@ with tab5:
                 resultats_mkt = []
                 for q in [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]:
                     mid_max = np.quantile(df_mkt['midpoints'], q)
-                    port_max = np.quantile(df_mkt['Garantie en MAD'], q) if 'Garantie en MAD' in df_mkt.columns else np.inf
+                    port_max = np.quantile(df_mkt['Garantie en AED'], q) if 'Garantie en AED' in df_mkt.columns else np.inf
                     df_q = df_mkt[(df_mkt['midpoints'] <= mid_max) &
-                                   (df_mkt['Garantie en MAD'] <= port_max if 'Garantie en MAD' in df_mkt.columns else True)]
+                                   (df_mkt['Garantie en AED'] <= port_max if 'Garantie en AED' in df_mkt.columns else True)]
                     if len(df_q) < 5: continue
                     try:
                         a, b, r2 = fit_power(df_q['midpoints'].values, df_q['ROLs'].values)
@@ -3996,7 +3995,7 @@ with tab5:
             prompt = build_prompt(
                 role="Expert en reassurance catastrophe et market curve, specialiste marches emergents.",
                 task=f"Analyse ajustements market curve. Critere : R2>={r2_min*100:.0f}% avec taux non nuls prime. Recommande UN seul ajustement justifie.",
-                data=f"Ajustements : {json.dumps(rows_recap, indent=2)}\nProgramme : {json.dumps(tranches_input, indent=2)}\nGNPI : {gnpi:,} MAD",
+                data=f"Ajustements : {json.dumps(rows_recap, indent=2)}\nProgramme : {json.dumps(tranches_input, indent=2)}\nGNPI : {gnpi:,} AED",
                 contexte=ctx_mkt, instructions=inst_mkt, input_data=inp_mkt, output_instructions=out_mkt,
                 contexte_global=st.session_state.get("instructions_globales", ""),
                 contraintes=f"- b>0 obligatoire\n- R2>={r2_min*100:.0f}% avec taux non nuls preferable\n- N<10 faible robustesse\n- Taux>3x simulation=suspect")
@@ -4048,7 +4047,7 @@ with tab6:
                 "Tranche": nom, "Type": t["type"],
                 "Taux BC": f"{bc_tt:.4%}", "Taux Sim.": f"{sim_tt:.4%}",
                 "Taux Marché": f"{mkt:.4%}", "Taux retenu": f"{taux_retenu:.4%}",
-                "Prime (MAD)": f"{prime:,.0f}", "Méthode": methode
+                "Prime (AED)": f"{prime:,.0f}", "Méthode": methode
             })
         st.session_state["df_rapport"]   = pd.DataFrame(rows_rapport)
         st.session_state["prime_totale"] = prime_totale
@@ -4062,7 +4061,7 @@ with tab6:
         st.subheader(" Synthèse de tarification")
         st.dataframe(st.session_state["df_rapport"], use_container_width=True)
         c1, c2, c3 = st.columns(3)
-        with c1: card("Prime totale", f"{prime_totale:,.0f} MAD", couleur="#2d8a4e", icone=None)
+        with c1: card("Prime totale", f"{prime_totale:,.0f} AED", couleur="#2d8a4e", icone=None)
         with c2: card("Taux global",  f"{prime_totale/gnpi:.4%}", couleur="#1a1a1a",  icone=None)
         with c3: card("Tranches",     str(len(tranches_input)),   couleur="#2d8a4e",  icone=None)
 
@@ -4104,7 +4103,7 @@ with tab6:
                     st.markdown(f"""<div class="comp-card {'highlight' if i==0 else ''}">
                       <b>{label}</b><br>
                       <span style="font-size:11px;color:#5a7a8a">{desc}</span><br>
-                      <div style="font-size:18px;font-weight:800;color:#0d2b3e;margin-top:8px">{prime_scen:,.0f} MAD</div>
+                      <div style="font-size:18px;font-weight:800;color:#0d2b3e;margin-top:8px">{prime_scen:,.0f} AED</div>
                       <div style="font-size:12px;color:#00b5a5">{prime_scen/gnpi:.4%}</div>
                     </div>""", unsafe_allow_html=True)
                     scenarios_cmp.append({"label": label, "taux": taux_scen, "prime": prime_scen})
@@ -4118,7 +4117,7 @@ with tab6:
                         row_c[sc["label"][:20]] = f"{sc['taux'].get(t['nom'],0):.4f}%"
                     rows_comp_scen.append(row_c)
                 rows_comp_scen.append({"Tranche": "TOTAL PRIME",
-                    **{sc["label"][:20]: f"{sc['prime']:,.0f} MAD" for sc in scenarios_cmp}})
+                    **{sc["label"][:20]: f"{sc['prime']:,.0f} AED" for sc in scenarios_cmp}})
                 tableau_resultats(rows_comp_scen, "Comparaison des scénarios")
 
         col_pdf, col_xls, col_pptx, col_name = st.columns([1, 1, 1, 1.5])
@@ -4240,7 +4239,7 @@ with tab6:
                 if st.button(" Notifier Slack/Teams", use_container_width=True, key="btn_wh_rapport"):
                     wh_results = envoyer_webhook_notification(
                         f"Rapport finalisé — {st.session_state.get('user_email','')}",
-                        f"Prime : {prime_totale:,.0f} MAD | Taux : {prime_totale/gnpi:.4%} | GNPI : {gnpi:,.0f} MAD",
+                        f"Prime : {prime_totale:,.0f} AED | Taux : {prime_totale/gnpi:.4%} | GNPI : {gnpi:,.0f} AED",
                         niveau="rapport_final")
                     if wh_results:
                         for svc, ok_w, msg_w in wh_results:
@@ -4251,7 +4250,7 @@ with tab6:
 
         st.divider()
         guide_prompt("Rapport Final",
-            ["Négociation avec Partner Re / Munich Re", "Comité de tarification 15 janvier 2026", "Objectif prime < 14M MAD"],
+            ["Négociation avec Partner Re / Munich Re", "Comité de tarification 15 janvier 2026", "Objectif prime < 14M AED"],
             ["Justifier chaque taux retenu vs alternatives", "Comparer avec taux N-1 fournis", "Conclure sur positionnement vs marché"],
             ["Taux N-1 : R&C=3.1%, CatL1=1.2%, CatL2=0.8%", "Cotation Partner Re : R&C=2.30%", "Chargement majeurs = 0.05%"],
             ["Synthèse exécutive 5 lignes max", "Tableau récapitulatif final obligatoire", "Verdict : ACCEPTER / NEGOCIER / REFUSER"])
@@ -4259,7 +4258,7 @@ with tab6:
         st.markdown("###  Rapport Claude — Analyse finale")
         ctx_r, inst_r, inp_r, out_r = prompt_inputs(
             key_prefix="rapport",
-            placeholder_contexte="Ex: Négociation réassureur XYZ, objectif prime < 14M MAD...",
+            placeholder_contexte="Ex: Négociation réassureur XYZ, objectif prime < 14M AED...",
             placeholder_instructions="Ex: Justifier chaque taux, comparer avec N-1...",
             placeholder_input="Ex: Taux N-1 : R&C=3.1%, CatL1=1.2%, CatL2=0.8%",
             placeholder_output="Ex: Rapport 1 page max, tableau synthèse obligatoire")
@@ -4268,7 +4267,7 @@ with tab6:
             prompt = build_prompt(
                 role="Expert senior tarification reassurance non-proportionnelle, specialiste automobile marches emergents.",
                 task="1. SYNTHESE EXECUTIVE (5 lignes max)\n2. ANALYSE PAR TRANCHE (BC/Sim/Marche -> Verdict)\n3. COHERENCE INTER-METHODES\n4. ANOMALIES\n5. TABLEAU FINAL\n6. RECOMMANDATION GLOBALE",
-                data=f"Rapport : {json.dumps(rows_rapport, indent=2)}\nBC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nSim : {json.dumps(st.session_state['resultats_sim'], indent=2)}\nGNPI : {gnpi:,} MAD | Prime : {prime_totale:,.0f} MAD | Taux global : {prime_totale/gnpi:.4%}",
+                data=f"Rapport : {json.dumps(rows_rapport, indent=2)}\nBC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nSim : {json.dumps(st.session_state['resultats_sim'], indent=2)}\nGNPI : {gnpi:,} AED | Prime : {prime_totale:,.0f} AED | Taux global : {prime_totale/gnpi:.4%}",
                 contexte=ctx_r, instructions=inst_r, input_data=inp_r, output_instructions=out_r,
                 contexte_global=st.session_state.get("instructions_globales",""),
                 contraintes="- Ne jamais recommander taux < taux pur\n- BC=0 cat = normal\n- Mentionner incertitudes et limites")
@@ -4365,7 +4364,7 @@ with tab_agent:
         notifier_consultation(
             st.session_state.get("user_email",""),
             "Agent Python — Tarification lancée",
-            f"GNPI={gnpi:,.0f} MAD · {len(tranches_input)} tranches")
+            f"GNPI={gnpi:,.0f} AED · {len(tranches_input)} tranches")
         with st.spinner(" Pipeline en cours..."):
             prog_bar = st.progress(0, text="Initialisation...")
 
@@ -4516,12 +4515,12 @@ with tab_agent:
                 "Simulation": f"{float(_g(row,'taux_sim',0) or 0):.4%}",
                 "Marché": f"{float(_g(row,'taux_mkt',0) or 0):.4%}",
                 "Taux retenu": f"{float(_g(row,'taux_retenu',0) or 0):.4%}",
-                "Prime (MAD)": f"{float(_g(row,'prime_MAD',0) or 0):,.0f}",
+                "Prime (AED)": f"{float(_g(row,'prime_AED',0) or 0):,.0f}",
                 "Sélection": _g(row,"methode","Méthode"),
             } for row in st.session_state["df_rapport"].to_dict("records")])
             pt = st.session_state.get("prime_totale",0)
             c1,c2 = st.columns(2)
-            with c1: card("Prime totale", f"{pt:,.0f} MAD", icone=None)
+            with c1: card("Prime totale", f"{pt:,.0f} AED", icone=None)
             with c2: card("Taux global",  f"{pt/gnpi:.4%}", couleur="#1a1a1a", icone=None)
 
         # ── PROGRAMMES ALTERNATIFS COMPARABLES ──
@@ -4555,8 +4554,8 @@ with tab_agent:
                     "tranches": tranches_input,
                 }
 
-            def _fmt_mad_local(x):
-                return f"{float(x or 0):,.0f} MAD"
+            def _fmt_aed_local(x):
+                return f"{float(x or 0):,.0f} AED"
 
             def _structure_resume_local(tranches_alt, max_items=3):
                 if not tranches_alt:
@@ -4644,7 +4643,7 @@ with tab_agent:
                             {taux_global_v:.4%}
                         </div>
                         <div style="font-size:11px;color:#6b7280;margin-bottom:6px">
-                            {_fmt_mad_local(prime_v)}
+                            {_fmt_aed_local(prime_v)}
                         </div>
                         <div style="font-size:11px;color:{'#6b7280' if is_initial else color};font-weight:700">
                             {delta_str}
@@ -4667,7 +4666,7 @@ with tab_agent:
 
                 with st.expander(
                     f"Structure comparable {i} — {label_alt} | "
-                    f"Prime {_fmt_mad_local(prime_alt)} | Taux {taux_alt:.4%} | Score {score_alt:.2f}",
+                    f"Prime {_fmt_aed_local(prime_alt)} | Taux {taux_alt:.4%} | Score {score_alt:.2f}",
                     expanded=(i == 1)
                 ):
                     if tranches_alt:
@@ -4684,7 +4683,7 @@ with tab_agent:
                                 "Reconstitutions": int(t.get("nb_reconstitutions", 0) or 0),
                                 "Taux rec.": f"{float(t.get('taux_reconstitution', 0.0) or 0.0):.0f}%",
                                 "Taux estimé": f"{float(t.get('_taux', 0.0) or 0.0):.4%}",
-                                "Prime estimée": _fmt_mad_local(t.get("_prime", 0.0)),
+                                "Prime estimée": _fmt_aed_local(t.get("_prime", 0.0)),
                             })
 
                         tableau_resultats(rows_struct, f"Structure détaillée — alternative {i}")
@@ -4706,7 +4705,7 @@ with tab_agent:
                 color:#134b7c;
                 font-size:14px;">
                 <b>Programme recommandé :</b> {best_label}<br>
-                Prime estimée : <b>{_fmt_mad_local(best_prime)}</b> ·
+                Prime estimée : <b>{_fmt_aed_local(best_prime)}</b> ·
                 Taux global : <b>{best_taux:.4%}</b>.<br>
                 Cette recommandation correspond au meilleur rang du tableau supérieur.
             </div>
@@ -4744,7 +4743,7 @@ with tab_agent:
     c_notif1, c_notif2 = st.columns([3, 1])
     with c_notif1:
         notif_msg = st.text_input("Message à envoyer à hervepagnangde@gmail.com", key="notif_msg",
-            placeholder="Ex: Session terminée — taux global 3.24%, prime 5.9M MAD")
+            placeholder="Ex: Session terminée — taux global 3.24%, prime 5.9M AED")
     with c_notif2:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
         if st.button(" Envoyer notification", key="btn_notif", use_container_width=True):
@@ -4798,13 +4797,13 @@ with tab_full:
     # ── Config minimale ──
     st.markdown("###  Configuration minimale")
     c1, c2, c3 = st.columns(3)
-    with c1: gnpi3      = st.number_input("GNPI (MAD)", value=183_000_000, step=1_000_000, key="gnpi3")
+    with c1: gnpi3      = st.number_input("GNPI (AED)", value=183_000_000, step=1_000_000, key="gnpi3")
     with c2: annee3     = st.number_input("Année de cotation", value=2026, step=1, key="annee3")
     with c3: retour3    = st.number_input("Période de retour sinistres majeurs (ans)", value=20, step=5, key="retour3")
 
     # ── Contexte pour l'agent ──
     contexte3 = st.text_area(" Contexte pour l'agent (optionnel)",
-        placeholder="Ex: Portefeuille automobile Maroc 2026, GNPI en hausse +8%, 3 tranches : Risk&Cat 13M xs 2M, Cat L1 10M xs 15M, Cat L2 15M xs 25M. Objectif prime < 14M MAD. Réassureur cible : Partner Re.",
+        placeholder="Ex: Portefeuille automobile UEA 2026, GNPI en hausse +8%, 3 tranches : Risk&Cat 13M xs 2M, Cat L1 10M xs 15M, Cat L2 15M xs 25M. Objectif prime < 14M AED. Réassureur cible : Partner Re.",
         height=90, key="contexte3")
 
     with st.expander("Tarification manuelle externe à comparer", expanded=True):
@@ -4826,7 +4825,7 @@ with tab_full:
         with manuel_col2:
             majeurs_manuels3 = st.text_area(
                 "Sinistres majeurs et chargements spécifiques",
-                placeholder="Exemple : Pm 20 ans = 18 500 000 MAD ; 2 sinistres majeurs identifiés ; chargement T1 = 0.35%, T2 = 0.18%",
+                placeholder="Exemple : Pm 20 ans = 18 500 000 AED ; 2 sinistres majeurs identifiés ; chargement T1 = 0.35%, T2 = 0.18%",
                 height=120,
                 key="majeurs_manuels_externes3",
             )
@@ -5024,7 +5023,7 @@ sur des critères statistiques objectifs, pas seulement des règles fixes.""",
             "name": "rechercher_web_actuariel",
             "description": """Recherche des informations actuarielles sur le web.
 Utiliser pour : taux de marché de référence, publications CAS/ASTIN récentes,
-données de sinistralité automobile Maroc/Afrique, normes réglementaires DAPS,
+données de sinistralité automobile UEA/Afrique, normes réglementaires DAPS,
 benchmarks de tarification réassurance non-proportionnelle.
 Sites prioritaires : swissre.com, munichre.com, casact.org, astin.org, actuaries.org.""",
             "input_schema": {
@@ -5065,7 +5064,7 @@ Format : résumé des résultats clés (prime totale, taux global, anomalies dé
             "name": "consulter_ressource_actuarielle",
             "description": """Référence et cite une ressource actuarielle de la bibliothèque interne.
 Retourne la liste des sites/publications disponibles par catégorie.
-Catégories : réassurance, actuariat, cours, finance, Maroc.""",
+Catégories : réassurance, actuariat, cours, finance, UEA.""",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -5308,8 +5307,8 @@ Catégories : réassurance, actuariat, cours, finance, Maroc.""",
                 "nb_observations": len(df_liq_p3),
                 "alpha_estime": round(float(alpha_p3), 4),
                 "lambda_estime": round(float(lambda_p3), 4),
-                "seuil_pareto_MAD": round(float(sm_p3), 0),
-                "Pm_proxy_MAD": round(float(Pm_p3), 0),
+                "seuil_pareto_AED": round(float(sm_p3), 0),
+                "Pm_proxy_AED": round(float(Pm_p3), 0),
                 "I_cotation": round(float(I_cot), 4),
                 "nb_obs_stabilisees": int(mask_s.sum()),
                 "observations": f"{n_sins} sinistres sur {n_ann} années",
@@ -5341,7 +5340,7 @@ Catégories : réassurance, actuariat, cours, finance, Maroc.""",
         st.session_state["tranches_p3"] = prog
         return {"status": "ok", "programme": [{
             "nom": t["nom"], "type": t["type"],
-            "priorite_MAD": t["priorite"], "portee_MAD": t["portee"],
+            "priorite_AED": t["priorite"], "portee_AED": t["portee"],
             "reconstitutions": f"{t['nb_reconstitutions']} x {t['taux_reconstitution']}%",
             "charges": f"Brokage {t['brokage']:.0%} | Frais {t['frais']:.0%} | Marge {t['marge']:.0%}"
         } for t in prog]}
@@ -5354,7 +5353,7 @@ Catégories : réassurance, actuariat, cours, finance, Maroc.""",
             f_mkt_file.seek(0)
             df_mkt_p3 = pd.read_excel(_io.BytesIO(f_mkt_file.read())) if f_mkt_file.name.endswith('xlsx') else pd.read_csv(f_mkt_file)
             df_mkt_p3.columns = [c.strip() for c in df_mkt_p3.columns]
-            for col in ['ROLs','midpoints','Garantie en MAD']:
+            for col in ['ROLs','midpoints','Garantie en AED']:
                 if col in df_mkt_p3.columns and df_mkt_p3[col].dtype == object:
                     df_mkt_p3[col] = (df_mkt_p3[col].astype(str).str.replace('%','').str.replace(' ','').str.replace(',','.')
                         .apply(lambda x: float(x)/100 if x not in ['nan',''] and float(x)>1.5
@@ -5587,8 +5586,8 @@ Catégories : réassurance, actuariat, cours, finance, Maroc.""",
             client_s = __import__('anthropic').Anthropic(api_key=api_key)
             prompt_s = f"""Recherche actuarielle : {requete}
 Type d'information : {type_recherche}
-Contexte : Tarification réassurance non-proportionnelle XL automobile Maroc.
-Fournir : chiffres clés, sources, applicabilité au contexte Maroc.
+Contexte : Tarification réassurance non-proportionnelle XL automobile UEA.
+Fournir : chiffres clés, sources, applicabilité au contexte UEA.
 Répondre de façon concise et structurée (max 300 mots)."""
             resp = client_s.messages.create(
                 model="claude-haiku-4-5-20251001",
@@ -5616,8 +5615,8 @@ Répondre de façon concise et structurée (max 300 mots)."""
             contenu = f"""
 <p><b>Session terminée par :</b> {user_email}</p>
 <p><b>Date :</b> {datetime.now().strftime('%d/%m/%Y à %H:%M')}</p>
-<p><b>GNPI :</b> {gnpi3:,.0f} MAD</p>
-<p><b>Prime totale calculée :</b> {pt:,.0f} MAD</p>
+<p><b>GNPI :</b> {gnpi3:,.0f} AED</p>
+<p><b>Prime totale calculée :</b> {pt:,.0f} AED</p>
 <p><b>Taux global :</b> {tg:.4%}</p>
 <p><b>Anomalies critiques :</b> {anomalies_count}</p>
 <p><b>Modules complétés :</b> BC, Simulation, Courbe de référence marché, Rapport Final</p>
@@ -5700,10 +5699,10 @@ Répondre de façon concise et structurée (max 300 mots)."""
             ec=abs(bt-st_)/bt*100 if bt>0 else 0
             rows.append({"tranche":n,"type":t["type"],
                 "taux_bc":round(bt,6),"taux_sim":round(st_,6),"taux_mkt":round(mk,6),
-                "taux_retenu":round(tx,6),"methode":me,"prime_MAD":round(pr,2),
+                "taux_retenu":round(tx,6),"methode":me,"prime_AED":round(pr,2),
                 "ecart_bc_sim_pct":round(ec,1)})
         st.session_state["df_rapport"]=pd.DataFrame(rows); st.session_state["prime_totale"]=pt
-        return {"status":"ok","synthese":rows,"prime_totale_MAD":round(pt,2),"taux_global":round(pt/gnpi_v,6)}
+        return {"status":"ok","synthese":rows,"prime_totale_AED":round(pt,2),"taux_global":round(pt/gnpi_v,6)}
 
 
     # ════════════════════════════════
@@ -5716,13 +5715,13 @@ Répondre de façon concise et structurée (max 300 mots)."""
         client = anthropic.Anthropic(api_key=api_key)
 
         system_p3 = f"""Tu es un assistant d’interprétation actuarielle de niveau expert senior. Tu ne remplaces pas le moteur actuariel ni la tarification manuelle.
-Spécialiste : Réassurance Non-Proportionnelle XL, automobile, marchés émergents (Maroc/Afrique).
+Spécialiste : Réassurance Non-Proportionnelle XL, automobile, marchés émergents (UEA/Afrique).
 Références : Daykin-Pentikäinen-Pesonen (1994), CAS ratemaking guidelines, ASTIN Bulletin, IAA standards.
 
 ═══ CONTEXTE MISSION ═════════════════════════════════════════
-{contexte_v if contexte_v else f"Portefeuille automobile Maroc 2026 | GNPI {gnpi_v:,.0f} MAD | Cotation {annee_v}"}
+{contexte_v if contexte_v else f"Portefeuille automobile UEA 2026 | GNPI {gnpi_v:,.0f} AED | Cotation {annee_v}"}
 
-GNPI : {gnpi_v:,.0f} MAD | Année cotation : {annee_v} | Période retour majeurs : {retour3} ans
+GNPI : {gnpi_v:,.0f} AED | Année cotation : {annee_v} | Période retour majeurs : {retour3} ans
 Seuil alerte critique (écart BC/Sim) : {seuil_al}%
 
 ═══ TARIFICATION MANUELLE EXTERNE FOURNIE PAR L'UTILISATEUR ═════════════
@@ -5801,14 +5800,14 @@ Pour les branches non-travaillantes / cat :
 
 ═══ CHARTE QUALITÉ ══════════════════════════════════════════
 • Justification structurée : [Observation] → [Contrôle effectué] → [Résultat chiffré] → [Conclusion actuarielle]
-• Toujours quantifier : τ_pur, σ, τ_risque, τ_technique, prime (MAD)
+• Toujours quantifier : τ_pur, σ, τ_risque, τ_technique, prime (AED)
 • Signaler explicitement : années écartées + raison, crédibilité BC
 • Cohérence inter-tranches : hiérarchie ROL, taux décroissants avec la priorité
 
 Agis de façon professionnelle et rigoureuse. Ne prétends jamais que le LLM garantit un tarif ; il aide à l’interprétation et à la structuration des propositions."""
 
         messages = [{"role": "user", "content":
-            f"Analyse les résultats disponibles Atlantic Re 2026. GNPI={gnpi_v:,} MAD. Contexte : {contexte_v if contexte_v else 'Standard automobile Maroc'}. Compare avec la tarification manuelle externe si fournie, puis propose des programmes alternatifs comparables pour enrichir la négociation du réassureur leader."}]
+            f"Analyse les résultats disponibles Atlantic Re 2026. GNPI={gnpi_v:,} AED. Contexte : {contexte_v if contexte_v else 'Standard automobile UEA'}. Compare avec la tarification manuelle externe si fournie, puis propose des programmes alternatifs comparables pour enrichir la négociation du réassureur leader."}]
 
         tour=0; max_t=15; validation_en_attente=None
 
@@ -5913,8 +5912,8 @@ Agis de façon professionnelle et rigoureuse. Ne prétends jamais que le LLM gar
                 st.markdown("###  Programme défini par l'agent")
                 tableau_resultats([{
                     "Tranche": t["nom"], "Type": t["type"],
-                    "Priorité": f"{t['priorite']:,.0f} MAD",
-                    "Portée": f"{t['portee']:,.0f} MAD",
+                    "Priorité": f"{t['priorite']:,.0f} AED",
+                    "Portée": f"{t['portee']:,.0f} AED",
                     "Reconst.": f"{t['nb_reconstitutions']} x {t['taux_reconstitution']}%",
                     "Charges": f"Brok {t['brokage']:.0%} | Frais {t['frais']:.0%} | Marge {t['marge']:.0%}"
                 } for t in st.session_state["tranches_p3"]])
@@ -5924,7 +5923,7 @@ Agis de façon professionnelle et rigoureuse. Ne prétends jamais que le LLM gar
                 c1.metric("Sinistres",  st.session_state["df_proj"]["sinistre_id"].nunique())
                 c2.metric("Alpha",      f"{st.session_state.get('alpha_est',0):.4f}")
                 c3.metric("Lambda",     f"{st.session_state.get('lambda_est',0):.4f}")
-                c4.metric("Seuil MAD",  f"{st.session_state.get('seuil_est',0):,.0f}")
+                c4.metric("Seuil AED",  f"{st.session_state.get('seuil_est',0):,.0f}")
 
             if "resultats_bc" in st.session_state and "resultats_sim" in st.session_state:
                 col_a, col_b = st.columns(2)
@@ -5962,14 +5961,14 @@ Agis de façon professionnelle et rigoureuse. Ne prétends jamais que le LLM gar
                     "Taux Sim.": f"{row['taux_sim']:.4%}",
                     "Taux Marché": f"{row['taux_mkt']:.4%}",
                     " Retenu": f"{row['taux_retenu']:.4%}",
-                    "Prime (MAD)": f"{row['prime_MAD']:,.0f}",
+                    "Prime (AED)": f"{row['prime_AED']:,.0f}",
                     "Méthode": row["methode"],
                     "Écart BC/Sim": f"{row['ecart_bc_sim_pct']:.0f}%",
                 } for row in st.session_state["df_rapport"].to_dict("records")])
 
                 pt = st.session_state.get("prime_totale", 0)
                 c1,c2,c3 = st.columns(3)
-                with c1: card("Prime totale", f"{pt:,.0f} MAD", icone=None)
+                with c1: card("Prime totale", f"{pt:,.0f} AED", icone=None)
                 with c2: card("Taux global",  f"{pt/gnpi_v:.4%}", couleur="#1a1a1a", icone=None)
                 with c3: card("Assistant",     "LLM", couleur="#3b82f6", icone=None)
 
@@ -6047,7 +6046,7 @@ with tab_hist:
                 sess_data.append({
                     "ID": sid,
                     "Session": f"{' ' if is_current else ''}{nom or f'Session #{sid}'}",
-                    "GNPI": f"{gnpi_s:,.0f} MAD" if gnpi_s else "—",
+                    "GNPI": f"{gnpi_s:,.0f} AED" if gnpi_s else "—",
                     "Créée": created or "—",
                     "Modifiée": updated or "—",
                 })
