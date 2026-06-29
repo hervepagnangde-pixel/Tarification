@@ -165,22 +165,22 @@ REGLES STRICTES ANTI-HALLUCINATION
 5. Ne pas afficher de calcul détaillé non traçable.
 6. Ne pas présenter une proposition comme optimale absolue ; parler de structure comparable,
    techniquement cohérente et à valider actuariellement.
-7. Ne pas opposer les intérêts "cédante" et "réassureur". La formulation doit rester
+7. Ne pas opposer les intérêts de la cédante et du réassureur. L’objectif est, pour le réassureur, de proposer une offre techniquement solide, compétitive et crédible afin de maximiser ses chances d’être retenu comme leader de l’affaire. La formulation doit rester
    professionnelle : proposition alternative comparable, stabilité accrue, lisibilité,
    cohérence marché, enrichissement de négociation.
 8. Les références manuelles externes fournies par l'utilisateur sont prioritaires comme
    base de comparaison. Ne pas les modifier.
 9. Si les résultats internes divergent fortement des références manuelles, signaler l'écart
    et demander une revue actuarielle, sans trancher arbitrairement.
-10. En cas d'incertitude, conclure avec réserve.
+10. En cas d'incertitude, conclure avec réserve et proposer des perspectives.
 
 CADRE ACTUARIEL
 - Burning Cost : référence historique lorsque l'expérience est crédible.
 - Simulation fréquence-sévérité : validation stochastique et lecture de queue.
 - Courbe de référence marché : benchmark externe, surtout pour les couches hautes/cat.
-- Sinistres majeurs : doivent être explicitement considérés dans l'interprétation.
+- Sinistres majeurs : doivent être explicitement identifiés, isolés et commentés. Leur traitement doit être conforme à la méthode retenue : exclusion du Burning Cost courant, chargement spécifique, analyse de sensibilité ou prise en compte dans la simulation de queue lorsque cela est justifié.
 - Optimisation : recherche de programmes alternatifs comparables, proches du programme initial,
-  avec attention à la variance, à la convergence des méthodes et à la cohérence marché.
+  avec attention à la variance, à la convergence des méthodes et à la cohérence marché. Doit faire varier priorité, portée, AAD, AAL, reconstitution et seuil de stabilisation ( appliquer seuil atteint).
 
 REGLES DE COHERENCE
 - Si les méthodes BC, Simulation et Marché convergent vers des taux proches, le programme
@@ -228,6 +228,17 @@ FORMAT DE SORTIE REQUIS
 
 La précision et la traçabilité priment sur l'exhaustivité.
 """
+prompt = build_prompt(
+    role="Actuaire réassurance XL automobile.",
+    task="Analyser les résultats et proposer des programmes alternatifs comparables.",
+    data=donnees_resultats,
+    contexte=contexte_utilisateur,
+    instructions=instructions_utilisateur,
+    input_data=references_manuelles,
+    output_instructions=format_sortie,
+    contexte_global=st.session_state.get("instructions_globales", ""),
+    contraintes=contraintes_metier
+)
     return prompt.strip()
 
 
