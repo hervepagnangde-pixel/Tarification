@@ -1,5 +1,6 @@
 """
-Atlantic Re IA — Prompt engineering module
+IA TARIF — Prompt engineering module
+
 Fonctions compatibles avec app.py :
 - prompt_inputs
 - _charger_few_shot_dynamiques
@@ -7,8 +8,10 @@ Fonctions compatibles avec app.py :
 - claude_stream
 - guide_prompt
 
-Objectif : utiliser le LLM comme couche d'analyse, de contrôle et de recommandation,
-jamais comme moteur principal de tarification.
+Objectif :
+Utiliser le LLM comme couche d'analyse, de contrôle, de comparaison
+et de recommandation. Le LLM ne remplace jamais le moteur actuariel
+ni les travaux manuels réalisés sous R, Excel, SAS ou tout autre outil.
 """
 
 import json
@@ -21,6 +24,7 @@ def prompt_inputs(key_prefix, placeholder_contexte="", placeholder_instructions=
                   placeholder_input="", placeholder_output=""):
     """
     Zone standard de personnalisation du prompt LLM.
+
     Ajoute aussi une zone dédiée aux résultats de tarification manuelle externe
     afin de comparer les calculs internes avec les références obtenues sous R,
     Excel, SAS ou tout autre outil.
@@ -28,29 +32,45 @@ def prompt_inputs(key_prefix, placeholder_contexte="", placeholder_instructions=
     with st.expander("Personnalisation de l'analyse LLM", expanded=False):
         st.markdown("##### Instructions complémentaires")
         c1, c2 = st.columns(2)
+
         with c1:
             contexte = st.text_area(
                 "Contexte",
-                placeholder=placeholder_contexte or "Exemple : Portefeuille automobile, renouvellement 2026, traité XL non proportionnel.",
+                placeholder=placeholder_contexte or (
+                    "Exemple : portefeuille automobile UAE, renouvellement 2026, "
+                    "traité XL non proportionnel."
+                ),
                 height=90,
                 key=f"{key_prefix}_contexte",
             )
+
             instructions = st.text_area(
                 "Instructions spécifiques",
-                placeholder=placeholder_instructions or "Exemple : comparer les résultats internes aux taux manuels et signaler les écarts.",
+                placeholder=placeholder_instructions or (
+                    "Exemple : comparer les résultats internes aux taux manuels "
+                    "et signaler les écarts significatifs."
+                ),
                 height=90,
                 key=f"{key_prefix}_instructions",
             )
+
         with c2:
             input_data = st.text_area(
                 "Données supplémentaires",
-                placeholder=placeholder_input or "Exemple : remarques sur la qualité du triangle, exclusions, jugement expert.",
+                placeholder=placeholder_input or (
+                    "Exemple : remarques sur la qualité du triangle, exclusions, "
+                    "jugement expert, contraintes de placement."
+                ),
                 height=90,
                 key=f"{key_prefix}_input",
             )
+
             output_instructions = st.text_area(
                 "Format de sortie souhaité",
-                placeholder=placeholder_output or "Exemple : synthèse structurée, écarts, points de vigilance, proposition de programmes comparables.",
+                placeholder=placeholder_output or (
+                    "Exemple : synthèse structurée, écarts, points de vigilance, "
+                    "proposition de programmes comparables."
+                ),
                 height=90,
                 key=f"{key_prefix}_output",
             )
@@ -58,8 +78,10 @@ def prompt_inputs(key_prefix, placeholder_contexte="", placeholder_instructions=
         st.markdown("##### Références de tarification manuelle externe")
         st.caption(
             "Cette zone sert à renseigner les résultats obtenus hors de l'application "
-            "sous R, Excel, SAS ou tout autre outil. Ces informations servent de référence comparaison."
+            "sous R, Excel, SAS ou tout autre outil. Ces informations servent de "
+            "référence de comparaison. Le LLM ne doit pas les recalculer ni les modifier."
         )
+
         manuel = st.text_area(
             "Résultats manuels externes",
             placeholder=(
@@ -76,7 +98,10 @@ def prompt_inputs(key_prefix, placeholder_contexte="", placeholder_instructions=
 
     if manuel.strip():
         input_data = (input_data or "").strip()
-        bloc = "\n\nREFERENCES MANUELLES EXTERNES FOURNIES PAR L'UTILISATEUR :\n" + manuel.strip()
+        bloc = (
+            "\n\nREFERENCES MANUELLES EXTERNES FOURNIES PAR L'UTILISATEUR :\n"
+            + manuel.strip()
+        )
         input_data = (input_data + bloc).strip()
 
     return contexte, instructions, input_data, output_instructions
@@ -110,24 +135,34 @@ def _charger_few_shot_dynamiques(user_email, n_max=3):
             d = json.loads(data_json)
             rapport_rows = d.get("rows", [])
             prime_totale = d.get("prime_totale", 0)
+
             if not rapport_rows:
                 continue
+
             lines = [
-                f"SESSION : {nom or 'Sans nom'} | GNPI {(gnpi_h or 0):,.0f} MAD | Prime {prime_totale:,.0f} MAD"
+                f"SESSION : {nom or 'Sans nom'} | "
+                f"GNPI {(gnpi_h or 0):,.0f} | "
+                f"Prime {prime_totale:,.0f}"
             ]
+
             for r in rapport_rows[:4]:
                 nom_t = r.get("tranche", "") or r.get("Tranche", "")
                 typ_t = r.get("type", "") or r.get("Type", "")
                 tau = r.get("taux_retenu", "") or r.get("Taux retenu", "")
                 meth = r.get("methode", "") or r.get("Méthode", "")
                 lines.append(f"  {nom_t} ({typ_t}) -> Retenu {tau} via {meth}")
+
             exemples.append("\n".join(lines))
+
         except Exception:
             continue
 
     if not exemples:
         return ""
-    return "\n\n".join([f"CAS HISTORIQUE {i+1} :\n{ex}" for i, ex in enumerate(exemples)])
+
+    return "\n\n".join(
+        [f"CAS HISTORIQUE {i + 1} :\n{ex}" for i, ex in enumerate(exemples)]
+    )
 
 
 def build_prompt(role, task, data, contexte="", instructions="",
@@ -135,6 +170,7 @@ def build_prompt(role, task, data, contexte="", instructions="",
                  contexte_global="", exemples="", contraintes=""):
     """
     Construit un prompt LLM renforcé anti-hallucination.
+
     Le LLM intervient comme couche d'interprétation, contrôle, comparaison
     et recommandation de structures comparables. Il ne remplace pas les calculs.
     """
@@ -165,9 +201,11 @@ REGLES STRICTES ANTI-HALLUCINATION
 5. Ne pas afficher de calcul détaillé non traçable.
 6. Ne pas présenter une proposition comme optimale absolue ; parler de structure comparable,
    techniquement cohérente et à valider actuariellement.
-7. Ne pas opposer les intérêts de la cédante et du réassureur. L’objectif est, pour le réassureur, de proposer une offre techniquement solide, compétitive et crédible afin de maximiser ses chances d’être retenu comme leader de l’affaire. La formulation doit rester
-   professionnelle : proposition alternative comparable, stabilité accrue, lisibilité,
-   cohérence marché, enrichissement de négociation.
+7. Ne pas opposer les intérêts de la cédante et du réassureur. L'objectif est, pour le
+   réassureur, de proposer une offre techniquement solide, compétitive et crédible afin
+   de maximiser ses chances d'être retenu comme leader de l'affaire. La formulation doit
+   rester professionnelle : proposition alternative comparable, stabilité accrue,
+   lisibilité, cohérence marché, enrichissement de négociation.
 8. Les références manuelles externes fournies par l'utilisateur sont prioritaires comme
    base de comparaison. Ne pas les modifier.
 9. Si les résultats internes divergent fortement des références manuelles, signaler l'écart
@@ -176,19 +214,16 @@ REGLES STRICTES ANTI-HALLUCINATION
 
 CADRE ACTUARIEL
 - Burning Cost : référence historique lorsque l'expérience est crédible.
-- Simulation fréquence-sévérité : validation stochastique et lecture de queue.
-- Courbe de référence marché : benchmark externe, surtout pour les couches hautes/cat.
+- Simulation fréquence-sévérité : validation stochastique, lecture de queue et analyse de sensibilité.
+- Courbe de référence marché : benchmark externe, surtout pour les couches hautes ou catastrophiques.
 - Sinistres majeurs : doivent être explicitement identifiés, isolés et commentés. Leur traitement doit être conforme à la méthode retenue : exclusion du Burning Cost courant, chargement spécifique, analyse de sensibilité ou prise en compte dans la simulation de queue lorsque cela est justifié.
-- Optimisation : recherche de programmes alternatifs comparables, proches du programme initial,
-  avec attention à la variance, à la convergence des méthodes et à la cohérence marché. Doit faire varier priorité, portée, AAD, AAL, reconstitution et seuil de stabilisation ( appliquer seuil atteint).
+- Optimisation : recherche de programmes alternatifs comparables, proches du programme initial, avec attention à la variance retenue, à la convergence des méthodes et à la cohérence marché.
+- L'optimisation peut faire varier, sous contraintes de comparabilité, la priorité, la portée, l'AAD, l'AAL, les reconstitutions et le seuil de stabilisation. Toute variation doit rester techniquement justifiée et proche du programme initial.
 
 REGLES DE COHERENCE
-- Si les méthodes BC, Simulation et Marché convergent vers des taux proches, le programme
-  initial peut être considéré comme techniquement stable, sous réserve de qualité des données.
-- Si les méthodes divergent fortement, l'objectif n'est pas d'imposer un taux mais d'identifier
-  les sources de divergence : données, sinistres majeurs, fréquence, sévérité, marché, structure.
-- La minimisation de la variance doit être comprise comme un critère de stabilité, pas comme
-  une optimisation commerciale agressive.
+- Si les méthodes Burning Cost, Simulation et Courbe de référence marché convergent vers des taux proches, le programme initial peut être considéré comme techniquement stable, sous réserve de qualité des données.
+- Si les méthodes divergent fortement, l'objectif n'est pas d'imposer un taux mais d'identifier les sources de divergence : données, sinistres majeurs, fréquence, sévérité, marché ou structure.
+- La minimisation de la variance doit être comprise comme un critère de stabilité, pas comme une optimisation commerciale agressive.
 
 CONTRAINTES METIER SPECIFIQUES
 {contraintes if contraintes else "Aucune contrainte spécifique supplémentaire fournie."}
@@ -215,36 +250,26 @@ EXEMPLES DE REFERENCE
 {exemples if exemples else "Aucun exemple historique fourni."}
 
 FORMAT DE SORTIE REQUIS
-{output_instructions if output_instructions else '''
+{output_instructions if output_instructions else """
 1. Synthèse des données disponibles et limites
 2. Comparaison résultats internes vs références manuelles externes, si fournies
-3. Analyse de convergence des méthodes BC / Simulation / Marché
+3. Analyse de convergence des méthodes Burning Cost / Simulation / Courbe de référence marché
 4. Lecture des sinistres majeurs et de leur impact potentiel
 5. Appréciation de la stabilité du programme initial
 6. Programmes alternatifs comparables, uniquement si justifiés par les données
 7. Points de vigilance pour la négociation en position de réassureur leader
 8. Conclusion prudente : exploitable / exploitable avec réserves / à revoir
-'''}
+"""}
 
 La précision et la traçabilité priment sur l'exhaustivité.
 """
-prompt = build_prompt(
-    role="Actuaire réassurance XL automobile.",
-    task="Analyser les résultats et proposer des programmes alternatifs comparables.",
-    data=donnees_resultats,
-    contexte=contexte_utilisateur,
-    instructions=instructions_utilisateur,
-    input_data=references_manuelles,
-    output_instructions=format_sortie,
-    contexte_global=st.session_state.get("instructions_globales", ""),
-    contraintes=contraintes_metier
-)
     return prompt.strip()
 
 
 def claude_stream(api_key, prompt, max_tokens=2000, session_key="", use_opus=False):
     """
     Appel streaming Claude.
+
     use_opus=True  : modèle plus puissant pour analyses complexes.
     use_opus=False : modèle économique pour analyses standard.
     """
@@ -268,14 +293,17 @@ def claude_stream(api_key, prompt, max_tokens=2000, session_key="", use_opus=Fal
                     full_text += text
                     placeholder.markdown(full_text + "▌")
             status.update(label="Analyse terminée", state="complete", expanded=False)
+
         except Exception as e:
             status.update(label="Erreur", state="error")
             st.error(f"Erreur API : {e}")
             return ""
 
     placeholder.markdown(full_text)
+
     if session_key:
         st.session_state[session_key] = full_text
+
     return full_text
 
 
@@ -283,24 +311,31 @@ def guide_prompt(etape, exemples_contexte, exemples_instructions,
                  exemples_input, exemples_output=None):
     """Affiche un guide sobre pour aider l'utilisateur à renseigner le prompt."""
     exemples_output = exemples_output or []
+
     with st.expander(f"Conseils de rédaction du prompt — {etape}", expanded=False):
         c1, c2 = st.columns(2)
+
         with c1:
             st.markdown("**Contexte à renseigner**")
             for ex in exemples_contexte:
                 st.markdown(f"- {ex}")
+
             st.markdown("**Instructions utiles**")
             for ex in exemples_instructions:
                 st.markdown(f"- {ex}")
+
         with c2:
             st.markdown("**Données supplémentaires**")
             for ex in exemples_input:
                 st.markdown(f"- {ex}")
+
             if exemples_output:
                 st.markdown("**Format de sortie**")
                 for ex in exemples_output:
                     st.markdown(f"- {ex}")
+
         st.info(
             "Le LLM doit uniquement interpréter les résultats fournis, comparer les références "
-            "et proposer des structures comparables. Il ne doit pas inventer de paramètres ni remplacer la tarification actuarielle."
+            "et proposer des structures comparables. Il ne doit pas inventer de paramètres ni "
+            "remplacer la tarification actuarielle."
         )
