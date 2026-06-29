@@ -249,6 +249,28 @@ if not st.session_state["authenticated"]:
         st.caption("Accès réservé. Contactez l'administrateur.")
     st.stop()
 
+
+# Recharge la dernière session si la mémoire a été vidée par une mise en veille
+if (st.session_state.get("authenticated")
+        and st.session_state.get("auto_restore_enabled", True)
+        and not st.session_state.get("_auto_restore_done")
+        and "resultats_bc" not in st.session_state
+        and "df_rapport"   not in st.session_state):
+    st.session_state["_auto_restore_done"] = True
+    try:
+        _sessions = db_list_sessions(st.session_state.get("user_email", ""))
+        if _sessions:
+            # la plus récente (tuple : sid, nom, gnpi, created, updated)
+            _latest = max(_sessions, key=lambda s: (s[4] or s[3] or ""))
+            db_load_session(_latest[0])
+            st.session_state["_restored_banner"] = _latest[0]
+    except Exception:
+        pass
+
+if st.session_state.get("_restored_banner"):
+    st.info(f"Session #{st.session_state['_restored_banner']} restaurée automatiquement — "
+            "votre travail précédent a été rechargé.")
+
 # ════════════════════════════════════════════
 # LANDING PAGE
 # ════════════════════════════════════════════
