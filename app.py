@@ -17,6 +17,8 @@ import secrets as secrets_lib
 from PIL import Image
 import os
 from datetime import datetime
+import time
+import streamlit.components.v1 as components
 
 # ── Imports modules ───────────────────────────────────────────────────────────
 from modules.db import (
@@ -81,6 +83,122 @@ try:
     st.set_page_config(page_title="IA TARIF", layout="wide", page_icon=icon)
 except:
     st.set_page_config(page_title="IA TARIF", layout="wide")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONTINUITÉ DE SESSION — Anti-veille + sauvegarde automatique
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def injecter_mode_sans_veille(interval_ms: int = 30_000):
+    """
+    Maintient l'application active côté navigateur tant que l'utilisateur
+    n'a pas explicitement autorisé la mise en veille.
+    - Wake Lock : empêche l'écran de se mettre en veille quand le navigateur l'autorise.
+    - Heartbeat : envoie un signal régulier au serveur Streamlit.
+    - beforeunload : demande confirmation avant fermeture/actualisation de l'onglet.
+    """
+    components.html(f"""
+    <script>
+    const IA_TARIF_KEEP_ALIVE_MS = {interval_ms};
+
+    async function iaTarifWakeLock() {{
+        try {{
+            if ('wakeLock' in navigator) {{
+                window.iaTarifWakeLock = await navigator.wakeLock.request('screen');
+            }}
+        }} catch (err) {{}}
+    }}
+
+    iaTarifWakeLock();
+
+    document.addEventListener('visibilitychange', function() {{
+        if (document.visibilityState === 'visible') {{
+            iaTarifWakeLock();
+        }}
+    }});
+
+    setInterval(function() {{
+        fetch('/_stcore/health', {{ cache: 'no-store' }}).catch(function() {{}});
+    }}, IA_TARIF_KEEP_ALIVE_MS);
+
+    window.addEventListener('beforeunload', function(e) {{
+        e.preventDefault();
+        e.returnValue = 'Une session IA TARIF est en cours. Voulez-vous vraiment quitter ?';
+    }});
+    </script>
+    """, height=0)
+
+
+def sauvegarder_session_courante(gnpi_value, silent: bool = True):
+    """Sauvegarde l'état courant sans obliger l'utilisateur à cliquer."""
+    sid = db_save_session(
+        st.session_state.get("user_email", ""),
+        gnpi_value,
+        st.session_state.get("tranches_input", []),
+    )
+    st.session_state["db_session_id"] = sid
+
+    if "resultats_bc" in st.session_state:
+        db_save_etape(
+            "bc",
+            [{k: v for k, v in r.items() if k != "detail_annuel"}
+             for r in st.session_state["resultats_bc"]]
+        )
+
+    if "resultats_sim" in st.session_state:
+        db_save_etape("sim", st.session_state["resultats_sim"])
+
+    if "resultats_mkt" in st.session_state:
+        db_save_etape(
+            "mkt",
+            {
+                "resultats_mkt": [
+                    {k: v for k, v in r.items() if k != "taux_tranches"}
+                    for r in st.session_state["resultats_mkt"]
+                ],
+                "taux_mkt_final": st.session_state.get("taux_mkt_final", []),
+            }
+        )
+
+    if st.session_state.get("df_rapport") is not None:
+        db_save_etape(
+            "rapport",
+            {
+                "rows": st.session_state["df_rapport"].to_dict("records"),
+                "prime_totale": st.session_state.get("prime_totale", 0),
+            }
+        )
+
+    st.session_state["last_save_time"] = datetime.now().strftime("%H:%M:%S")
+    if not silent:
+        st.success(f"Sauvegardé — Session #{sid}")
+    return sid
+
+
+def autosauvegarder_si_necessaire(gnpi_value, interval_sec: int = 120):
+    """Sauvegarde périodiquement dès qu'il existe un travail à protéger."""
+    if not st.session_state.get("anti_veille_actif", True):
+        return
+
+    cles_a_proteger = [
+        "df_prog", "df_liq", "df_proj", "resultats_bc", "resultats_sim",
+        "resultats_mkt", "taux_mkt_final", "df_rapport", "prime_totale",
+        "labo_grille", "labo_resultats", "labo_df_ml", "labo_modeles",
+    ]
+    if not any(k in st.session_state for k in cles_a_proteger):
+        return
+
+    now = time.time()
+    last = st.session_state.get("_last_auto_save_ts", 0)
+    if now - last < interval_sec:
+        return
+
+    try:
+        sauvegarder_session_courante(gnpi_value, silent=True)
+        st.session_state["_last_auto_save_ts"] = now
+        st.session_state["last_auto_save_error"] = ""
+    except Exception as e:
+        st.session_state["last_auto_save_error"] = str(e)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -230,6 +348,27 @@ with st.sidebar:
         st.session_state["authenticated"] = False; st.rerun()
     if st.button(" Accueil"):
         st.session_state["page"] = "landing"; st.rerun()
+
+    st.markdown("###  Continuité")
+    if "anti_veille_actif" not in st.session_state:
+        st.session_state["anti_veille_actif"] = True
+    st.toggle(
+        "Maintenir l'application active",
+        key="anti_veille_actif",
+        help="Empêche la mise en veille côté navigateur et protège la session par sauvegarde automatique."
+    )
+    if st.button(" Autoriser la mise en veille", key="btn_autoriser_veille", use_container_width=True):
+        st.session_state["anti_veille_actif"] = False
+        st.info("Mise en veille autorisée par l'utilisateur.")
+    if st.session_state.get("anti_veille_actif", True):
+        st.success("Mode sans veille actif")
+    else:
+        st.warning("Mise en veille autorisée")
+    if st.session_state.get("last_save_time"):
+        st.caption(f"Dernière sauvegarde : {st.session_state['last_save_time']}")
+    if st.session_state.get("last_auto_save_error"):
+        st.caption(f"Auto-sauvegarde : {st.session_state['last_auto_save_error']}")
+
     st.markdown("###  Configuration")
     api_key = st.text_input(" Clé API Claude", type="password", placeholder="sk-ant-...",
                            help="Analyses copilote : Haiku (économique) | Agent autonome : Opus (puissant)")
@@ -309,21 +448,7 @@ with st.sidebar:
         st.caption("Aucune session active")
     if st.button(" Sauvegarder maintenant", key="btn_save_now", use_container_width=True):
         try:
-            sid = db_save_session(st.session_state.get("user_email",""), gnpi,
-                                     st.session_state.get("tranches_input", []))
-            if "resultats_bc" in st.session_state:
-                db_save_etape("bc", [{k:v for k,v in r.items() if k!="detail_annuel"}
-                                      for r in st.session_state["resultats_bc"]])
-            if "resultats_sim" in st.session_state:
-                db_save_etape("sim", st.session_state["resultats_sim"])
-            if "resultats_mkt" in st.session_state:
-                db_save_etape("mkt", {"resultats_mkt": [{k:v for k,v in r.items() if k!="taux_tranches"}
-                                       for r in st.session_state["resultats_mkt"]],
-                                      "taux_mkt_final": st.session_state.get("taux_mkt_final",[])})
-            if st.session_state.get("df_rapport") is not None:
-                db_save_etape("rapport", {"rows": st.session_state["df_rapport"].to_dict("records"),
-                                           "prime_totale": st.session_state.get("prime_totale",0)})
-            st.success(f" Sauvegardé — Session #{sid}")
+            sauvegarder_session_courante(gnpi, silent=False)
             st.rerun()
         except Exception as _e:
             st.error(f"Erreur DB : {_e}")
@@ -399,6 +524,11 @@ with st.sidebar:
     instructions_globales = st.text_area("Contexte portefeuille",
         height=120, key="instructions_globales",
         help="Inclus dans TOUS les prompts Claude")
+
+# Mode sans veille + auto-sauvegarde déclenchés uniquement après authentification
+if st.session_state.get("anti_veille_actif", True):
+    injecter_mode_sans_veille(interval_ms=30_000)
+autosauvegarder_si_necessaire(gnpi, interval_sec=120)
 
 # ════════════════════════════════════════════
 # ACCUEIL INTELLIGENT
