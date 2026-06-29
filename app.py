@@ -2623,9 +2623,9 @@ with tab2:
                 st.dataframe(st.session_state["df_proj"].head(20), use_container_width=True)
 
     # ═══════════════════════════════════════════════════════════════════
-    # MODÈLE ACTUARIEL COMPLET — Méthode QBE Re (étapes A→I)
+    # MODÈLE ACTUARIEL COMPLET — Méthode d'un réassureur mondial (étapes A→I)
     # Basé sur : "Modélisation sinistres corporels — Excédent de Sinistres"
-    # Auteur original : QBE Re / EGS — Adapté IA TARIF
+    # Auteur original : un réassureur mondial / EGS — Adapté IA TARIF
     # ═══════════════════════════════════════════════════════════════════
     if "df_proj" in st.session_state:
         st.markdown("---")
@@ -2633,7 +2633,7 @@ with tab2:
         <div style="background:linear-gradient(135deg,#0d2b3e,#1e3a52);
             padding:18px 24px;border-bottom:3px solid #00b5a5;margin-bottom:16px">
           <div style="font-size:16px;font-weight:800;color:white;font-family:Montserrat,sans-serif">
-             Modèle Actuariel Complet — Méthode QBE Re (Étapes A→I)
+             Modèle Actuariel Complet — Méthode d'un grand réassureur mondial (Étapes A→I)
           </div>
           <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px">
             Modélisation sinistres corporels longs · Triangle IBNR+IBNER · Cadences · Prime pure
@@ -2643,7 +2643,7 @@ with tab2:
         st.markdown("""
         <div style="background:#e8f7f4;border-left:4px solid #00b5a5;padding:12px 16px;margin-bottom:16px;font-size:13px">
         <b>Référence méthodologique :</b> "Modélisation des sinistres corporels pour la tarification d'un traité de
-        Réassurance Automobile en Excédent de Sinistres" — QBE Re<br>
+        Réassurance Automobile en Excédent de Sinistres" — Reass<br>
         <b>Séquence :</b> A. Analyse → B. Revalorisation → C. Seuils → D. IBNR+IBNER →
         E. Exposition → F. Fréquence → G. Sévérité → H. Cadences → I. Prime pure
         </div>""", unsafe_allow_html=True)
@@ -2759,7 +2759,7 @@ with tab2:
             st.caption("E — La meilleure mesure d'exposition est le nombre de véhicules-années, corrigé vers l'année de cotation.")
             st.markdown("""
             <div style="background:#f2f8f7;border-left:3px solid #00b5a5;padding:12px 16px;font-size:12px">
-            <b>Méthode QBE Re :</b> Le GNPI est utilisé comme proxy de l'exposition ici (corrigé par l'inflation tarifaire).
+            <b>Méthode Reass :</b> Le GNPI est utilisé comme proxy de l'exposition ici (corrigé par l'inflation tarifaire).
             Si le nombre de véhicules-années est disponible, il est préféré.
             Correction = GNPI_ann / GNPI_cotation × N_véhicules_cotation.
             </div>""", unsafe_allow_html=True)
@@ -2972,7 +2972,7 @@ E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
                     tableau_resultats(reserv_rows)
 
         # ── I. Prime pure complète ────────────────────────────────────────────
-        with st.expander("I — Prime pure (sinistralité annuelle attendue) — Formule QBE Re", expanded=True):
+        with st.expander("I — Prime pure (sinistralité annuelle attendue) — Formule ", expanded=True):
             st.caption("I — Application du programme de réassurance sur chaque sinistre, pondéré par la cadence de règlement.")
             st.markdown("""
             <div style="background:#f2f8f7;border-left:3px solid #00b5a5;padding:12px 16px;font-size:12px">
@@ -4403,7 +4403,7 @@ with tab6:
 
         st.divider()
         guide_prompt("Rapport Final",
-            ["Négociation avec Partner Re / Munich Re", "Comité de tarification 15 janvier 2026", "Objectif prime < 14M AED"],
+            ["Négociation avec Partner Re / Munich Re/ Swiss Re", "Comité de tarification 15 janvier 2026", "Objectif prime < 14M AED"],
             ["Justifier chaque taux retenu vs alternatives", "Comparer avec taux N-1 fournis", "Conclure sur positionnement vs marché"],
             ["Taux N-1 : R&C=3.1%, CatL1=1.2%, CatL2=0.8%", "Cotation Partner Re : R&C=2.30%", "Chargement majeurs = 0.05%"],
             ["Synthèse exécutive 5 lignes max", "Tableau récapitulatif final obligatoire", "Verdict : ACCEPTER / NEGOCIER / REFUSER"])
@@ -5176,16 +5176,16 @@ sur des critères statistiques objectifs, pas seulement des règles fixes.""",
             "name": "rechercher_web_actuariel",
             "description": """Recherche des informations actuarielles sur le web.
 Utiliser pour : taux de marché de référence, publications CAS/ASTIN récentes,
-données de sinistralité automobile UEA/Afrique, normes réglementaires DAPS,
+données de sinistralité automobile UEA/Afrique, normes réglementaires Banque Centrale des Émirats Arabes Unis, ACAPS, CIMA
 benchmarks de tarification réassurance non-proportionnelle.
-Sites prioritaires : swissre.com, munichre.com, casact.org, astin.org, actuaries.org.""",
+Sites prioritaires : institutdesactuaires.com, swissre.com, munichre.com, casact.org, astin.org, actuaries.org, soa.org.""",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "requete"      : {"type": "string", "description": "Termes de recherche (en français ou anglais)"},
                     "type_recherche": {
                         "type": "string",
-                        "enum": ["taux_marche", "publication_actuarielle", "reglementation", "sinistralite", "methode"],
+                        "enum": ["taux_marche", "publication_actuarielle", "reglementation", "sinistralite", "methode", "memoires actuariels", "examens d'actuariat"],
                         "description": "Type d'information recherchée"
                     },
                     "justification": {"type": "string"}
