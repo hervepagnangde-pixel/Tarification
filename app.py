@@ -91,7 +91,7 @@ except:
 
 def injecter_mode_sans_veille(interval_ms: int = 30_000):
     """
-    Maintient l'application active côté navigateur tant que l'utilisateur
+    L'application reste active côté navigateur tant que l'utilisateur
     n'a pas explicitement autorisé la mise en veille.
     - Wake Lock : empêche l'écran de se mettre en veille quand le navigateur l'autorise.
     - Heartbeat : envoie un signal régulier au serveur Streamlit.
