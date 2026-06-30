@@ -1685,9 +1685,9 @@ with tab1:
                                                step=0.01, format="%.2f", key=f"brok_{i}")
                 frais        = st.number_input("Frais généraux %", value=5.0,  min_value=0.0, max_value=20.0,
                                                step=0.01, format="%.2f", key=f"frais_{i}")
-                marge        = st.number_input("Marge %",          value=10.0, min_value=0.0, max_value=30.0,
+                marge        = st.number_input("Marge %",          value=5.0, min_value=0.0, max_value=30.0,
                                                step=0.01, format="%.2f", key=f"marge_{i}")
-                retrocession = st.number_input("Rétrocession %",   value=0.0,  min_value=0.0, max_value=50.0,
+                retrocession = st.number_input("Rétrocession %",   value=0.21,  min_value=0.0, max_value=50.0,
                                                step=0.01, format="%.2f", key=f"retro_{i}")
 
             # ── Reconstitutions : nb + taux individuel par reconstitution ──
@@ -1761,7 +1761,7 @@ with tab2:
     annee_cotation = st.number_input("Année de cotation (n)", value=2026, step=1)
     seuil_stabilisation = st.number_input(
         "Seuil stabilisation (% inflation, 0 = toujours)",
-        value=0.0, min_value=0.0, max_value=50.0, step=5.0) / 100
+        value=10.0, min_value=0.0, max_value=50.0, step=5.0) / 100
     pct_seuil = st.number_input(
         "Percentile seuil Pareto (p80 par défaut)",
         value=0.80, min_value=0.50, max_value=0.99, step=0.05, format="%.2f")
@@ -2041,7 +2041,7 @@ with tab2:
             
             df_liq['increment'] = (
                 df_liq['total'] - df_liq['prev_total']
-            ).clip(lower=0)
+            )
             
             # ── ÉTAPE 2 : AS-IF SUR L'INCRÉMENT AVEC DÉLAI DE RÈGLEMENT ──
             # Formule :
@@ -3193,6 +3193,7 @@ with tab3:
                         ch = min(ch, cap)
                         charges_finales.append({"annee": int(ann), "charge": ch})
                     df_ch = pd.DataFrame(charges_finales); N = len(df_ch)
+                  
                     # Reconstitutions avec taux individuels par reconstitution
                     taux_rec_list = t_info.get("taux_reconstitutions", [t_info.get("taux_reconstitution", 100)] * n_rec)
                     Pr_Rec = 0.0
