@@ -2066,13 +2066,13 @@ with tab2:
             # Comme la survenance AS-IF est l'année de cotation :
             # I_survenance_ASIF = I_cotation
             
-            df_liq['ratio_check'] = df_liq['I_reg_asif'] / df_liq['I_surv_asif']
+            df_liq['ratio_check'] = df_liq['I_reg'] / df_liq['I_surv']
             
             mask_stab = df_liq['ratio_check'] >= (1.0 + seuil_stabilisation)
             
             df_liq['inc_stab'] = np.where(
                 mask_stab,
-                df_liq['inc_asif'] * (df_liq['I_surv_asif'] / df_liq['I_reg_asif']),
+                df_liq['inc_asif'] * (df_liq['I_surv'] / df_liq['I_reg']),
                 df_liq['inc_asif']
             )
             
