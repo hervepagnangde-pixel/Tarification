@@ -118,84 +118,374 @@ class AgentActuarielPython:
         return [float(v or 0.0) for v in vals[:n_rec]]
 
     # ------------------------------------------------------------------
-    # CALIBRATION DES ÉLASTICITÉS
+    # OPTIMISATION ACTUARIELLE — SANS ÉLASTICITÉS PAR DÉFAUT
     # ------------------------------------------------------------------
     def _calibrer_elasticites(self):
-        """    
-        Calibre les élasticités log-log depuis le dataset de scénarios ML si disponible.
-
-        Si df_ml n'existe pas ou est insuffisant, retourne des valeurs prudentes
-        par défaut. Cela évite le plantage observé :
-        AttributeError: 'AgentActuarielPython' object has no attribute 'df_ml'.
         """
-        valeurs_defaut = {
-            "e_portee": 0.60,
-            "e_priorite": 0.35,
-            "e_recon": 0.08,
-            "calibre": False,
-            "source": "valeurs_par_defaut",
-        }
+        Ancienne logique désactivée.
 
-        df_ml = getattr(self, "df_ml", None)
-        if df_ml is None or not isinstance(df_ml, pd.DataFrame) or len(df_ml) < 10:
-            return valeurs_defaut
+        On ne retourne plus d'élasticités par défaut, car elles n'ont pas
+        de fondement actuariel suffisant pour proposer des variantes.
+        Les variantes sont générées par optimisation directe :
+        dichotomie ou frontière De Finetti.
+        """
+        self._log(
+            "Optimisation",
+            "Élasticités par défaut désactivées",
+            "Les variantes sont générées par dichotomie ou De Finetti."
+        )
+        return None
 
-        df = df_ml.copy().replace([np.inf, -np.inf], np.nan)
-        colonnes = ["taux_retenu", "priorite", "portee", "nb_reconstitutions"]
-        if not all(c in df.columns for c in colonnes):
-            return valeurs_defaut
+    def _tirer_severites(self, n, rng):
+        """
+        Tire des sévérités selon la loi sélectionnée.
+        Utilise les paramètres actuariels déjà estimés : Pareto, Lognormale ou GPD.
+        """
+        n = int(max(n, 0))
+        if n == 0:
+            return np.array([], dtype=float)
 
-        for c in colonnes:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
+        loi = str(self.loi_sim or "pareto").lower()
 
-        df = df.dropna(subset=colonnes)
-        df = df[
-            (df["taux_retenu"] > 0)
-            & (df["priorite"] > 0)
-            & (df["portee"] > 0)
-            & (df["nb_reconstitutions"] >= 0)
-        ].copy()
+        if loi in ("lognormale", "lognormal"):
+            if self.mu_ln is None or self.sigma_ln is None or self.sigma_ln <= 0:
+                self._alerte("WARN", "Paramètres lognormaux absents : retour à Pareto.")
+            else:
+                return rng.lognormal(mean=float(self.mu_ln), sigma=float(self.sigma_ln), size=n)
 
-        if len(df) < 10:
-            return valeurs_defaut
+        if loi == "gpd":
+            if self.gpd_beta is None or self.gpd_beta <= 0:
+                self._alerte("WARN", "Paramètres GPD absents : retour à Pareto.")
+            else:
+                u = np.clip(rng.random(n), 1e-12, 1 - 1e-12)
+                xi = float(self.gpd_xi or 0.0)
+                beta = float(self.gpd_beta)
 
-        try:
-            from sklearn.linear_model import LinearRegression
+                if abs(xi) < 1e-8:
+                    return self.seuil - beta * np.log(1 - u)
 
-            X = pd.DataFrame(
-                {
-                    "log_portee": np.log(df["portee"]),
-                    "log_priorite": np.log(df["priorite"]),
-                    "log_recon": np.log1p(df["nb_reconstitutions"]),
-                }
-            )
-            y = np.log(df["taux_retenu"])
+                return self.seuil + (beta / xi) * ((1 - u) ** (-xi) - 1)
 
-            reg = LinearRegression()
-            reg.fit(X, y)
-            coef = dict(zip(X.columns, reg.coef_))
+        # Pareto avec alpha/seuil estimés. Ce n'est pas une élasticité arbitraire.
+        alpha = max(float(self.alpha or 1.5), 1e-6)
+        seuil = max(float(self.seuil or 1.0), 1.0)
+        u = np.clip(rng.random(n), 1e-12, 1 - 1e-12)
+        return seuil * (1 - u) ** (-1 / alpha)
 
-            e_portee = float(coef.get("log_portee", valeurs_defaut["e_portee"]))
-            e_priorite = float(-coef.get("log_priorite", valeurs_defaut["e_priorite"]))
-            e_recon = float(coef.get("log_recon", valeurs_defaut["e_recon"]))
+    def _charges_techniques(self, t_info):
+        """
+        Récupère les chargements techniques disponibles sur la tranche.
+        Les clés absentes valent 0.
+        """
+        brokage = self._num(t_info.get("brokage", 0.0))
+        frais = self._num(t_info.get("frais", 0.0))
+        marge = self._num(t_info.get("marge", 0.0))
+        retro = self._num(t_info.get("retrocession", 0.0))
 
-            # Encadrement prudent : on évite des sensibilités absurdes.
-            e_portee = min(max(e_portee, 0.10), 1.50)
-            e_priorite = min(max(e_priorite, 0.05), 1.50)
-            e_recon = min(max(e_recon, 0.00), 0.50)
+        chargement_total = brokage + frais + marge
+        chargement_total = min(max(chargement_total, 0.0), 0.80)
+        retro = min(max(retro, 0.0), 0.80)
 
+        return chargement_total, retro
+
+    def _taux_simule_candidat(self, t_info, n_sim=20000, seed=12345):
+        """
+        Calcule le taux technique d'une tranche candidate par simulation directe.
+
+        Le taux est recalculé à partir :
+          - de la fréquence lambda ;
+          - de la loi de sévérité ;
+          - de la priorité ;
+          - de la portée ;
+          - des clauses AAD/AAL ;
+          - du nombre de reconstitutions ;
+          - des chargements techniques.
+        """
+        if self.gnpi <= 0:
             return {
-                "e_portee": e_portee,
-                "e_priorite": e_priorite,
-                "e_recon": e_recon,
-                "calibre": True,
-                "source": "dataset_scenarios_ml",
-                "n_obs": int(len(df)),
+                "taux_pur": 0.0,
+                "taux_technique": 0.0,
+                "prime": 0.0,
+                "var_retenu": np.nan,
+                "moyenne_retenu": np.nan,
+                "message": "GNPI nul ou négatif.",
             }
 
-        except Exception as exc:
-            self._alerte("INFO", f"Calibration des élasticités non utilisée : {exc}")
-            return valeurs_defaut
+        D = float(t_info.get("priorite", 0.0) or 0.0)
+        C = float(t_info.get("portee", 0.0) or 0.0)
+        aad = t_info.get("AAD")
+        aal = t_info.get("AAL")
+        n_rec = int(t_info.get("nb_reconstitutions", 0) or 0)
+
+        if D < 0 or C <= 0:
+            return {
+                "taux_pur": 0.0,
+                "taux_technique": 0.0,
+                "prime": 0.0,
+                "var_retenu": np.nan,
+                "moyenne_retenu": np.nan,
+                "message": "Priorité ou portée invalide.",
+            }
+
+        rng = np.random.default_rng(seed)
+        lambda_ = max(float(self.lambda_ or 0.0), 0.0)
+        n_sim = int(max(n_sim, 1))
+
+        pertes_cedees = np.zeros(n_sim, dtype=float)
+        pertes_retenues = np.zeros(n_sim, dtype=float)
+        limite_annuelle = C * (1 + max(n_rec, 0))
+
+        for i in range(n_sim):
+            n_sin = rng.poisson(lambda_)
+            sev = self._tirer_severites(n_sin, rng)
+
+            if len(sev) == 0:
+                continue
+
+            brut = float(sev.sum())
+            cede = float(np.minimum(np.maximum(sev - D, 0.0), C).sum())
+
+            if aad:
+                cede = max(cede - float(aad), 0.0)
+            if aal:
+                cede = min(cede, float(aal))
+
+            cede = min(cede, limite_annuelle)
+            retenu = max(brut - cede, 0.0)
+
+            pertes_cedees[i] = cede
+            pertes_retenues[i] = retenu
+
+        charge_pure = float(np.mean(pertes_cedees))
+        taux_pur = charge_pure / self.gnpi
+
+        chargement_total, retro = self._charges_techniques(t_info)
+        denom = max(1.0 - chargement_total, 1e-6)
+        taux_technique = taux_pur * (1.0 - retro) / denom
+
+        return {
+            "taux_pur": float(taux_pur),
+            "taux_technique": float(taux_technique),
+            "prime": float(taux_technique * self.gnpi),
+            "var_retenu": float(np.var(pertes_retenues)),
+            "moyenne_retenu": float(np.mean(pertes_retenues)),
+            "priorite": D,
+            "portee": C,
+            "nb_reconstitutions": n_rec,
+        }
+
+    def optimiser_dichotomie_tranche(
+        self,
+        t_info,
+        taux_cible,
+        variable="priorite",
+        borne_min=None,
+        borne_max=None,
+        tol=1e-5,
+        max_iter=40,
+        n_sim=20000,
+    ):
+        """
+        Optimisation dichotomique.
+
+        Objectif : trouver la priorité ou la portée qui permet d'atteindre un taux cible.
+        Hypothèse : le taux est décroissant en priorité et croissant en portée.
+        """
+        t_base = dict(t_info)
+        taux_cible = float(taux_cible or 0.0)
+
+        if taux_cible <= 0:
+            return {
+                "converge": False,
+                "message": "Taux cible nul ou négatif.",
+                "tranche": t_base.get("nom", ""),
+            }
+
+        D0 = float(t_base.get("priorite", 0.0) or 0.0)
+        C0 = float(t_base.get("portee", 0.0) or 0.0)
+
+        if variable == "priorite":
+            if borne_min is None:
+                borne_min = max(0.0, 0.25 * D0)
+            if borne_max is None:
+                borne_max = max(D0 * 3.0, D0 + 3.0 * C0, self.seuil * 2.0)
+        elif variable == "portee":
+            if borne_min is None:
+                borne_min = max(100_000.0, 0.25 * C0)
+            if borne_max is None:
+                borne_max = max(C0 * 3.0, C0 + D0, self.seuil * 2.0)
+        else:
+            return {
+                "converge": False,
+                "message": "Variable d'optimisation non reconnue. Utiliser 'priorite' ou 'portee'.",
+                "tranche": t_base.get("nom", ""),
+            }
+
+        def evaluer(x, seed_offset=0):
+            tc = dict(t_base)
+            tc[variable] = float(x)
+            return self._taux_simule_candidat(tc, n_sim=n_sim, seed=12345 + seed_offset)
+
+        res_min = evaluer(borne_min, 1)
+        res_max = evaluer(borne_max, 2)
+        tau_min = float(res_min.get("taux_technique", 0.0) or 0.0)
+        tau_max = float(res_max.get("taux_technique", 0.0) or 0.0)
+
+        low, high = float(borne_min), float(borne_max)
+
+        if variable == "priorite":
+            cible_encadree = min(tau_min, tau_max) <= taux_cible <= max(tau_min, tau_max)
+        else:
+            cible_encadree = min(tau_min, tau_max) <= taux_cible <= max(tau_min, tau_max)
+
+        if not cible_encadree:
+            meilleur = res_min if abs(tau_min - taux_cible) <= abs(tau_max - taux_cible) else res_max
+            return {
+                "converge": False,
+                "message": "Taux cible hors de la plage atteignable par dichotomie.",
+                "tranche": t_base.get("nom", ""),
+                "variable": variable,
+                "borne_min": float(borne_min),
+                "borne_max": float(borne_max),
+                "tau_min": tau_min,
+                "tau_max": tau_max,
+                "meilleur_point": meilleur,
+            }
+
+        best = None
+        for k in range(int(max_iter)):
+            mid = 0.5 * (low + high)
+            res_mid = evaluer(mid, 10 + k)
+            tau_mid = float(res_mid.get("taux_technique", 0.0) or 0.0)
+            best = res_mid
+
+            if abs(tau_mid - taux_cible) <= tol:
+                break
+
+            if variable == "priorite":
+                # priorité ↑ => taux ↓
+                if tau_mid > taux_cible:
+                    low = mid
+                else:
+                    high = mid
+            else:
+                # portée ↑ => taux ↑
+                if tau_mid < taux_cible:
+                    low = mid
+                else:
+                    high = mid
+
+        if best is None:
+            best = res_min
+            k = 0
+
+        return {
+            "converge": True,
+            "tranche": t_base.get("nom", ""),
+            "variable": variable,
+            "valeur_optimale": float(best.get(variable, 0.0) or 0.0),
+            "tau_star": float(best.get("taux_technique", 0.0) or 0.0),
+            "prime_star": float(best.get("prime", 0.0) or 0.0),
+            "iterations": int(k + 1),
+            "detail": best,
+        }
+
+    def frontiere_de_finetti_tranche(
+        self,
+        t_info,
+        budget_prime_pct,
+        n_points_priorite=20,
+        n_points_portee=10,
+        n_sim=15000,
+    ):
+        """
+        Frontière De Finetti simplifiée.
+
+        Critère : minimiser Var(perte retenue) sous contrainte prime <= budget.
+        """
+        t_base = dict(t_info)
+        budget_prime_pct = float(budget_prime_pct or 0.0)
+
+        if budget_prime_pct <= 0:
+            return {
+                "converge": False,
+                "message": "Budget de prime nul ou négatif.",
+                "tranche": t_base.get("nom", ""),
+            }
+
+        D0 = float(t_base.get("priorite", 0.0) or 0.0)
+        C0 = float(t_base.get("portee", 0.0) or 0.0)
+
+        if D0 <= 0 or C0 <= 0:
+            return {
+                "converge": False,
+                "message": "Priorité ou portée invalide.",
+                "tranche": t_base.get("nom", ""),
+            }
+
+        priorites = np.linspace(
+            max(0.0, 0.25 * D0),
+            max(D0 * 3.0, D0 + 2.0 * C0),
+            int(max(n_points_priorite, 2)),
+        )
+        portees = np.linspace(
+            max(100_000.0, 0.50 * C0),
+            max(2.0 * C0, C0 + D0),
+            int(max(n_points_portee, 2)),
+        )
+
+        candidats = []
+        seed = 5000
+        for i, D in enumerate(priorites):
+            for j, C in enumerate(portees):
+                tc = dict(t_base)
+                tc["priorite"] = float(D)
+                tc["portee"] = float(C)
+
+                res = self._taux_simule_candidat(tc, n_sim=n_sim, seed=seed + i * 100 + j)
+
+                candidats.append(
+                    {
+                        "D": float(D),
+                        "C": float(C),
+                        "tau": float(res.get("taux_technique", 0.0) or 0.0),
+                        "prime": float(res.get("prime", 0.0) or 0.0),
+                        "var_retenu": float(res.get("var_retenu", np.nan)),
+                        "moyenne_retenu": float(res.get("moyenne_retenu", np.nan)),
+                        "detail": res,
+                    }
+                )
+
+        admissibles = [c for c in candidats if c["tau"] <= budget_prime_pct]
+
+        if not candidats:
+            return {
+                "converge": False,
+                "message": "Aucun candidat généré.",
+                "tranche": t_base.get("nom", ""),
+            }
+
+        if not admissibles:
+            meilleur = min(candidats, key=lambda c: abs(c["tau"] - budget_prime_pct))
+            return {
+                "converge": False,
+                "message": "Aucun candidat sous le budget. Le point le plus proche est retourné.",
+                "tranche": t_base.get("nom", ""),
+                "budget": budget_prime_pct,
+                "optimal": meilleur,
+                "frontiere": candidats,
+            }
+
+        optimal = min(admissibles, key=lambda c: c["var_retenu"])
+        return {
+            "converge": True,
+            "tranche": t_base.get("nom", ""),
+            "budget": budget_prime_pct,
+            "optimal": optimal,
+            "frontiere": admissibles,
+            "n_candidats": len(candidats),
+            "n_admissibles": len(admissibles),
+        }
 
     # ------------------------------------------------------------------
     # ÉTAPE 0 — VALIDATION
@@ -705,18 +995,13 @@ class AgentActuarielPython:
         """
         Génère des variantes comparables du programme initial.
 
-        Logique :
-        - ne pas produire des programmes explicitement « avantage cédante/réassureur » ;
-        - rester proche du programme initial ;
-        - privilégier la stabilité et la convergence des méthodes ;
-        - utiliser les élasticités calibrées si le dataset ML existe, sinon valeurs par défaut.
+        Correction : suppression des élasticités par défaut.
+        Les variantes sont désormais évaluées par simulation directe, puis
+        sélectionnées selon une logique de proximité, de budget et de variance
+        du risque retenu inspirée de De Finetti.
         """
-        self._log("Optimisation", "Recherche de programmes alternatifs comparables.")
-
-        elasticites = self._calibrer_elasticites()
-        e_portee = elasticites["e_portee"]
-        e_priorite = elasticites["e_priorite"]
-        e_recon = elasticites["e_recon"]
+        self._log("Optimisation", "Recherche de programmes alternatifs comparables par simulation directe.")
+        self._calibrer_elasticites()
 
         sim_map = {r.get("tranche"): r for r in self.resultats_sim}
         bc_map = {r.get("tranche"): r for r in self.resultats_bc}
@@ -730,12 +1015,6 @@ class AgentActuarielPython:
             if t.get("type") == "travaillante":
                 return max(bc, sim)
             return max(sim, mkt)
-
-        def sigma_ref(t):
-            nom = t.get("nom", "")
-            s_sim = float(sim_map.get(nom, {}).get("sigma_sim", 0.0) or 0.0)
-            s_bc = float(bc_map.get(nom, {}).get("sigma_hist", 0.0) or 0.0)
-            return max(s_sim, s_bc, 0.0)
 
         def convergence_ref(t):
             nom = t.get("nom", "")
@@ -752,16 +1031,18 @@ class AgentActuarielPython:
                 return 0.0
             return float(np.std(vals) / max(np.mean(vals), 1e-12))
 
-        def evaluer_programme(label, mult_D=1.0, mult_C=1.0, delta_rec=0):
+        def construire_programme(label, multiplicateurs, methode, n_sim_eval=3000):
             tranches_alt = []
             prime = 0.0
             protection = 0.0
-            variance_proxy = 0.0
+            variance_retenue = 0.0
             convergence = 0.0
             ecart_structure = 0.0
 
-            for t in self.tranches:
+            for idx, t in enumerate(self.tranches):
                 t_alt = dict(t)
+                mult_D, mult_C, delta_rec = multiplicateurs
+
                 D0 = float(t.get("priorite", 0.0) or 0.0)
                 C0 = float(t.get("portee", 0.0) or 0.0)
                 rec0 = int(t.get("nb_reconstitutions", 0) or 0)
@@ -774,37 +1055,39 @@ class AgentActuarielPython:
                 t_alt["portee"] = C1
                 t_alt["nb_reconstitutions"] = rec1
 
-                base = taux_base(t)
-                if base <= 0:
-                    base = float(sim_map.get(t.get("nom", ""), {}).get("taux_technique", 0.0) or 0.0)
+                res = self._taux_simule_candidat(t_alt, n_sim=n_sim_eval, seed=7000 + idx)
+                taux = float(res.get("taux_technique", 0.0) or 0.0)
+                prime_t = float(res.get("prime", 0.0) or 0.0)
 
-                adj_portee = (C1 / max(C0, 1.0)) ** e_portee
-                adj_priorite = (D0 / max(D1, 1.0)) ** e_priorite
-                adj_recon = ((rec1 + 1) / max(rec0 + 1, 1)) ** e_recon
-                taux = max(base * adj_portee * adj_priorite * adj_recon, 0.0)
+                # Garde-fou : si la simulation candidate échoue, on garde le taux de référence.
+                if taux <= 0:
+                    taux = taux_base(t)
+                    prime_t = self.gnpi * taux
 
-                prime_t = self.gnpi * taux
                 prime += prime_t
-                protection_t = C1 * (rec1 + 1)
-                protection += protection_t
-
-                sig = sigma_ref(t)
-                variance_proxy += (sig * self.gnpi) ** 2 * (C1 / max(C0, 1.0)) ** 2
+                protection += C1 * (rec1 + 1)
+                variance_retenue += float(res.get("var_retenu", 0.0) or 0.0)
                 convergence += convergence_ref(t)
-                ecart_structure += abs(D1 / max(D0, 1.0) - 1.0) + abs(C1 / max(C0, 1.0) - 1.0) + 0.25 * abs(rec1 - rec0)
+
+                if D0 > 0:
+                    ecart_structure += abs(D1 / D0 - 1.0)
+                if C0 > 0:
+                    ecart_structure += abs(C1 / C0 - 1.0)
+                ecart_structure += 0.25 * abs(rec1 - rec0)
 
                 t_alt["_taux"] = taux
                 t_alt["_prime"] = prime_t
+                t_alt["_methode_optimisation"] = methode
+                t_alt["_var_retenu"] = float(res.get("var_retenu", 0.0) or 0.0)
                 tranches_alt.append(t_alt)
 
             n = max(len(self.tranches), 1)
             taux_global = prime / max(self.gnpi, 1.0)
-            variance_moyenne = variance_proxy / n
+            variance_moyenne = variance_retenue / n
             convergence_moyenne = convergence / n
             ecart_structure_moyen = ecart_structure / n
 
-            # Score De Finetti simplifié : priorité à la variance faible,
-            # puis à la convergence des méthodes et à la proximité du programme initial.
+            # Score De Finetti simplifié : variance retenue faible + convergence + proximité structurelle.
             score = (
                 -np.log1p(max(variance_moyenne, 0.0))
                 -2.0 * convergence_moyenne
@@ -813,7 +1096,8 @@ class AgentActuarielPython:
 
             return {
                 "label": label,
-                "description": "Structure alternative comparable au programme initial.",
+                "description": "Structure alternative comparable évaluée par simulation directe.",
+                "methode_optimisation": methode,
                 "tranches": tranches_alt,
                 "prime": round(prime, 2),
                 "taux_global": round(taux_global, 6),
@@ -822,15 +1106,160 @@ class AgentActuarielPython:
                 "indice_convergence_methodes": round(float(max(0.0, 1.0 - convergence_moyenne)) * 100, 2),
                 "indice_comparabilite": round(float(max(0.0, 1.0 - ecart_structure_moyen)) * 100, 2),
                 "score_de_finetti": round(float(score), 6),
-                "elasticites": elasticites,
+                "elasticites": None,
             }
 
         variantes = {
-            "programme_initial": evaluer_programme("Programme initial", 1.00, 1.00, 0),
-            "structure_comparable_1": evaluer_programme("Structure comparable 1", 1.05, 1.00, 0),
-            "structure_comparable_2": evaluer_programme("Structure comparable 2", 1.00, 0.95, 0),
-            "structure_comparable_3": evaluer_programme("Structure comparable 3", 1.10, 1.00, -1),
-            "structure_comparable_4": evaluer_programme("Structure comparable 4", 0.95, 1.05, 0),
+            "programme_initial": construire_programme("Programme initial", (1.00, 1.00, 0), "simulation_directe"),
+            "structure_comparable_1": construire_programme("Structure comparable 1", (1.05, 1.00, 0), "simulation_directe"),
+            "structure_comparable_2": construire_programme("Structure comparable 2", (1.00, 0.95, 0), "simulation_directe"),
+            "structure_comparable_3": construire_programme("Structure comparable 3", (1.10, 1.00, -1), "simulation_directe"),
+            "structure_comparable_4": construire_programme("Structure comparable 4", (0.95, 1.05, 0), "simulation_directe"),
+        }
+
+        # Variante par dichotomie : on ajuste la priorité de chaque tranche vers son taux de référence.
+        tranches_dicho = []
+        prime_dicho = 0.0
+        protection_dicho = 0.0
+        variance_dicho = 0.0
+        ecart_structure_dicho = 0.0
+
+        for idx, t in enumerate(self.tranches):
+            t_alt = dict(t)
+            cible = taux_base(t)
+            if cible > 0:
+                res_dicho = self.optimiser_dichotomie_tranche(
+                    t,
+                    taux_cible=cible,
+                    variable="priorite",
+                    n_sim=2500,
+                    tol=1e-5,
+                    max_iter=25,
+                )
+                detail = res_dicho.get("detail") or res_dicho.get("meilleur_point") or {}
+                if detail:
+                    D1 = self._arrondir_aed(detail.get("priorite", t.get("priorite", 0.0)), minimum=500_000)
+                    t_alt["priorite"] = D1
+                    t_alt["_taux"] = float(detail.get("taux_technique", cible) or cible)
+                    t_alt["_prime"] = float(detail.get("prime", self.gnpi * t_alt["_taux"]) or 0.0)
+                    t_alt["_var_retenu"] = float(detail.get("var_retenu", 0.0) or 0.0)
+                    t_alt["_methode_optimisation"] = "dichotomie_priorite"
+                else:
+                    t_alt["_taux"] = cible
+                    t_alt["_prime"] = self.gnpi * cible
+                    t_alt["_var_retenu"] = 0.0
+                    t_alt["_methode_optimisation"] = "dichotomie_non_convergee"
+            else:
+                t_alt["_taux"] = 0.0
+                t_alt["_prime"] = 0.0
+                t_alt["_var_retenu"] = 0.0
+                t_alt["_methode_optimisation"] = "taux_reference_nul"
+
+            D0 = float(t.get("priorite", 0.0) or 0.0)
+            D1 = float(t_alt.get("priorite", 0.0) or 0.0)
+            C1 = float(t_alt.get("portee", 0.0) or 0.0)
+            rec1 = int(t_alt.get("nb_reconstitutions", 0) or 0)
+
+            prime_dicho += float(t_alt.get("_prime", 0.0) or 0.0)
+            protection_dicho += C1 * (rec1 + 1)
+            variance_dicho += float(t_alt.get("_var_retenu", 0.0) or 0.0)
+            if D0 > 0:
+                ecart_structure_dicho += abs(D1 / D0 - 1.0)
+            tranches_dicho.append(t_alt)
+
+        n = max(len(self.tranches), 1)
+        taux_global_dicho = prime_dicho / max(self.gnpi, 1.0)
+        variance_moy_dicho = variance_dicho / n
+        ecart_moy_dicho = ecart_structure_dicho / n
+        score_dicho = -np.log1p(max(variance_moy_dicho, 0.0)) - 1.5 * ecart_moy_dicho
+        variantes["structure_dichotomie"] = {
+            "label": "Structure par dichotomie",
+            "description": "Priorités ajustées par dichotomie pour rester proches des taux de référence.",
+            "methode_optimisation": "dichotomie_priorite",
+            "tranches": tranches_dicho,
+            "prime": round(prime_dicho, 2),
+            "taux_global": round(taux_global_dicho, 6),
+            "protection_theorique": round(protection_dicho, 2),
+            "variance_proxy": round(float(variance_moy_dicho), 2),
+            "indice_convergence_methodes": 100.0,
+            "indice_comparabilite": round(float(max(0.0, 1.0 - ecart_moy_dicho)) * 100, 2),
+            "score_de_finetti": round(float(score_dicho), 6),
+            "elasticites": None,
+        }
+
+        # Variante De Finetti : pour chaque tranche, on choisit le couple D/C minimisant la variance sous budget.
+        tranches_finetti = []
+        prime_finetti = 0.0
+        protection_finetti = 0.0
+        variance_finetti = 0.0
+        ecart_structure_finetti = 0.0
+
+        for idx, t in enumerate(self.tranches):
+            t_alt = dict(t)
+            budget = max(taux_base(t), 0.000001)
+            res_fin = self.frontiere_de_finetti_tranche(
+                t,
+                budget_prime_pct=budget,
+                n_points_priorite=6,
+                n_points_portee=4,
+                n_sim=1500,
+            )
+            opt = res_fin.get("optimal") or {}
+            detail = opt.get("detail") or {}
+
+            if opt:
+                D1 = self._arrondir_aed(opt.get("D", t.get("priorite", 0.0)), minimum=500_000)
+                C1 = self._arrondir_aed(opt.get("C", t.get("portee", 0.0)), minimum=500_000)
+                tau = float(opt.get("tau", 0.0) or detail.get("taux_technique", 0.0) or 0.0)
+                prime_t = float(opt.get("prime", 0.0) or detail.get("prime", self.gnpi * tau) or 0.0)
+                var_ret = float(opt.get("var_retenu", 0.0) or detail.get("var_retenu", 0.0) or 0.0)
+                t_alt["priorite"] = D1
+                t_alt["portee"] = C1
+                t_alt["_taux"] = tau
+                t_alt["_prime"] = prime_t
+                t_alt["_var_retenu"] = var_ret
+                t_alt["_methode_optimisation"] = "frontiere_de_finetti"
+            else:
+                tau = taux_base(t)
+                prime_t = self.gnpi * tau
+                var_ret = 0.0
+                t_alt["_taux"] = tau
+                t_alt["_prime"] = prime_t
+                t_alt["_var_retenu"] = var_ret
+                t_alt["_methode_optimisation"] = "frontiere_de_finetti_non_convergee"
+
+            D0 = float(t.get("priorite", 0.0) or 0.0)
+            C0 = float(t.get("portee", 0.0) or 0.0)
+            D1 = float(t_alt.get("priorite", 0.0) or 0.0)
+            C1 = float(t_alt.get("portee", 0.0) or 0.0)
+            rec1 = int(t_alt.get("nb_reconstitutions", 0) or 0)
+
+            prime_finetti += float(t_alt.get("_prime", 0.0) or 0.0)
+            protection_finetti += C1 * (rec1 + 1)
+            variance_finetti += float(t_alt.get("_var_retenu", 0.0) or 0.0)
+            if D0 > 0:
+                ecart_structure_finetti += abs(D1 / D0 - 1.0)
+            if C0 > 0:
+                ecart_structure_finetti += abs(C1 / C0 - 1.0)
+            tranches_finetti.append(t_alt)
+
+        variance_moy_finetti = variance_finetti / n
+        ecart_moy_finetti = ecart_structure_finetti / n
+        taux_global_finetti = prime_finetti / max(self.gnpi, 1.0)
+        score_finetti = -np.log1p(max(variance_moy_finetti, 0.0)) - 1.5 * ecart_moy_finetti
+        variantes["structure_de_finetti"] = {
+            "label": "Structure De Finetti",
+            "description": "Structure sélectionnée par minimisation de la variance retenue sous contrainte de budget.",
+            "methode_optimisation": "frontiere_de_finetti",
+            "tranches": tranches_finetti,
+            "prime": round(prime_finetti, 2),
+            "taux_global": round(taux_global_finetti, 6),
+            "protection_theorique": round(protection_finetti, 2),
+            "variance_proxy": round(float(variance_moy_finetti), 2),
+            "indice_convergence_methodes": 100.0,
+            "indice_comparabilite": round(float(max(0.0, 1.0 - ecart_moy_finetti)) * 100, 2),
+            "score_de_finetti": round(float(score_finetti), 6),
+            "elasticites": None,
         }
 
         initial_prime = variantes["programme_initial"]["prime"]
@@ -845,12 +1274,12 @@ class AgentActuarielPython:
 
         candidats = {k: v for k, v in variantes.items() if k != "programme_initial"}
         programme_recommande_key = max(candidats, key=lambda k: candidats[k]["score_de_finetti"]) if candidats else "programme_initial"
-        variantes["programme_recommande"] = variantes[programme_recommande_key]
+        variantes["programme_recommande"] = dict(variantes[programme_recommande_key])
         variantes["programme_recommande"]["cle_source"] = programme_recommande_key
 
         self._log(
             "Optimisation",
-            f"Variantes comparables générées. Élasticités : source={elasticites.get('source')}, calibré={elasticites.get('calibre')}.",
+            "Variantes comparables générées sans élasticités par défaut : simulation directe, dichotomie et De Finetti.",
         )
         return variantes
 
