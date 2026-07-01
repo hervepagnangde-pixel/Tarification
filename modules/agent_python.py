@@ -261,6 +261,113 @@ class AgentActuarielPython:
             "nb_reconstitutions": n_rec,
         }
 
+    def _extraire_bornes_optimisation(self, t_info, variable):
+        """
+        Retourne les bornes explicites fournies dans la tranche.
+
+        Aucune borne n'est inventée. Si les bornes ne sont pas dans t_info,
+        l'optimisation dichotomique est déclarée indisponible.
+        """
+        if variable == "priorite":
+            couples = [
+                ("priorite_min", "priorite_max"),
+                ("borne_priorite_min", "borne_priorite_max"),
+                ("D_min", "D_max"),
+                ("d_min", "d_max"),
+            ]
+        elif variable == "portee":
+            couples = [
+                ("portee_min", "portee_max"),
+                ("borne_portee_min", "borne_portee_max"),
+                ("C_min", "C_max"),
+                ("c_min", "c_max"),
+            ]
+        else:
+            return None, None
+
+        for k_min, k_max in couples:
+            if k_min in t_info and k_max in t_info:
+                b_min = self._num(t_info.get(k_min), default=np.nan)
+                b_max = self._num(t_info.get(k_max), default=np.nan)
+                if np.isfinite(b_min) and np.isfinite(b_max) and b_max > b_min:
+                    return float(b_min), float(b_max)
+
+        return None, None
+
+    def _extraire_grilles_finetti(self, t_info):
+        """
+        Retourne une grille de candidats D/C issue de données explicites.
+
+        Sources acceptées, dans l'ordre :
+          1. listes fournies dans t_info : grille_priorites/grille_portees ;
+          2. couples candidats fournis dans t_info : candidats_programme ;
+          3. dataset ML/labo df_ml, s'il existe et contient priorite/portee.
+
+        Si aucune source explicite n'existe, aucune grille n'est créée.
+        """
+        candidats_pairs = []
+
+        # 1) Couples explicites directement fournis
+        for key in ["candidats_programme", "candidats", "programmes_candidats"]:
+            vals = t_info.get(key)
+            if isinstance(vals, list):
+                for item in vals:
+                    if isinstance(item, dict):
+                        D = self._num(item.get("priorite", item.get("D")), default=np.nan)
+                        C = self._num(item.get("portee", item.get("C")), default=np.nan)
+                        if np.isfinite(D) and np.isfinite(C) and D >= 0 and C > 0:
+                            candidats_pairs.append((float(D), float(C)))
+
+        if candidats_pairs:
+            return sorted(set(candidats_pairs))
+
+        # 2) Grilles explicites séparées
+        priorites = None
+        portees = None
+        for k in ["grille_priorites", "priorites_candidates", "priorites_candidates_aed"]:
+            if isinstance(t_info.get(k), list) and t_info.get(k):
+                priorites = [self._num(x, default=np.nan) for x in t_info.get(k)]
+                break
+        for k in ["grille_portees", "portees_candidates", "portees_candidates_aed"]:
+            if isinstance(t_info.get(k), list) and t_info.get(k):
+                portees = [self._num(x, default=np.nan) for x in t_info.get(k)]
+                break
+
+        if priorites and portees:
+            pairs = []
+            for D in priorites:
+                for C in portees:
+                    if np.isfinite(D) and np.isfinite(C) and D >= 0 and C > 0:
+                        pairs.append((float(D), float(C)))
+            if pairs:
+                return sorted(set(pairs))
+
+        # 3) Dataset labo/ML : on utilise uniquement des scénarios réellement générés
+        df_ml = getattr(self, "df_ml", None)
+        if isinstance(df_ml, pd.DataFrame) and {"priorite", "portee"}.issubset(df_ml.columns):
+            df = df_ml.copy().replace([np.inf, -np.inf], np.nan)
+            df["priorite"] = pd.to_numeric(df["priorite"], errors="coerce")
+            df["portee"] = pd.to_numeric(df["portee"], errors="coerce")
+
+            # Si le dataset porte le type ou le nom de tranche, on filtre sans inventer.
+            nom = t_info.get("nom", "")
+            typ = t_info.get("type", "")
+            if "tranche_base" in df.columns and nom:
+                df_nom = df[df["tranche_base"].astype(str) == str(nom)]
+                if len(df_nom) >= 2:
+                    df = df_nom
+            elif "type" in df.columns and typ:
+                df_typ = df[df["type"].astype(str) == str(typ)]
+                if len(df_typ) >= 2:
+                    df = df_typ
+
+            df = df[(df["priorite"] >= 0) & (df["portee"] > 0)].dropna(subset=["priorite", "portee"])
+            pairs = [(float(r["priorite"]), float(r["portee"])) for _, r in df[["priorite", "portee"]].drop_duplicates().iterrows()]
+            if pairs:
+                return sorted(set(pairs))
+
+        return []
+
     def optimiser_dichotomie_tranche(
         self,
         t_info,
@@ -273,10 +380,11 @@ class AgentActuarielPython:
         n_sim=20000,
     ):
         """
-        Optimisation dichotomique.
+        Optimisation dichotomique sans bornes inventées.
 
-        Objectif : trouver la priorité ou la portée qui permet d'atteindre un taux cible.
-        Hypothèse : le taux est décroissant en priorité et croissant en portée.
+        Si borne_min/borne_max ne sont pas fournies par l'appel ou par t_info,
+        la méthode refuse de s'exécuter. Cela évite les bornes arbitraires
+        du type 25 %, 50 %, 200 % ou 300 % du programme initial.
         """
         t_base = dict(t_info)
         taux_cible = float(taux_cible or 0.0)
@@ -288,24 +396,39 @@ class AgentActuarielPython:
                 "tranche": t_base.get("nom", ""),
             }
 
-        D0 = float(t_base.get("priorite", 0.0) or 0.0)
-        C0 = float(t_base.get("portee", 0.0) or 0.0)
-
-        if variable == "priorite":
-            if borne_min is None:
-                borne_min = max(0.0, 0.25 * D0)
-            if borne_max is None:
-                borne_max = max(D0 * 3.0, D0 + 3.0 * C0, self.seuil * 2.0)
-        elif variable == "portee":
-            if borne_min is None:
-                borne_min = max(100_000.0, 0.25 * C0)
-            if borne_max is None:
-                borne_max = max(C0 * 3.0, C0 + D0, self.seuil * 2.0)
-        else:
+        if variable not in {"priorite", "portee"}:
             return {
                 "converge": False,
                 "message": "Variable d'optimisation non reconnue. Utiliser 'priorite' ou 'portee'.",
                 "tranche": t_base.get("nom", ""),
+            }
+
+        if borne_min is None or borne_max is None:
+            b_min, b_max = self._extraire_bornes_optimisation(t_base, variable)
+            borne_min = b_min if borne_min is None else borne_min
+            borne_max = b_max if borne_max is None else borne_max
+
+        if borne_min is None or borne_max is None:
+            return {
+                "converge": False,
+                "message": (
+                    "Bornes d'optimisation absentes. Fournir explicitement "
+                    f"{variable}_min/{variable}_max ou borne_{variable}_min/borne_{variable}_max."
+                ),
+                "tranche": t_base.get("nom", ""),
+                "variable": variable,
+            }
+
+        borne_min = float(borne_min)
+        borne_max = float(borne_max)
+        if not np.isfinite(borne_min) or not np.isfinite(borne_max) or borne_max <= borne_min:
+            return {
+                "converge": False,
+                "message": "Bornes d'optimisation invalides.",
+                "tranche": t_base.get("nom", ""),
+                "variable": variable,
+                "borne_min": borne_min,
+                "borne_max": borne_max,
             }
 
         def evaluer(x, seed_offset=0):
@@ -318,28 +441,23 @@ class AgentActuarielPython:
         tau_min = float(res_min.get("taux_technique", 0.0) or 0.0)
         tau_max = float(res_max.get("taux_technique", 0.0) or 0.0)
 
-        low, high = float(borne_min), float(borne_max)
-
-        if variable == "priorite":
-            cible_encadree = min(tau_min, tau_max) <= taux_cible <= max(tau_min, tau_max)
-        else:
-            cible_encadree = min(tau_min, tau_max) <= taux_cible <= max(tau_min, tau_max)
-
-        if not cible_encadree:
+        if not (min(tau_min, tau_max) <= taux_cible <= max(tau_min, tau_max)):
             meilleur = res_min if abs(tau_min - taux_cible) <= abs(tau_max - taux_cible) else res_max
             return {
                 "converge": False,
-                "message": "Taux cible hors de la plage atteignable par dichotomie.",
+                "message": "Taux cible hors de la plage fournie par l'utilisateur.",
                 "tranche": t_base.get("nom", ""),
                 "variable": variable,
-                "borne_min": float(borne_min),
-                "borne_max": float(borne_max),
+                "borne_min": borne_min,
+                "borne_max": borne_max,
                 "tau_min": tau_min,
                 "tau_max": tau_max,
                 "meilleur_point": meilleur,
             }
 
+        low, high = borne_min, borne_max
         best = None
+
         for k in range(int(max_iter)):
             mid = 0.5 * (low + high)
             res_mid = evaluer(mid, 10 + k)
@@ -375,20 +493,23 @@ class AgentActuarielPython:
             "prime_star": float(best.get("prime", 0.0) or 0.0),
             "iterations": int(k + 1),
             "detail": best,
+            "bornes_utilisees": {"min": borne_min, "max": borne_max, "source": "explicite"},
         }
 
     def frontiere_de_finetti_tranche(
         self,
         t_info,
         budget_prime_pct,
-        n_points_priorite=20,
-        n_points_portee=10,
+        n_points_priorite=None,
+        n_points_portee=None,
         n_sim=15000,
     ):
         """
-        Frontière De Finetti simplifiée.
+        Frontière De Finetti sans grille inventée.
 
-        Critère : minimiser Var(perte retenue) sous contrainte prime <= budget.
+        La frontière est calculée uniquement sur des couples D/C fournis
+        explicitement ou présents dans le dataset labo/ML. Si aucune grille
+        n'existe, la méthode refuse de produire une fausse optimisation.
         """
         t_base = dict(t_info)
         budget_prime_pct = float(budget_prime_pct or 0.0)
@@ -400,67 +521,50 @@ class AgentActuarielPython:
                 "tranche": t_base.get("nom", ""),
             }
 
-        D0 = float(t_base.get("priorite", 0.0) or 0.0)
-        C0 = float(t_base.get("portee", 0.0) or 0.0)
-
-        if D0 <= 0 or C0 <= 0:
+        candidats_dc = self._extraire_grilles_finetti(t_base)
+        if not candidats_dc:
             return {
                 "converge": False,
-                "message": "Priorité ou portée invalide.",
+                "message": (
+                    "Aucune grille De Finetti explicite disponible. Fournir grille_priorites/grille_portees, "
+                    "candidats_programme ou un df_ml contenant priorite et portee."
+                ),
                 "tranche": t_base.get("nom", ""),
+                "budget": budget_prime_pct,
+                "frontiere": [],
             }
-
-        priorites = np.linspace(
-            max(0.0, 0.25 * D0),
-            max(D0 * 3.0, D0 + 2.0 * C0),
-            int(max(n_points_priorite, 2)),
-        )
-        portees = np.linspace(
-            max(100_000.0, 0.50 * C0),
-            max(2.0 * C0, C0 + D0),
-            int(max(n_points_portee, 2)),
-        )
 
         candidats = []
         seed = 5000
-        for i, D in enumerate(priorites):
-            for j, C in enumerate(portees):
-                tc = dict(t_base)
-                tc["priorite"] = float(D)
-                tc["portee"] = float(C)
+        for idx, (D, C) in enumerate(candidats_dc):
+            tc = dict(t_base)
+            tc["priorite"] = float(D)
+            tc["portee"] = float(C)
 
-                res = self._taux_simule_candidat(tc, n_sim=n_sim, seed=seed + i * 100 + j)
-
-                candidats.append(
-                    {
-                        "D": float(D),
-                        "C": float(C),
-                        "tau": float(res.get("taux_technique", 0.0) or 0.0),
-                        "prime": float(res.get("prime", 0.0) or 0.0),
-                        "var_retenu": float(res.get("var_retenu", np.nan)),
-                        "moyenne_retenu": float(res.get("moyenne_retenu", np.nan)),
-                        "detail": res,
-                    }
-                )
+            res = self._taux_simule_candidat(tc, n_sim=n_sim, seed=seed + idx)
+            candidats.append(
+                {
+                    "D": float(D),
+                    "C": float(C),
+                    "tau": float(res.get("taux_technique", 0.0) or 0.0),
+                    "prime": float(res.get("prime", 0.0) or 0.0),
+                    "var_retenu": float(res.get("var_retenu", np.nan)),
+                    "moyenne_retenu": float(res.get("moyenne_retenu", np.nan)),
+                    "detail": res,
+                }
+            )
 
         admissibles = [c for c in candidats if c["tau"] <= budget_prime_pct]
-
-        if not candidats:
-            return {
-                "converge": False,
-                "message": "Aucun candidat généré.",
-                "tranche": t_base.get("nom", ""),
-            }
-
         if not admissibles:
             meilleur = min(candidats, key=lambda c: abs(c["tau"] - budget_prime_pct))
             return {
                 "converge": False,
-                "message": "Aucun candidat sous le budget. Le point le plus proche est retourné.",
+                "message": "Aucun candidat sous le budget explicite. Le point le plus proche est retourné.",
                 "tranche": t_base.get("nom", ""),
                 "budget": budget_prime_pct,
                 "optimal": meilleur,
                 "frontiere": candidats,
+                "source_grille": "explicite_ou_df_ml",
             }
 
         optimal = min(admissibles, key=lambda c: c["var_retenu"])
@@ -472,11 +576,9 @@ class AgentActuarielPython:
             "frontiere": admissibles,
             "n_candidats": len(candidats),
             "n_admissibles": len(admissibles),
+            "source_grille": "explicite_ou_df_ml",
         }
 
-    # ------------------------------------------------------------------
-    # ÉTAPE 0 — VALIDATION
-    # ------------------------------------------------------------------
     def etape_0_validation(self):
         self._log("Validation", "Vérification des paramètres actuariels")
 
@@ -976,17 +1078,24 @@ class AgentActuarielPython:
         return rows, pt
 
     # ------------------------------------------------------------------
-    # ÉTAPE 6 — VARIANTES COMPARABLES / LOGIQUE DE FINETTI
+    # ÉTAPE 6 — OPTIMISATION SANS BORNES PAR DÉFAUT
     # ------------------------------------------------------------------
     def etape_6_optimisation(self):
         """
-        Génère des variantes comparables du programme initial.
+        Génère des variantes comparables sans pourcentages prédéfinis.
 
-        Les variantes sont évaluées par simulation directe, puis
-        sélectionnées selon une logique de proximité, de budget et de variance
-        du risque retenu inspirée de De Finetti.
+        Règle stricte :
+        - aucun multiplicateur 95 %, 105 %, 110 %, etc. ;
+        - aucune borne 25 %, 50 %, 200 %, 300 % ;
+        - les variantes ne sont produites que si des bornes/grilles explicites
+          existent dans les données ou dans le dataset labo/ML.
         """
-        self._log("Optimisation", "Recherche de programmes alternatifs comparables par simulation directe.")
+        self._log(
+            "Optimisation",
+            "Recherche de programmes alternatifs sans bornes par défaut.",
+            "Dichotomie et De Finetti utilisent uniquement des bornes ou grilles explicites.",
+        )
+
         sim_map = {r.get("tranche"): r for r in self.resultats_sim}
         bc_map = {r.get("tranche"): r for r in self.resultats_bc}
         mkt_map = {r.get("tranche"): r for r in self.resultats_mkt}
@@ -1015,74 +1124,60 @@ class AgentActuarielPython:
                 return 0.0
             return float(np.std(vals) / max(np.mean(vals), 1e-12))
 
-        def construire_programme(label, multiplicateurs, methode, n_sim_eval=3000):
-            tranches_alt = []
+        def construire_programme_depuis_tranches(label, tranches_alt, methode):
             prime = 0.0
             protection = 0.0
             variance_retenue = 0.0
             convergence = 0.0
             ecart_structure = 0.0
+            tranches_calc = []
 
-            for idx, t in enumerate(self.tranches):
-                t_alt = dict(t)
-                mult_D, mult_C, delta_rec = multiplicateurs
-
-                D0 = float(t.get("priorite", 0.0) or 0.0)
-                C0 = float(t.get("portee", 0.0) or 0.0)
-                rec0 = int(t.get("nb_reconstitutions", 0) or 0)
-
-                D1 = self._arrondir_aed(D0 * mult_D, minimum=500_000)
-                C1 = self._arrondir_aed(C0 * mult_C, minimum=500_000)
-                rec1 = int(max(0, min(5, rec0 + delta_rec)))
-
-                t_alt["priorite"] = D1
-                t_alt["portee"] = C1
-                t_alt["nb_reconstitutions"] = rec1
-
-                res = self._taux_simule_candidat(t_alt, n_sim=n_sim_eval, seed=7000 + idx)
+            for idx, (t0, t_alt_in) in enumerate(zip(self.tranches, tranches_alt)):
+                t_alt = dict(t_alt_in)
+                res = self._taux_simule_candidat(t_alt, n_sim=3000, seed=7000 + idx)
                 taux = float(res.get("taux_technique", 0.0) or 0.0)
                 prime_t = float(res.get("prime", 0.0) or 0.0)
 
-                # Garde-fou : si la simulation candidate échoue, on garde le taux de référence.
                 if taux <= 0:
-                    taux = taux_base(t)
+                    taux = taux_base(t0)
                     prime_t = self.gnpi * taux
+
+                D0 = float(t0.get("priorite", 0.0) or 0.0)
+                C0 = float(t0.get("portee", 0.0) or 0.0)
+                D1 = float(t_alt.get("priorite", 0.0) or 0.0)
+                C1 = float(t_alt.get("portee", 0.0) or 0.0)
+                rec0 = int(t0.get("nb_reconstitutions", 0) or 0)
+                rec1 = int(t_alt.get("nb_reconstitutions", 0) or 0)
 
                 prime += prime_t
                 protection += C1 * (rec1 + 1)
                 variance_retenue += float(res.get("var_retenu", 0.0) or 0.0)
-                convergence += convergence_ref(t)
+                convergence += convergence_ref(t0)
 
                 if D0 > 0:
                     ecart_structure += abs(D1 / D0 - 1.0)
                 if C0 > 0:
                     ecart_structure += abs(C1 / C0 - 1.0)
-                ecart_structure += 0.25 * abs(rec1 - rec0)
+                ecart_structure += abs(rec1 - rec0) / max(rec0 + 1, 1)
 
                 t_alt["_taux"] = taux
                 t_alt["_prime"] = prime_t
                 t_alt["_methode_optimisation"] = methode
                 t_alt["_var_retenu"] = float(res.get("var_retenu", 0.0) or 0.0)
-                tranches_alt.append(t_alt)
+                tranches_calc.append(t_alt)
 
             n = max(len(self.tranches), 1)
             taux_global = prime / max(self.gnpi, 1.0)
             variance_moyenne = variance_retenue / n
             convergence_moyenne = convergence / n
             ecart_structure_moyen = ecart_structure / n
-
-            # Score De Finetti simplifié : variance retenue faible + convergence + proximité structurelle.
-            score = (
-                -np.log1p(max(variance_moyenne, 0.0))
-                -2.0 * convergence_moyenne
-                -1.5 * ecart_structure_moyen
-            )
+            score = -np.log1p(max(variance_moyenne, 0.0)) - 2.0 * convergence_moyenne - 1.5 * ecart_structure_moyen
 
             return {
                 "label": label,
-                "description": "Structure alternative comparable évaluée par simulation directe.",
+                "description": "Programme évalué sans borne ni multiplicateur par défaut.",
                 "methode_optimisation": methode,
-                "tranches": tranches_alt,
+                "tranches": tranches_calc,
                 "prime": round(prime, 2),
                 "taux_global": round(taux_global, 6),
                 "protection_theorique": round(protection, 2),
@@ -1093,176 +1188,130 @@ class AgentActuarielPython:
             }
 
         variantes = {
-            "programme_initial": construire_programme("Programme initial", (1.00, 1.00, 0), "simulation_directe"),
-            "structure_comparable_1": construire_programme("Structure comparable 1", (1.05, 1.00, 0), "simulation_directe"),
-            "structure_comparable_2": construire_programme("Structure comparable 2", (1.00, 0.95, 0), "simulation_directe"),
-            "structure_comparable_3": construire_programme("Structure comparable 3", (1.10, 1.00, -1), "simulation_directe"),
-            "structure_comparable_4": construire_programme("Structure comparable 4", (0.95, 1.05, 0), "simulation_directe"),
+            "programme_initial": construire_programme_depuis_tranches(
+                "Programme initial",
+                [dict(t) for t in self.tranches],
+                "programme_initial",
+            )
         }
 
-        # Variante par dichotomie : on ajuste la priorité de chaque tranche vers son taux de référence.
+        # Variante par dichotomie : uniquement si des bornes explicites existent.
         tranches_dicho = []
-        prime_dicho = 0.0
-        protection_dicho = 0.0
-        variance_dicho = 0.0
-        ecart_structure_dicho = 0.0
-
-        for idx, t in enumerate(self.tranches):
+        ok_dicho = False
+        for t in self.tranches:
             t_alt = dict(t)
             cible = taux_base(t)
-            if cible > 0:
-                res_dicho = self.optimiser_dichotomie_tranche(
-                    t,
-                    taux_cible=cible,
-                    variable="priorite",
-                    n_sim=2500,
-                    tol=1e-5,
-                    max_iter=25,
-                )
-                detail = res_dicho.get("detail") or res_dicho.get("meilleur_point") or {}
-                if detail:
-                    D1 = self._arrondir_aed(detail.get("priorite", t.get("priorite", 0.0)), minimum=500_000)
-                    t_alt["priorite"] = D1
-                    t_alt["_taux"] = float(detail.get("taux_technique", cible) or cible)
-                    t_alt["_prime"] = float(detail.get("prime", self.gnpi * t_alt["_taux"]) or 0.0)
-                    t_alt["_var_retenu"] = float(detail.get("var_retenu", 0.0) or 0.0)
-                    t_alt["_methode_optimisation"] = "dichotomie_priorite"
-                else:
-                    t_alt["_taux"] = cible
-                    t_alt["_prime"] = self.gnpi * cible
-                    t_alt["_var_retenu"] = 0.0
-                    t_alt["_methode_optimisation"] = "dichotomie_non_convergee"
+            res_dicho = self.optimiser_dichotomie_tranche(
+                t,
+                taux_cible=cible,
+                variable="priorite",
+                n_sim=2500,
+                tol=1e-5,
+                max_iter=25,
+            ) if cible > 0 else {"converge": False, "message": "Taux de référence nul."}
+
+            detail = res_dicho.get("detail") or res_dicho.get("meilleur_point") or {}
+            if res_dicho.get("converge") and detail:
+                t_alt["priorite"] = self._arrondir_aed(detail.get("priorite", t.get("priorite", 0.0)), minimum=0.0)
+                t_alt["_resultat_dichotomie"] = res_dicho
+                ok_dicho = True
             else:
-                t_alt["_taux"] = 0.0
-                t_alt["_prime"] = 0.0
-                t_alt["_var_retenu"] = 0.0
-                t_alt["_methode_optimisation"] = "taux_reference_nul"
-
-            D0 = float(t.get("priorite", 0.0) or 0.0)
-            D1 = float(t_alt.get("priorite", 0.0) or 0.0)
-            C1 = float(t_alt.get("portee", 0.0) or 0.0)
-            rec1 = int(t_alt.get("nb_reconstitutions", 0) or 0)
-
-            prime_dicho += float(t_alt.get("_prime", 0.0) or 0.0)
-            protection_dicho += C1 * (rec1 + 1)
-            variance_dicho += float(t_alt.get("_var_retenu", 0.0) or 0.0)
-            if D0 > 0:
-                ecart_structure_dicho += abs(D1 / D0 - 1.0)
+                t_alt["_resultat_dichotomie"] = res_dicho
+                self._alerte("INFO", f"{t.get('nom', 'Tranche')} : dichotomie non exécutée — {res_dicho.get('message', 'bornes absentes')} ")
             tranches_dicho.append(t_alt)
 
-        n = max(len(self.tranches), 1)
-        taux_global_dicho = prime_dicho / max(self.gnpi, 1.0)
-        variance_moy_dicho = variance_dicho / n
-        ecart_moy_dicho = ecart_structure_dicho / n
-        score_dicho = -np.log1p(max(variance_moy_dicho, 0.0)) - 1.5 * ecart_moy_dicho
-        variantes["structure_dichotomie"] = {
-            "label": "Structure par dichotomie",
-            "description": "Priorités ajustées par dichotomie pour rester proches des taux de référence.",
-            "methode_optimisation": "dichotomie_priorite",
-            "tranches": tranches_dicho,
-            "prime": round(prime_dicho, 2),
-            "taux_global": round(taux_global_dicho, 6),
-            "protection_theorique": round(protection_dicho, 2),
-            "variance_proxy": round(float(variance_moy_dicho), 2),
-            "indice_convergence_methodes": 100.0,
-            "indice_comparabilite": round(float(max(0.0, 1.0 - ecart_moy_dicho)) * 100, 2),
-            "score_de_finetti": round(float(score_dicho), 6),
-        }
+        if ok_dicho:
+            variantes["structure_dichotomie"] = construire_programme_depuis_tranches(
+                "Structure par dichotomie",
+                tranches_dicho,
+                "dichotomie_priorite_bornes_explicites",
+            )
+        else:
+            variantes["structure_dichotomie"] = {
+                "label": "Structure par dichotomie",
+                "description": "Non générée : aucune borne explicite exploitable.",
+                "methode_optimisation": "dichotomie_non_executee_bornes_absentes",
+                "tranches": tranches_dicho,
+                "prime": variantes["programme_initial"]["prime"],
+                "taux_global": variantes["programme_initial"]["taux_global"],
+                "protection_theorique": variantes["programme_initial"]["protection_theorique"],
+                "variance_proxy": variantes["programme_initial"]["variance_proxy"],
+                "indice_convergence_methodes": variantes["programme_initial"]["indice_convergence_methodes"],
+                "indice_comparabilite": 100.0,
+                "score_de_finetti": variantes["programme_initial"]["score_de_finetti"],
+                "diagnostic": "Dichotomie non exécutée : bornes explicites absentes.",
+            }
 
-        # Variante De Finetti : pour chaque tranche, on choisit le couple D/C minimisant la variance sous budget.
+        # Variante De Finetti : uniquement si une grille explicite ou df_ml existe.
         tranches_finetti = []
-        prime_finetti = 0.0
-        protection_finetti = 0.0
-        variance_finetti = 0.0
-        ecart_structure_finetti = 0.0
-
-        for idx, t in enumerate(self.tranches):
+        ok_finetti = False
+        for t in self.tranches:
             t_alt = dict(t)
             budget = max(taux_base(t), 0.000001)
             res_fin = self.frontiere_de_finetti_tranche(
                 t,
                 budget_prime_pct=budget,
-                n_points_priorite=6,
-                n_points_portee=4,
                 n_sim=1500,
             )
             opt = res_fin.get("optimal") or {}
-            detail = opt.get("detail") or {}
-
-            if opt:
-                D1 = self._arrondir_aed(opt.get("D", t.get("priorite", 0.0)), minimum=500_000)
-                C1 = self._arrondir_aed(opt.get("C", t.get("portee", 0.0)), minimum=500_000)
-                tau = float(opt.get("tau", 0.0) or detail.get("taux_technique", 0.0) or 0.0)
-                prime_t = float(opt.get("prime", 0.0) or detail.get("prime", self.gnpi * tau) or 0.0)
-                var_ret = float(opt.get("var_retenu", 0.0) or detail.get("var_retenu", 0.0) or 0.0)
-                t_alt["priorite"] = D1
-                t_alt["portee"] = C1
-                t_alt["_taux"] = tau
-                t_alt["_prime"] = prime_t
-                t_alt["_var_retenu"] = var_ret
-                t_alt["_methode_optimisation"] = "frontiere_de_finetti"
+            if opt and res_fin.get("frontiere"):
+                t_alt["priorite"] = self._arrondir_aed(opt.get("D", t.get("priorite", 0.0)), minimum=0.0)
+                t_alt["portee"] = self._arrondir_aed(opt.get("C", t.get("portee", 0.0)), minimum=0.0)
+                t_alt["_resultat_finetti"] = res_fin
+                ok_finetti = True
             else:
-                tau = taux_base(t)
-                prime_t = self.gnpi * tau
-                var_ret = 0.0
-                t_alt["_taux"] = tau
-                t_alt["_prime"] = prime_t
-                t_alt["_var_retenu"] = var_ret
-                t_alt["_methode_optimisation"] = "frontiere_de_finetti_non_convergee"
-
-            D0 = float(t.get("priorite", 0.0) or 0.0)
-            C0 = float(t.get("portee", 0.0) or 0.0)
-            D1 = float(t_alt.get("priorite", 0.0) or 0.0)
-            C1 = float(t_alt.get("portee", 0.0) or 0.0)
-            rec1 = int(t_alt.get("nb_reconstitutions", 0) or 0)
-
-            prime_finetti += float(t_alt.get("_prime", 0.0) or 0.0)
-            protection_finetti += C1 * (rec1 + 1)
-            variance_finetti += float(t_alt.get("_var_retenu", 0.0) or 0.0)
-            if D0 > 0:
-                ecart_structure_finetti += abs(D1 / D0 - 1.0)
-            if C0 > 0:
-                ecart_structure_finetti += abs(C1 / C0 - 1.0)
+                t_alt["_resultat_finetti"] = res_fin
+                self._alerte("INFO", f"{t.get('nom', 'Tranche')} : De Finetti non exécuté — {res_fin.get('message', 'grille absente')} ")
             tranches_finetti.append(t_alt)
 
-        variance_moy_finetti = variance_finetti / n
-        ecart_moy_finetti = ecart_structure_finetti / n
-        taux_global_finetti = prime_finetti / max(self.gnpi, 1.0)
-        score_finetti = -np.log1p(max(variance_moy_finetti, 0.0)) - 1.5 * ecart_moy_finetti
-        variantes["structure_de_finetti"] = {
-            "label": "Structure De Finetti",
-            "description": "Structure sélectionnée par minimisation de la variance retenue sous contrainte de budget.",
-            "methode_optimisation": "frontiere_de_finetti",
-            "tranches": tranches_finetti,
-            "prime": round(prime_finetti, 2),
-            "taux_global": round(taux_global_finetti, 6),
-            "protection_theorique": round(protection_finetti, 2),
-            "variance_proxy": round(float(variance_moy_finetti), 2),
-            "indice_convergence_methodes": 100.0,
-            "indice_comparabilite": round(float(max(0.0, 1.0 - ecart_moy_finetti)) * 100, 2),
-            "score_de_finetti": round(float(score_finetti), 6),
-        }
+        if ok_finetti:
+            variantes["structure_de_finetti"] = construire_programme_depuis_tranches(
+                "Structure De Finetti",
+                tranches_finetti,
+                "frontiere_de_finetti_grille_explicite",
+            )
+        else:
+            variantes["structure_de_finetti"] = {
+                "label": "Structure De Finetti",
+                "description": "Non générée : aucune grille explicite ou df_ml exploitable.",
+                "methode_optimisation": "finetti_non_execute_grille_absente",
+                "tranches": tranches_finetti,
+                "prime": variantes["programme_initial"]["prime"],
+                "taux_global": variantes["programme_initial"]["taux_global"],
+                "protection_theorique": variantes["programme_initial"]["protection_theorique"],
+                "variance_proxy": variantes["programme_initial"]["variance_proxy"],
+                "indice_convergence_methodes": variantes["programme_initial"]["indice_convergence_methodes"],
+                "indice_comparabilite": 100.0,
+                "score_de_finetti": variantes["programme_initial"]["score_de_finetti"],
+                "diagnostic": "De Finetti non exécuté : grille explicite ou df_ml absent.",
+            }
 
         initial_prime = variantes["programme_initial"]["prime"]
         for key, v in variantes.items():
             v["ecart_prime_vs_initial"] = round((v["prime"] - initial_prime) / max(initial_prime, 1.0), 6)
+            if "diagnostic" in v:
+                continue
             if key == "programme_initial":
                 v["diagnostic"] = "Programme proposé par la cédante, utilisé comme base de comparaison."
             elif abs(v["ecart_prime_vs_initial"]) <= 0.15 and v["indice_comparabilite"] >= 70:
-                v["diagnostic"] = "Programme alternatif comparable, techniquement discutable avec la cédante."
+                v["diagnostic"] = "Programme alternatif comparable, calculé sans paramètres par défaut."
             else:
                 v["diagnostic"] = "Programme indicatif : écart au programme initial à documenter."
 
-        candidats = {k: v for k, v in variantes.items() if k != "programme_initial"}
+        candidats = {
+            k: v for k, v in variantes.items()
+            if k != "programme_initial" and not str(v.get("methode_optimisation", "")).endswith("absente")
+        }
         programme_recommande_key = max(candidats, key=lambda k: candidats[k]["score_de_finetti"]) if candidats else "programme_initial"
         variantes["programme_recommande"] = dict(variantes[programme_recommande_key])
         variantes["programme_recommande"]["cle_source"] = programme_recommande_key
 
         self._log(
             "Optimisation",
-            "Variantes comparables générées par simulation directe : simulation directe, dichotomie et De Finetti.",
+            "Variantes générées sans multiplicateurs fixes. Si aucune borne/grille explicite n'est fournie, l'optimisation est déclarée non exécutée.",
         )
         return variantes
+
 
     # ------------------------------------------------------------------
     # RAPPORT TEXTE
