@@ -3,7 +3,7 @@ IA TARIF — Agent Python pur
 AgentActuarielPython : pipeline complet BC -> Simulation -> Market Curve -> Rapport -> Variantes.
 
 Module sans LLM, utilisable hors ligne.
-Correction intégrée : initialisation robuste de df_ml et calibration prudente des élasticités.
+Correction intégrée : initialisation robuste de df_ml et optimisation directe des variantes.
 """
 
 from __future__ import annotations
@@ -120,22 +120,9 @@ class AgentActuarielPython:
     # ------------------------------------------------------------------
     # OPTIMISATION ACTUARIELLE — SANS ÉLASTICITÉS PAR DÉFAUT
     # ------------------------------------------------------------------
-    def _calibrer_elasticites(self):
-        """
-        Ancienne logique désactivée.
-
-        On ne retourne plus d'élasticités par défaut, car elles n'ont pas
-        de fondement actuariel suffisant pour proposer des variantes.
-        Les variantes sont générées par optimisation directe :
-        dichotomie ou frontière De Finetti.
-        """
-        self._log(
-            "Optimisation",
-            "Élasticités par défaut désactivées",
-            "Les variantes sont générées par dichotomie ou De Finetti."
-        )
-        return None
-
+    # ------------------------------------------------------------------
+    # OPTIMISATION ACTUARIELLE — SANS ÉLASTICITÉS
+    # ------------------------------------------------------------------
     def _tirer_severites(self, n, rng):
         """
         Tire des sévérités selon la loi sélectionnée.
@@ -995,14 +982,11 @@ class AgentActuarielPython:
         """
         Génère des variantes comparables du programme initial.
 
-        Correction : suppression des élasticités par défaut.
-        Les variantes sont désormais évaluées par simulation directe, puis
+        Les variantes sont évaluées par simulation directe, puis
         sélectionnées selon une logique de proximité, de budget et de variance
         du risque retenu inspirée de De Finetti.
         """
         self._log("Optimisation", "Recherche de programmes alternatifs comparables par simulation directe.")
-        self._calibrer_elasticites()
-
         sim_map = {r.get("tranche"): r for r in self.resultats_sim}
         bc_map = {r.get("tranche"): r for r in self.resultats_bc}
         mkt_map = {r.get("tranche"): r for r in self.resultats_mkt}
@@ -1106,7 +1090,6 @@ class AgentActuarielPython:
                 "indice_convergence_methodes": round(float(max(0.0, 1.0 - convergence_moyenne)) * 100, 2),
                 "indice_comparabilite": round(float(max(0.0, 1.0 - ecart_structure_moyen)) * 100, 2),
                 "score_de_finetti": round(float(score), 6),
-                "elasticites": None,
             }
 
         variantes = {
@@ -1184,7 +1167,6 @@ class AgentActuarielPython:
             "indice_convergence_methodes": 100.0,
             "indice_comparabilite": round(float(max(0.0, 1.0 - ecart_moy_dicho)) * 100, 2),
             "score_de_finetti": round(float(score_dicho), 6),
-            "elasticites": None,
         }
 
         # Variante De Finetti : pour chaque tranche, on choisit le couple D/C minimisant la variance sous budget.
@@ -1259,7 +1241,6 @@ class AgentActuarielPython:
             "indice_convergence_methodes": 100.0,
             "indice_comparabilite": round(float(max(0.0, 1.0 - ecart_moy_finetti)) * 100, 2),
             "score_de_finetti": round(float(score_finetti), 6),
-            "elasticites": None,
         }
 
         initial_prime = variantes["programme_initial"]["prime"]
@@ -1279,7 +1260,7 @@ class AgentActuarielPython:
 
         self._log(
             "Optimisation",
-            "Variantes comparables générées sans élasticités par défaut : simulation directe, dichotomie et De Finetti.",
+            "Variantes comparables générées par simulation directe : simulation directe, dichotomie et De Finetti.",
         )
         return variantes
 
