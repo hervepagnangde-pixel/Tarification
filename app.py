@@ -18,6 +18,7 @@ from PIL import Image
 import os
 from datetime import datetime
 import time
+import streamlit.components.v1 as components
 
 # ── Imports modules ───────────────────────────────────────────────────────────
 from modules.db import (
@@ -85,12 +86,48 @@ except:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONTINUITÉ DE SESSION — sauvegarde automatique
+# CONTINUITÉ DE SESSION — Anti-veille + sauvegarde automatique
 # ═══════════════════════════════════════════════════════════════════════════════
-# La mise en veille du serveur Streamlit / de l'hébergeur ne peut pas être
-# totalement bloquée depuis le code applicatif.
-# On ne force donc aucun anti-veille fragile : on protège le travail par
-# sauvegarde automatique et restauration de session.
+
+def injecter_mode_sans_veille(interval_ms: int = 30_000):
+    """
+    L'application reste active côté navigateur tant que l'utilisateur
+    n'a pas explicitement autorisé la mise en veille.
+    - Wake Lock : empêche l'écran de se mettre en veille quand le navigateur l'autorise.
+    - Heartbeat : envoie un signal régulier au serveur Streamlit.
+    - beforeunload : demande confirmation avant fermeture/actualisation de l'onglet.
+    """
+    components.html(f"""
+    <script>
+    const IA_TARIF_KEEP_ALIVE_MS = {interval_ms};
+
+    async function iaTarifWakeLock() {{
+        try {{
+            if ('wakeLock' in navigator) {{
+                window.iaTarifWakeLock = await navigator.wakeLock.request('screen');
+            }}
+        }} catch (err) {{}}
+    }}
+
+    iaTarifWakeLock();
+
+    document.addEventListener('visibilitychange', function() {{
+        if (document.visibilityState === 'visible') {{
+            iaTarifWakeLock();
+        }}
+    }});
+
+    setInterval(function() {{
+        fetch('/_stcore/health', {{ cache: 'no-store' }}).catch(function() {{}});
+    }}, IA_TARIF_KEEP_ALIVE_MS);
+
+    window.addEventListener('beforeunload', function(e) {{
+        e.preventDefault();
+        e.returnValue = 'Une session IA TARIF est en cours. Voulez-vous vraiment quitter ?';
+    }});
+    </script>
+    """, height=0)
+
 
 def sauvegarder_session_courante(gnpi_value, silent: bool = True):
     """Sauvegarde l'état courant sans obliger l'utilisateur à cliquer."""
@@ -140,6 +177,9 @@ def sauvegarder_session_courante(gnpi_value, silent: bool = True):
 
 def autosauvegarder_si_necessaire(gnpi_value, interval_sec: int = 120):
     """Sauvegarde périodiquement dès qu'il existe un travail à protéger."""
+    if not st.session_state.get("anti_veille_actif", True):
+        return
+
     cles_a_proteger = [
         "df_prog", "df_liq", "df_proj", "resultats_bc", "resultats_sim",
         "resultats_mkt", "taux_mkt_final", "df_rapport", "prime_totale",
@@ -332,10 +372,20 @@ with st.sidebar:
         st.session_state["page"] = "landing"; st.rerun()
 
     st.markdown("###  Continuité")
-    st.info(
-        "La mise en veille du serveur ne peut pas être totalement bloquée depuis Streamlit. "
-        "Protection active : sauvegarde automatique et restauration de la dernière session."
+    if "anti_veille_actif" not in st.session_state:
+        st.session_state["anti_veille_actif"] = True
+    st.toggle(
+        "Maintenir l'application active",
+        key="anti_veille_actif",
+        help="Empêche la mise en veille côté navigateur et protège la session par sauvegarde automatique."
     )
+    if st.button(" Autoriser la mise en veille", key="btn_autoriser_veille", use_container_width=True):
+        st.session_state["anti_veille_actif"] = False
+        st.info("Mise en veille autorisée par l'utilisateur.")
+    if st.session_state.get("anti_veille_actif", True):
+        st.success("Mode sans veille actif")
+    else:
+        st.warning("Mise en veille autorisée")
     if st.session_state.get("last_save_time"):
         st.caption(f"Dernière sauvegarde : {st.session_state['last_save_time']}")
     if st.session_state.get("last_auto_save_error"):
@@ -497,7 +547,9 @@ with st.sidebar:
         height=120, key="instructions_globales",
         help="Inclus dans TOUS les prompts Claude")
 
-# Auto-sauvegarde déclenchée uniquement après authentification
+# Mode sans veille + auto-sauvegarde déclenchés uniquement après authentification
+if st.session_state.get("anti_veille_actif", True):
+    injecter_mode_sans_veille(interval_ms=30_000)
 autosauvegarder_si_necessaire(gnpi, interval_sec=120)
 
 # ════════════════════════════════════════════
