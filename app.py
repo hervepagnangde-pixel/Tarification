@@ -18,7 +18,6 @@ from PIL import Image
 import os
 from datetime import datetime
 import time
-import streamlit.components.v1 as components
 
 # ── Imports modules ───────────────────────────────────────────────────────────
 from modules.db import (
@@ -86,48 +85,12 @@ except:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONTINUITÉ DE SESSION — Anti-veille + sauvegarde automatique
+# CONTINUITÉ DE SESSION — sauvegarde automatique
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def injecter_mode_sans_veille(interval_ms: int = 30_000):
-    """
-    Maintient l'application active côté navigateur tant que l'utilisateur
-    n'a pas explicitement autorisé la mise en veille.
-    - Wake Lock : empêche l'écran de se mettre en veille quand le navigateur l'autorise.
-    - Heartbeat : envoie un signal régulier au serveur Streamlit.
-    - beforeunload : demande confirmation avant fermeture/actualisation de l'onglet.
-    """
-    components.html(f"""
-    <script>
-    const IA_TARIF_KEEP_ALIVE_MS = {interval_ms};
-
-    async function iaTarifWakeLock() {{
-        try {{
-            if ('wakeLock' in navigator) {{
-                window.iaTarifWakeLock = await navigator.wakeLock.request('screen');
-            }}
-        }} catch (err) {{}}
-    }}
-
-    iaTarifWakeLock();
-
-    document.addEventListener('visibilitychange', function() {{
-        if (document.visibilityState === 'visible') {{
-            iaTarifWakeLock();
-        }}
-    }});
-
-    setInterval(function() {{
-        fetch('/_stcore/health', {{ cache: 'no-store' }}).catch(function() {{}});
-    }}, IA_TARIF_KEEP_ALIVE_MS);
-
-    window.addEventListener('beforeunload', function(e) {{
-        e.preventDefault();
-        e.returnValue = 'Une session IA TARIF est en cours. Voulez-vous vraiment quitter ?';
-    }});
-    </script>
-    """, height=0)
-
+# La mise en veille du serveur Streamlit / de l'hébergeur ne peut pas être
+# totalement bloquée depuis le code applicatif.
+# On ne force donc aucun anti-veille fragile : on protège le travail par
+# sauvegarde automatique et restauration de session.
 
 def sauvegarder_session_courante(gnpi_value, silent: bool = True):
     """Sauvegarde l'état courant sans obliger l'utilisateur à cliquer."""
@@ -177,9 +140,6 @@ def sauvegarder_session_courante(gnpi_value, silent: bool = True):
 
 def autosauvegarder_si_necessaire(gnpi_value, interval_sec: int = 120):
     """Sauvegarde périodiquement dès qu'il existe un travail à protéger."""
-    if not st.session_state.get("anti_veille_actif", True):
-        return
-
     cles_a_proteger = [
         "df_prog", "df_liq", "df_proj", "resultats_bc", "resultats_sim",
         "resultats_mkt", "taux_mkt_final", "df_rapport", "prime_totale",
@@ -248,6 +208,28 @@ if not st.session_state["authenticated"]:
                 st.error(" Email ou code d'accès incorrect")
         st.caption("Accès réservé. Contactez l'administrateur.")
     st.stop()
+
+
+# Recharge la dernière session si la mémoire a été vidée par une mise en veille
+if (st.session_state.get("authenticated")
+        and st.session_state.get("auto_restore_enabled", True)
+        and not st.session_state.get("_auto_restore_done")
+        and "resultats_bc" not in st.session_state
+        and "df_rapport"   not in st.session_state):
+    st.session_state["_auto_restore_done"] = True
+    try:
+        _sessions = db_list_sessions(st.session_state.get("user_email", ""))
+        if _sessions:
+            # la plus récente (tuple : sid, nom, gnpi, created, updated)
+            _latest = max(_sessions, key=lambda s: (s[4] or s[3] or ""))
+            db_load_session(_latest[0])
+            st.session_state["_restored_banner"] = _latest[0]
+    except Exception:
+        pass
+
+if st.session_state.get("_restored_banner"):
+    st.info(f"Session #{st.session_state['_restored_banner']} restaurée automatiquement — "
+            "votre travail précédent a été rechargé.")
 
 # ════════════════════════════════════════════
 # LANDING PAGE
@@ -350,40 +332,10 @@ with st.sidebar:
         st.session_state["page"] = "landing"; st.rerun()
 
     st.markdown("###  Continuité")
-    # IMPORTANT STREAMLIT : ne pas utiliser la même clé pour un widget
-    # puis la modifier ensuite directement dans st.session_state.
-    # On garde donc :
-    # - anti_veille_actif : état métier utilisé par l'application ;
-    # - anti_veille_toggle : clé du widget Streamlit.
-    if "anti_veille_actif" not in st.session_state:
-        st.session_state["anti_veille_actif"] = True
-    if "anti_veille_toggle" not in st.session_state:
-        st.session_state["anti_veille_toggle"] = st.session_state["anti_veille_actif"]
-
-    def _autoriser_veille_callback():
-        # Callback exécuté AVANT le rerun Streamlit.
-        # C'est donc le bon endroit pour modifier la valeur d'un autre widget.
-        st.session_state["anti_veille_actif"] = False
-        st.session_state["anti_veille_toggle"] = False
-
-    anti_veille_toggle = st.toggle(
-        "Maintenir l'application active",
-        key="anti_veille_toggle",
-        help="Empêche la mise en veille côté navigateur et protège la session par sauvegarde automatique."
+    st.info(
+        "La mise en veille du serveur ne peut pas être totalement bloquée depuis Streamlit. "
+        "Protection active : sauvegarde automatique et restauration de la dernière session."
     )
-    st.session_state["anti_veille_actif"] = bool(anti_veille_toggle)
-
-    st.button(
-        " Autoriser la mise en veille",
-        key="btn_autoriser_veille",
-        use_container_width=True,
-        on_click=_autoriser_veille_callback,
-    )
-
-    if st.session_state.get("anti_veille_actif", True):
-        st.success("Mode sans veille actif")
-    else:
-        st.warning("Mise en veille autorisée")
     if st.session_state.get("last_save_time"):
         st.caption(f"Dernière sauvegarde : {st.session_state['last_save_time']}")
     if st.session_state.get("last_auto_save_error"):
@@ -545,9 +497,7 @@ with st.sidebar:
         height=120, key="instructions_globales",
         help="Inclus dans TOUS les prompts Claude")
 
-# Mode sans veille + auto-sauvegarde déclenchés uniquement après authentification
-if st.session_state.get("anti_veille_actif", True):
-    injecter_mode_sans_veille(interval_ms=30_000)
+# Auto-sauvegarde déclenchée uniquement après authentification
 autosauvegarder_si_necessaire(gnpi, interval_sec=120)
 
 # ════════════════════════════════════════════
@@ -1683,9 +1633,9 @@ with tab1:
                                                step=0.01, format="%.2f", key=f"brok_{i}")
                 frais        = st.number_input("Frais généraux %", value=5.0,  min_value=0.0, max_value=20.0,
                                                step=0.01, format="%.2f", key=f"frais_{i}")
-                marge        = st.number_input("Marge %",          value=10.0, min_value=0.0, max_value=30.0,
+                marge        = st.number_input("Marge %",          value=5.0, min_value=0.0, max_value=30.0,
                                                step=0.01, format="%.2f", key=f"marge_{i}")
-                retrocession = st.number_input("Rétrocession %",   value=0.0,  min_value=0.0, max_value=50.0,
+                retrocession = st.number_input("Rétrocession %",   value=0.21,  min_value=0.0, max_value=50.0,
                                                step=0.01, format="%.2f", key=f"retro_{i}")
 
             # ── Reconstitutions : nb + taux individuel par reconstitution ──
@@ -1759,7 +1709,7 @@ with tab2:
     annee_cotation = st.number_input("Année de cotation (n)", value=2026, step=1)
     seuil_stabilisation = st.number_input(
         "Seuil stabilisation (% inflation, 0 = toujours)",
-        value=0.0, min_value=0.0, max_value=50.0, step=5.0) / 100
+        value=10.0, min_value=0.0, max_value=50.0, step=5.0) / 100
     pct_seuil = st.number_input(
         "Percentile seuil Pareto (p80 par défaut)",
         value=0.80, min_value=0.50, max_value=0.99, step=0.05, format="%.2f")
@@ -2039,7 +1989,7 @@ with tab2:
             
             df_liq['increment'] = (
                 df_liq['total'] - df_liq['prev_total']
-            ).clip(lower=0)
+            )
             
             # ── ÉTAPE 2 : AS-IF SUR L'INCRÉMENT AVEC DÉLAI DE RÈGLEMENT ──
             # Formule :
@@ -2064,13 +2014,13 @@ with tab2:
             # Comme la survenance AS-IF est l'année de cotation :
             # I_survenance_ASIF = I_cotation
             
-            df_liq['ratio_check'] = df_liq['I_reg_asif'] / df_liq['I_surv_asif']
+            df_liq['ratio_check'] = df_liq['I_reg'] / df_liq['I_surv']
             
             mask_stab = df_liq['ratio_check'] >= (1.0 + seuil_stabilisation)
             
             df_liq['inc_stab'] = np.where(
                 mask_stab,
-                df_liq['inc_asif'] * (df_liq['I_surv_asif'] / df_liq['I_reg_asif']),
+                df_liq['inc_asif'] * (df_liq['I_surv'] / df_liq['I_reg']),
                 df_liq['inc_asif']
             )
             
@@ -2621,9 +2571,9 @@ with tab2:
                 st.dataframe(st.session_state["df_proj"].head(20), use_container_width=True)
 
     # ═══════════════════════════════════════════════════════════════════
-    # MODÈLE ACTUARIEL COMPLET — Méthode QBE Re (étapes A→I)
+    # MODÈLE ACTUARIEL COMPLET — Méthode d'un réassureur mondial (étapes A→I)
     # Basé sur : "Modélisation sinistres corporels — Excédent de Sinistres"
-    # Auteur original : QBE Re / EGS — Adapté IA TARIF
+    # Auteur original : un réassureur mondial / EGS — Adapté IA TARIF
     # ═══════════════════════════════════════════════════════════════════
     if "df_proj" in st.session_state:
         st.markdown("---")
@@ -2631,7 +2581,7 @@ with tab2:
         <div style="background:linear-gradient(135deg,#0d2b3e,#1e3a52);
             padding:18px 24px;border-bottom:3px solid #00b5a5;margin-bottom:16px">
           <div style="font-size:16px;font-weight:800;color:white;font-family:Montserrat,sans-serif">
-             Modèle Actuariel Complet — Méthode QBE Re (Étapes A→I)
+             Modèle Actuariel Complet — Méthode d'un grand réassureur mondial (Étapes A→I)
           </div>
           <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px">
             Modélisation sinistres corporels longs · Triangle IBNR+IBNER · Cadences · Prime pure
@@ -2641,7 +2591,7 @@ with tab2:
         st.markdown("""
         <div style="background:#e8f7f4;border-left:4px solid #00b5a5;padding:12px 16px;margin-bottom:16px;font-size:13px">
         <b>Référence méthodologique :</b> "Modélisation des sinistres corporels pour la tarification d'un traité de
-        Réassurance Automobile en Excédent de Sinistres" — QBE Re<br>
+        Réassurance Automobile en Excédent de Sinistres" — Reass<br>
         <b>Séquence :</b> A. Analyse → B. Revalorisation → C. Seuils → D. IBNR+IBNER →
         E. Exposition → F. Fréquence → G. Sévérité → H. Cadences → I. Prime pure
         </div>""", unsafe_allow_html=True)
@@ -2757,7 +2707,7 @@ with tab2:
             st.caption("E — La meilleure mesure d'exposition est le nombre de véhicules-années, corrigé vers l'année de cotation.")
             st.markdown("""
             <div style="background:#f2f8f7;border-left:3px solid #00b5a5;padding:12px 16px;font-size:12px">
-            <b>Méthode QBE Re :</b> Le GNPI est utilisé comme proxy de l'exposition ici (corrigé par l'inflation tarifaire).
+            <b>Méthode Reass :</b> Le GNPI est utilisé comme proxy de l'exposition ici (corrigé par l'inflation tarifaire).
             Si le nombre de véhicules-années est disponible, il est préféré.
             Correction = GNPI_ann / GNPI_cotation × N_véhicules_cotation.
             </div>""", unsafe_allow_html=True)
@@ -2970,7 +2920,7 @@ E[f(X)] = \left(\frac{x_m}{P}\right)^\alpha \cdot \frac{P}{\alpha-1}
                     tableau_resultats(reserv_rows)
 
         # ── I. Prime pure complète ────────────────────────────────────────────
-        with st.expander("I — Prime pure (sinistralité annuelle attendue) — Formule QBE Re", expanded=True):
+        with st.expander("I — Prime pure (sinistralité annuelle attendue) — Formule ", expanded=True):
             st.caption("I — Application du programme de réassurance sur chaque sinistre, pondéré par la cadence de règlement.")
             st.markdown("""
             <div style="background:#f2f8f7;border-left:3px solid #00b5a5;padding:12px 16px;font-size:12px">
@@ -3191,6 +3141,7 @@ with tab3:
                         ch = min(ch, cap)
                         charges_finales.append({"annee": int(ann), "charge": ch})
                     df_ch = pd.DataFrame(charges_finales); N = len(df_ch)
+                  
                     # Reconstitutions avec taux individuels par reconstitution
                     taux_rec_list = t_info.get("taux_reconstitutions", [t_info.get("taux_reconstitution", 100)] * n_rec)
                     Pr_Rec = 0.0
@@ -4401,7 +4352,7 @@ with tab6:
 
         st.divider()
         guide_prompt("Rapport Final",
-            ["Négociation avec Partner Re / Munich Re", "Comité de tarification 15 janvier 2026", "Objectif prime < 14M AED"],
+            ["Négociation avec Partner Re / Munich Re/ Swiss Re", "Comité de tarification 15 janvier 2026", "Objectif prime < 14M AED"],
             ["Justifier chaque taux retenu vs alternatives", "Comparer avec taux N-1 fournis", "Conclure sur positionnement vs marché"],
             ["Taux N-1 : R&C=3.1%, CatL1=1.2%, CatL2=0.8%", "Cotation Partner Re : R&C=2.30%", "Chargement majeurs = 0.05%"],
             ["Synthèse exécutive 5 lignes max", "Tableau récapitulatif final obligatoire", "Verdict : ACCEPTER / NEGOCIER / REFUSER"])
@@ -5174,16 +5125,16 @@ sur des critères statistiques objectifs, pas seulement des règles fixes.""",
             "name": "rechercher_web_actuariel",
             "description": """Recherche des informations actuarielles sur le web.
 Utiliser pour : taux de marché de référence, publications CAS/ASTIN récentes,
-données de sinistralité automobile UEA/Afrique, normes réglementaires DAPS,
+données de sinistralité automobile UEA/Afrique, normes réglementaires Banque Centrale des Émirats Arabes Unis, ACAPS, CIMA
 benchmarks de tarification réassurance non-proportionnelle.
-Sites prioritaires : swissre.com, munichre.com, casact.org, astin.org, actuaries.org.""",
+Sites prioritaires : institutdesactuaires.com, swissre.com, munichre.com, casact.org, astin.org, actuaries.org, soa.org.""",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "requete"      : {"type": "string", "description": "Termes de recherche (en français ou anglais)"},
                     "type_recherche": {
                         "type": "string",
-                        "enum": ["taux_marche", "publication_actuarielle", "reglementation", "sinistralite", "methode"],
+                        "enum": ["taux_marche", "publication_actuarielle", "reglementation", "sinistralite", "methode", "memoires actuariels", "examens d'actuariat"],
                         "description": "Type d'information recherchée"
                     },
                     "justification": {"type": "string"}
