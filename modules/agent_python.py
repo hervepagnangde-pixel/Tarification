@@ -121,7 +121,7 @@ class AgentActuarielPython:
     # CALIBRATION DES ÉLASTICITÉS
     # ------------------------------------------------------------------
     def _calibrer_elasticites(self):
-        """
+        """    
         Calibre les élasticités log-log depuis le dataset de scénarios ML si disponible.
 
         Si df_ml n'existe pas ou est insuffisant, retourne des valeurs prudentes
