@@ -3641,9 +3641,9 @@ with tab4:
                     " Loi retenue pour la simulation",
                     options=["pareto", "lognormale", "gpd"],
                     format_func=lambda x: {
-                        "pareto": "Pareto — Extrapolation classique XL",
-                        "lognormale": "Lognormale — Sinistres moyens / branche mixte",
-                        "gpd": "GPD — Extreme Value Theory (TVE recommandée cat)"
+                        "pareto": "Pareto",
+                        "lognormale": "Lognormale",
+                        "gpd": "GPD"
                     }[x],
                     key="loi_simulation_choisie",
                     help="Choisissez selon les indicateurs AIC/KS ci-dessus"
