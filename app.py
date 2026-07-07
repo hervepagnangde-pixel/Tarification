@@ -352,7 +352,7 @@ if st.session_state["page"] == "landing":
     st.stop()
 
 # ════════════════════════════════════════════
-# APP CONFIG CSS — Design Atlantic Re (inspiré Orange BF)
+# APP CONFIG CSS — Design IA TARIF (inspiré Orange BF pour sa simplicité et .. bref, c'est un choix perso.)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CSS INJECTION
@@ -362,7 +362,7 @@ st.markdown(f"<style>{CSS_ATLANTICRE}</style>", unsafe_allow_html=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR + ACCUEIL + TABS (UI principale)
 # ═══════════════════════════════════════════════════════════════════════════════
-st.title("Atlantic Re")
+st.title("IA TARIF")
 st.caption(f"Connecté : {st.session_state.get('user_email','')} | Burning cost · Simulation · Courbe de référence marché · IA")
 
 with st.sidebar:
