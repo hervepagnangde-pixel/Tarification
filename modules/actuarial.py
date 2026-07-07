@@ -328,28 +328,200 @@ console.log("OK");
 # ════════════════════════════════════════════
 
 def selectionner_seuil_pareto(X, D):
-    X = np.array(X); X = X[X > 0]
-    k_hill = min(59, len(X)-1); k_gerten = min(43, len(X)-1)
+    X = np.array(X, dtype=float)
+    X = X[np.isfinite(X)]
+    X = X[X > 0]
+
+    if len(X) < 5:
+        return pd.DataFrame(), 0.80 * D
+
     X_desc = np.sort(X)[::-1]
-    seuils = {"MLE": np.min(X),
-               "Hill": X_desc[k_hill-1] if k_hill > 0 else np.min(X),
-               "Gerten": X_desc[k_gerten-1] if k_gerten > 0 else np.min(X),
-               "MeanExc": 1_800_000,
-               "p50": 0.50*D, "p75": 0.75*D, "p80": 0.80*D, "p85": 0.85*D, "p90": 0.90*D}
+    n_total = len(X_desc)
+
+    # =====================================================
+    # 1. Courbe TVE / Hill complète
+    # =====================================================
+    hill_records = []
+
+    for k in range(5, n_total):
+        t_k = X_desc[k - 1]
+        X_tail = X_desc[:k]
+
+        denom = np.sum(np.log(X_tail / t_k))
+        if denom <= 0:
+            continue
+
+        alpha_k = k / denom
+
+        hill_records.append({
+            "k": k,
+            "t": t_k,
+            "alpha": alpha_k
+        })
+
+    df_hill = pd.DataFrame(hill_records)
+
+    # =====================================================
+    # 2. Détection automatique de la zone stable
+    # =====================================================
+    if df_hill.empty or len(df_hill) < 5:
+        seuil_stable = 0.80 * D
+    else:
+        w = int(np.sqrt(len(df_hill)))
+        w = max(5, w)
+        w = min(w, len(df_hill))
+
+        if w % 2 == 0:
+            w -= 1
+
+        min_periods = max(3, w // 2)
+
+        df_hill["alpha_moy"] = (
+            df_hill["alpha"]
+            .rolling(w, center=True, min_periods=min_periods)
+            .mean()
+        )
+
+        df_hill["alpha_std"] = (
+            df_hill["alpha"]
+            .rolling(w, center=True, min_periods=min_periods)
+            .std()
+        )
+
+        df_hill["cv_alpha"] = (
+            df_hill["alpha_std"] / df_hill["alpha_moy"].abs()
+        )
+
+        df_hill["pente_alpha"] = df_hill["alpha_moy"].diff().abs()
+
+        df_hill["pente_stable"] = (
+            df_hill["pente_alpha"]
+            .rolling(w, center=True, min_periods=min_periods)
+            .mean()
+        )
+
+        df_stab = df_hill.dropna().copy()
+
+        if df_stab.empty:
+            seuil_stable = 0.80 * D
+        else:
+            cv_limite = df_stab["cv_alpha"].quantile(0.30)
+            pente_limite = df_stab["pente_stable"].quantile(0.30)
+
+            zone_stable = df_stab[
+                (df_stab["cv_alpha"] <= cv_limite) &
+                (df_stab["pente_stable"] <= pente_limite)
+            ]
+
+            if zone_stable.empty:
+                df_stab["_score_stab"] = (
+                    df_stab["cv_alpha"] / (df_stab["cv_alpha"].median() + 1e-12)
+                    +
+                    df_stab["pente_stable"] / (df_stab["pente_stable"].median() + 1e-12)
+                )
+
+                meilleur = df_stab.loc[df_stab["_score_stab"].idxmin()]
+                seuil_stable = meilleur["t"]
+
+            else:
+                # On cherche le plus long plateau stable
+                indices = zone_stable.index.to_numpy()
+                ruptures = np.where(np.diff(indices) != 1)[0] + 1
+                blocs = np.split(indices, ruptures)
+
+                meilleur_bloc = max(blocs, key=len)
+                plateau = df_stab.loc[meilleur_bloc]
+
+                # On prend le centre du plateau pour éviter les bords instables
+                meilleur = plateau.iloc[len(plateau) // 2]
+                seuil_stable = meilleur["t"]
+
+    # =====================================================
+    # 3. Seuil Mean Excess automatique
+    # =====================================================
+    seuils_me = np.unique(np.quantile(X, np.linspace(0.50, 0.95, 30)))
+    me_records = []
+
+    for s in seuils_me:
+        exc = X[X > s] - s
+
+        if len(exc) < 5:
+            continue
+
+        me_records.append({
+            "t": s,
+            "n": len(exc),
+            "mean_excess": np.mean(exc)
+        })
+
+    df_me = pd.DataFrame(me_records)
+
+    if df_me.empty or len(df_me) < 5:
+        seuil_meanexc = seuil_stable
+    else:
+        df_me["pente_me"] = df_me["mean_excess"].diff() / df_me["t"].diff()
+        df_me["stab_me"] = df_me["pente_me"].rolling(
+            5, center=True, min_periods=3
+        ).std()
+
+        df_me_valid = df_me.dropna()
+
+        if df_me_valid.empty:
+            seuil_meanexc = seuil_stable
+        else:
+            seuil_meanexc = df_me_valid.loc[df_me_valid["stab_me"].idxmin(), "t"]
+
+    # =====================================================
+    # 4. Seuils testés, même structure qu'avant
+    # =====================================================
+    seuils = {
+        "MLE": np.min(X),
+        "Hill": seuil_stable,
+        "Gerten": seuil_stable,
+        "MeanExc": seuil_meanexc,
+        "p50": 0.50 * D,
+        "p75": 0.75 * D,
+        "p80": 0.80 * D,
+        "p85": 0.85 * D,
+        "p90": 0.90 * D
+    }
+
     resultats = []
+
     for nom, s in seuils.items():
+        if not np.isfinite(s) or s <= 0:
+            continue
+
         Xs = X[X >= s]
-        if len(Xs) < 5: continue
-        t_min = np.min(Xs); n = len(Xs)
-        alpha_hat = n / np.sum(np.log(Xs / t_min))
+
+        if len(Xs) < 5:
+            continue
+
+        t_min = np.min(Xs)
+        n = len(Xs)
+
+        denom = np.sum(np.log(Xs / t_min))
+        if denom <= 0:
+            continue
+
+        alpha_hat = n / denom
+
         Xs_sorted = np.sort(Xs)
-        cdf_emp = np.arange(1, n+1) / n
+        cdf_emp = np.arange(1, n + 1) / n
         cdf_par = 1 - (t_min / Xs_sorted) ** alpha_hat
+
         ks_stat = np.max(np.abs(cdf_emp - cdf_par))
         ks_pval = np.exp(-2 * n * ks_stat**2)
-        resultats.append({"Seuil": nom, "t": round(s), "n": n,
-                           "alpha": round(alpha_hat, 4), "KS_pval": round(ks_pval, 4)})
-    return pd.DataFrame(resultats), seuils.get("p80", 0.80*D)
+
+        resultats.append({
+            "Seuil": nom,
+            "t": round(s),
+            "n": n,
+            "alpha": round(alpha_hat, 4),
+            "KS_pval": round(ks_pval, 4)
+        })
+
+    return pd.DataFrame(resultats), round(seuil_stable)
 
 
 def identifier_sinistres_majeurs_gpd(df_proj, gnpi, tranches_input,
