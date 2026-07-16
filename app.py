@@ -4163,6 +4163,20 @@ with tab5:
 # ════════════════════════════════════════════
 
 with tab6:
+    # Import local du module de jugement actuariel et sensibilité.
+    # Placé ici pour éviter de casser le démarrage général de l'application
+    # si le module n'est pas encore disponible dans certains environnements.
+    try:
+        from modules.rapport_sensibilite import (
+            afficher_bloc_jugement_sensibilite,
+            construire_bloc_prompt_llm_sensibilite,
+        )
+        _sensibilite_disponible = True
+    except Exception as e_sensibilite_import:
+        afficher_bloc_jugement_sensibilite = None
+        construire_bloc_prompt_llm_sensibilite = None
+        _sensibilite_disponible = False
+
     st.header("Rapport Final de Tarification")
     st.markdown("""<div style="background:rgba(45,138,78,0.08);border-left:4px solid #2d8a4e;
         border-radius:0 8px 8px 0;padding:10px 16px;margin-bottom:12px;font-size:12px">
@@ -4218,6 +4232,40 @@ with tab6:
         with c1: card("Prime totale", f"{prime_totale:,.0f} AED", couleur="#2d8a4e", icone=None)
         with c2: card("Taux global",  f"{prime_totale/gnpi:.4%}", couleur="#1a1a1a",  icone=None)
         with c3: card("Tranches",     str(len(tranches_input)),   couleur="#2d8a4e",  icone=None)
+
+        # ── JUGEMENT ACTUARIEL ET ANALYSE DE SENSIBILITÉ ─────────────────────
+        # Cette section ne recalcule pas les taux. Elle lit les résultats déjà
+        # produits par les méthodes BC / Simulation / Marché et génère une
+        # analyse brève, exploitable dans le rapport et dans le prompt Claude.
+        st.markdown("### Jugement actuariel et analyse de sensibilité")
+
+        if _sensibilite_disponible:
+            try:
+                df_sensibilite_rapport = afficher_bloc_jugement_sensibilite(
+                    tranches_input=tranches_input,
+                    resultats_bc=st.session_state.get("resultats_bc"),
+                    resultats_sim=st.session_state.get("resultats_sim"),
+                    resultats_mkt=st.session_state.get("resultats_mkt"),
+                    taux_mkt_final=st.session_state.get("taux_mkt_final"),
+                    df_rapport=st.session_state.get("df_rapport"),
+                    session_state=dict(st.session_state),
+                    expanded=True,
+                )
+
+                st.session_state["df_sensibilite_rapport"] = df_sensibilite_rapport
+                st.session_state["bloc_sensibilite_llm"] = construire_bloc_prompt_llm_sensibilite(
+                    df_sensibilite_rapport
+                )
+
+            except Exception as e_sensibilite:
+                st.warning(f"Analyse de sensibilité indisponible : {e_sensibilite}")
+                st.session_state["bloc_sensibilite_llm"] = ""
+        else:
+            st.info(
+                "Le module modules/rapport_sensibilite.py n'a pas été chargé. "
+                "Vérifiez qu'il est bien présent dans le dossier modules."
+            )
+            st.session_state["bloc_sensibilite_llm"] = ""
 
         # ── EXPORT PDF + EXCEL + PPTX ──
         st.markdown("###  Exports")
@@ -4315,6 +4363,9 @@ with tab6:
                         if st.session_state.get("resultats_sim"):
                             pd.DataFrame(st.session_state["resultats_sim"]).to_excel(
                                 writer, sheet_name="Simulation", index=False)
+                        if st.session_state.get("df_sensibilite_rapport") is not None:
+                            st.session_state["df_sensibilite_rapport"].to_excel(
+                                writer, sheet_name="Sensibilite", index=False)
                     st.download_button(
                         " Télécharger .xlsx",
                         data=xls_buf.getvalue(),
@@ -4404,27 +4455,32 @@ with tab6:
 
         st.divider()
         guide_prompt("Rapport Final",
-            ["Négociation avec Partner Re / Munich Re/ Swiss Re", "Comité de tarification 15 janvier 2026", "Objectif prime < 14M AED"],
-            ["Justifier chaque taux retenu vs alternatives", "Comparer avec taux N-1 fournis", "Conclure sur positionnement vs marché"],
-            ["Taux N-1 : R&C=3.1%, CatL1=1.2%, CatL2=0.8%", "Cotation Partner Re : R&C=2.30%", "Chargement majeurs = 0.05%"],
-            ["Synthèse exécutive 5 lignes max", "Tableau récapitulatif final obligatoire", "Verdict : ACCEPTER / NEGOCIER / REFUSER"])
+            ["Négociation de renouvellement XL automobile", "Comité de tarification à venir", "Objectif de prime ou contraintes de placement, si disponibles"],
+            ["Justifier chaque taux retenu par rapport aux méthodes disponibles", "Comparer avec les références manuelles externes", "Commenter la sensibilité des taux et les points de vigilance"],
+            ["Taux N-1 par tranche : ...", "Paramètres validés sous R/Excel/SAS : ...", "Sinistres majeurs et traitement retenu : ..."],
+            ["Synthèse exécutive courte", "Tableau récapitulatif final obligatoire", "Conclusion : exploitable / exploitable avec réserves / à revoir"])
 
         st.markdown("###  Rapport Claude — Analyse finale")
         ctx_r, inst_r, inp_r, out_r = prompt_inputs(
             key_prefix="rapport",
-            placeholder_contexte="Ex: Négociation réassureur XYZ, objectif prime < 14M AED...",
-            placeholder_instructions="Ex: Justifier chaque taux, comparer avec N-1...",
-            placeholder_input="Ex: Taux N-1 : R&C=3.1%, CatL1=1.2%, CatL2=0.8%",
-            placeholder_output="Ex: Rapport 1 page max, tableau synthèse obligatoire")
+            placeholder_contexte="Ex: renouvellement XL automobile, objectif de prime, contraintes de placement...",
+            placeholder_instructions="Ex: justifier les taux retenus, commenter les sensibilités, signaler les écarts significatifs...",
+            placeholder_input="Ex: taux N-1 par tranche, paramètres validés sous R/Excel/SAS, sinistres majeurs, chargement spécifique...",
+            placeholder_output="Ex: synthèse courte, tableau de synthèse, conclusion exploitable / avec réserves / à revoir")
+
+        input_data_rapport = "\n\n".join([
+            inp_r or "",
+            st.session_state.get("bloc_sensibilite_llm", "")
+        ]).strip()
 
         if api_key and st.button(" Générer le rapport Claude", type="primary"):
             prompt = build_prompt(
                 role="Expert senior tarification reassurance non-proportionnelle, specialiste automobile marches emergents.",
-                task="1. SYNTHESE EXECUTIVE (5 lignes max)\n2. ANALYSE PAR TRANCHE (BC/Sim/Marche -> Verdict)\n3. COHERENCE INTER-METHODES\n4. ANOMALIES\n5. TABLEAU FINAL\n6. RECOMMANDATION GLOBALE",
+                task="1. SYNTHESE EXECUTIVE (5 lignes max)\n2. ANALYSE PAR TRANCHE (BC/Simulation/Marche -> Verdict)\n3. COHERENCE INTER-METHODES\n4. JUGEMENT ACTUARIEL ET SENSIBILITES\n5. ANOMALIES ET LIMITES\n6. TABLEAU FINAL\n7. RECOMMANDATION GLOBALE",
                 data=f"Rapport : {json.dumps(rows_rapport, indent=2)}\nBC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nSim : {json.dumps(st.session_state['resultats_sim'], indent=2)}\nGNPI : {gnpi:,} AED | Prime XL : {prime_totale:,.0f} AED | Taux global : {prime_totale/gnpi:.4%}",
-                contexte=ctx_r, instructions=inst_r, input_data=inp_r, output_instructions=out_r,
+                contexte=ctx_r, instructions=inst_r, input_data=input_data_rapport, output_instructions=out_r,
                 contexte_global=st.session_state.get("instructions_globales",""),
-                contraintes="- Ne jamais recommander taux < taux pur\n- BC=0 cat = normal\n- Mentionner incertitudes et limites")
+                contraintes="- Ne pas recalculer les taux\n- Ne jamais recommander un taux inférieur au taux pur sans justification explicite\n- BC=0 sur tranche cat peut être normal si aucune année historique n'atteint la tranche\n- Utiliser l'analyse de sensibilité comme lecture de stabilité, pas comme nouvelle tarification\n- Mentionner incertitudes, limites et besoin de validation actuarielle")
             claude_stream(api_key, prompt, max_tokens=2500, session_key="reco_finale")
 
     if "reco_finale" in st.session_state:
@@ -4461,7 +4517,6 @@ with tab6:
             st.session_state["df_rapport"],
             st.session_state.get("prime_totale", 0),
             gnpi)
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
