@@ -117,6 +117,87 @@ def _rapport_row(df_rapport: Optional[pd.DataFrame], nom: str) -> Optional[pd.Se
     return None
 
 
+def _is_cat_type(typ: Any) -> bool:
+    """Identifie les tranches Cat / non travaillantes sans dépendre d'un libellé unique."""
+    t = str(typ or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return ("cat" in t) or ("non_travaillante" in t) or ("non" in t and "trava" in t)
+
+
+def _has_any_key(d: Any, keys: Iterable[str]) -> bool:
+    if not isinstance(d, dict):
+        return False
+    return any(k in d and d.get(k) not in (None, "", "—") for k in keys)
+
+
+def _cat_event_counts(st_state: Optional[Dict[str, Any]] = None) -> Dict[int, int]:
+    """
+    Base Cat indicative utilisée uniquement si aucun calibrage Cat spécifique
+    n'est disponible par tranche. Elle correspond à l'instruction métier :
+    2024 = 6, 2022 = 4, 2023 = 2, 2020 = 1.
+    """
+    st_state = st_state or {}
+    raw = (
+        st_state.get("cat_event_counts")
+        or st_state.get("donnees_cat_counts")
+        or st_state.get("donnees_cat_indicatives")
+    )
+
+    if isinstance(raw, dict):
+        out = {}
+        for k, v in raw.items():
+            try:
+                out[int(k)] = int(float(v))
+            except Exception:
+                continue
+        if out:
+            return out
+
+    # Valeurs indicatives demandées pour le rapport Cat.
+    return {2024: 6, 2022: 4, 2023: 2, 2020: 1}
+
+
+def _find_market_context(resultats_mkt: Optional[List[Dict[str, Any]]], nom: str) -> Optional[Dict[str, Any]]:
+    """
+    Récupère le contexte de marché de la combinaison retenue.
+
+    Dans l'application, resultats_mkt est souvent une liste de modèles de courbe
+    contenant chacun : r2, n_points, a, b, score, taux_tranches.
+    Les taux par tranche sont dans taux_tranches, donc une recherche directe par
+    nom de tranche renvoie None et faisait afficher R2=0.
+    """
+    if not resultats_mkt:
+        return None
+
+    nom_l = _normaliser_nom_tranche(nom).lower()
+
+    # Cas 1 : structure déjà par tranche.
+    direct = _find_by_tranche(resultats_mkt, nom)
+    if direct:
+        return direct
+
+    # Cas 2 : liste de courbes, chacune avec taux_tranches. On retient la première
+    # car elle correspond généralement à la courbe sélectionnée / meilleure.
+    for modele in resultats_mkt:
+        if not isinstance(modele, dict):
+            continue
+        for tt in modele.get("taux_tranches", []) or []:
+            rn = _normaliser_nom_tranche(_get(tt, ["tranche", "Tranche", "nom", "Nom"], "")).lower()
+            if rn == nom_l:
+                out = dict(tt)
+                out.update({
+                    "r2": modele.get("r2", modele.get("R2", modele.get("R²", None))),
+                    "n_points": modele.get("n_points", modele.get("n", modele.get("N", None))),
+                    "quantile": modele.get("quantile", None),
+                    "a": modele.get("a", None),
+                    "b": modele.get("b", None),
+                    "score": modele.get("score", None),
+                    "r2_ok": modele.get("r2_ok", None),
+                })
+                return out
+
+    return None
+
+
 # =============================================================================
 # Construction des taux centraux
 # =============================================================================
@@ -231,13 +312,47 @@ def _sensibilite_bc(nom: str, typ: str, r_bc: Optional[Dict[str, Any]], taux_cen
     return SensibiliteLigne(nom, typ, "Burning Cost", taux, fav, adv, param, sfav, sadv, cred, jugement)
 
 
-def _loi_simulation(st_state: Optional[Dict[str, Any]] = None, r_sim: Optional[Dict[str, Any]] = None) -> Tuple[str, Dict[str, float]]:
-    """Recupere la loi de severite retenue et ses parametres si disponibles."""
+def _loi_simulation(
+    st_state: Optional[Dict[str, Any]] = None,
+    r_sim: Optional[Dict[str, Any]] = None,
+    typ: str = "",
+) -> Tuple[str, Dict[str, float]]:
+    """
+    Récupère la loi de sévérité retenue et ses paramètres.
+
+    Point important pour les tranches Cat : si l'application n'a pas encore
+    calibré une simulation Cat séparée, on n'affiche pas les paramètres globaux
+    de la tranche travaillante comme s'ils étaient spécifiques aux Cat. On utilise
+    seulement une fréquence Cat indicative fondée sur les comptes fournis, et on
+    signale que la sévérité Cat par tranche n'est pas calibrée.
+    """
     st_state = st_state or {}
     r_sim = r_sim or {}
 
+    is_cat = _is_cat_type(typ)
+    has_specific_cat_calibration = _has_any_key(
+        r_sim,
+        [
+            "source_cat", "n_cat_events", "donnees_cat_specifiques",
+            "calibrage_cat", "cat_alpha", "cat_lambda", "alpha_cat",
+            "lambda_cat", "xi_cat", "beta_cat", "mu_cat", "sigma_cat",
+        ],
+    )
+
+    if is_cat and not has_specific_cat_calibration:
+        counts = _cat_event_counts(st_state)
+        total = int(sum(counts.values()))
+        n_years = int(len(counts))
+        lambda_cat = float(total / max(n_years, 1))
+        return "Cat indicative", {
+            "lambda": lambda_cat,
+            "n_cat": float(total),
+            "n_years_cat": float(n_years),
+            "specific_params": 0.0,
+        }
+
     loi = (
-        _get(r_sim, ["loi_severite", "distribution", "severity_law"], "")
+        _get(r_sim, ["loi_severite", "distribution", "severity_law", "loi"], "")
         or st_state.get("loi_severite_retenue", "")
         or st_state.get("loi_retendue", "")
         or st_state.get("severity_law", "")
@@ -246,13 +361,13 @@ def _loi_simulation(st_state: Optional[Dict[str, Any]] = None, r_sim: Optional[D
     loi = str(loi).strip() or "Pareto"
 
     params = {
-        "alpha": _to_float(_get(r_sim, ["alpha", "alpha_est"], st_state.get("alpha_est", 0.0)), 0.0),
-        "lambda": _to_float(_get(r_sim, ["lambda", "lambda_", "lambda_est"], st_state.get("lambda_est", 0.0)), 0.0),
-        "seuil": _to_float(_get(r_sim, ["seuil", "seuil_est", "threshold"], st_state.get("seuil_est", 0.0)), 0.0),
-        "xi": _to_float(_get(r_sim, ["xi", "shape"], st_state.get("xi_est", 0.0)), 0.0),
-        "beta": _to_float(_get(r_sim, ["beta", "sigma_gpd", "scale"], st_state.get("beta_est", 0.0)), 0.0),
-        "mu": _to_float(_get(r_sim, ["mu", "mu_ln"], st_state.get("mu_ln", 0.0)), 0.0),
-        "sigma": _to_float(_get(r_sim, ["sigma", "sigma_ln"], st_state.get("sigma_ln", 0.0)), 0.0),
+        "alpha": _to_float(_get(r_sim, ["cat_alpha", "alpha_cat", "alpha", "alpha_est"], st_state.get("alpha_est", 0.0)), 0.0),
+        "lambda": _to_float(_get(r_sim, ["cat_lambda", "lambda_cat", "lambda", "lambda_", "lambda_est"], st_state.get("lambda_est", 0.0)), 0.0),
+        "seuil": _to_float(_get(r_sim, ["seuil_cat", "cat_seuil", "seuil", "seuil_est", "threshold"], st_state.get("seuil_est", 0.0)), 0.0),
+        "xi": _to_float(_get(r_sim, ["xi_cat", "cat_xi", "xi", "xi_gpd", "shape"], st_state.get("xi_est", 0.0)), 0.0),
+        "beta": _to_float(_get(r_sim, ["beta_cat", "cat_beta", "beta", "beta_gpd", "sigma_gpd", "scale"], st_state.get("beta_est", 0.0)), 0.0),
+        "mu": _to_float(_get(r_sim, ["mu_cat", "cat_mu", "mu", "mu_log", "mu_ln"], st_state.get("mu_ln", 0.0)), 0.0),
+        "sigma": _to_float(_get(r_sim, ["sigma_cat", "cat_sigma", "sigma", "sigma_log", "sigma_ln"], st_state.get("sigma_ln", 0.0)), 0.0),
     }
     return loi, params
 
@@ -271,11 +386,24 @@ def _sensibilite_simulation(
     if taux <= 0:
         return None
 
-    loi, params = _loi_simulation(st_state, r_sim)
+    loi, params = _loi_simulation(st_state, r_sim, typ)
     lam = params.get("lambda", 0.0)
 
     loi_l = loi.lower()
-    if "gpd" in loi_l or "pareto general" in loi_l:
+    if "cat indicative" in loi_l:
+        counts = _cat_event_counts(st_state)
+        lam_cat = params.get("lambda", 0.0)
+        total_cat = int(params.get("n_cat", sum(counts.values())))
+        detail_counts = ", ".join(f"{annee}={nb}" for annee, nb in sorted(counts.items()))
+        amp_fav = 0.18
+        amp_adv = 0.32
+        param = (
+            f"Frequence Cat indicative : {total_cat} evenements ({detail_counts}), "
+            f"lambda={lam_cat:.3f}. Severite Cat par tranche non calibree."
+        )
+        sfav = "frequence Cat plus faible ou absence d'evenement majeur cedant"
+        sadv = "frequence Cat plus elevee ou evenement majeur atteignant la tranche"
+    elif "gpd" in loi_l or "pareto general" in loi_l:
         xi = params.get("xi", 0.0)
         beta = params.get("beta", 0.0)
         # GPD : sensibilite forte si xi augmente et/ou beta augmente.
@@ -308,9 +436,19 @@ def _sensibilite_simulation(
     fav = max(taux * (1.0 - amp_fav), 0.0)
     adv = taux * (1.0 + amp_adv)
 
-    if "cat" in typ or "non" in typ:
-        cred = "centrale pour Cat"
-        jugement = "Simulation prioritaire pour la lecture de queue Cat, a confronter a la courbe marche."
+    if _is_cat_type(typ):
+        if "cat indicative" in loi_l:
+            cred = "indicative"
+            jugement = (
+                "Simulation Cat indicative : frequence Cat separee utilisee, mais severite specifique "
+                "non calibree par tranche. Ne pas assimiler aux parametres de la tranche travaillante."
+            )
+        else:
+            cred = "controle Cat"
+            jugement = (
+                "Simulation de queue utile pour controler la tranche Cat. "
+                "Elle ne remplace pas le Burning Cost lorsque celui-ci dispose d'au moins 3 annees non nulles."
+            )
     else:
         cred = "controle"
         jugement = "Simulation utile comme controle stochastique du Burning Cost."
@@ -328,8 +466,8 @@ def _sensibilite_market(
     if taux <= 0:
         return None
 
-    n_ref = int(_to_float(_get(r_mkt, ["n", "N", "n_refs", "nb_references"], 0), 0))
-    r2 = _to_float(_get(r_mkt, ["r2", "R2", "R²"], 0.0), 0.0)
+    n_ref = int(_to_float(_get(r_mkt, ["n_points", "n", "N", "n_refs", "nb_references"], 0), 0))
+    r2 = _to_float(_get(r_mkt, ["r2", "R2", "R²", "r_squared", "coef_determination"], 0.0), 0.0)
     p10 = _to_float(_get(r_mkt, ["p10", "q10", "taux_p10"], 0.0), 0.0)
     p90 = _to_float(_get(r_mkt, ["p90", "q90", "taux_p90"], 0.0), 0.0)
 
@@ -391,7 +529,7 @@ def construire_table_sensibilite(
 
         r_bc = _find_by_tranche(resultats_bc, nom)
         r_sim = _find_by_tranche(resultats_sim, nom)
-        r_mkt = _find_by_tranche(resultats_mkt, nom)
+        r_mkt = _find_market_context(resultats_mkt, nom)
 
         # Taux centraux priorises : rapport final si disponible, sinon resultats methode.
         taux_bc = _rate_from_report(row, ["Taux BC", "taux_bc", "BC"]) if row is not None else 0.0
@@ -474,8 +612,13 @@ def generer_jugement_actuariel(
         except Exception:
             pass
 
-        if "cat" in type_t.lower() or "non" in type_t.lower():
-            orientation = "Pour une tranche Cat, la lecture doit privilegier la simulation de queue et le benchmark marche."
+        if _is_cat_type(type_t):
+            bc_rows = g[g["Methode"].astype(str).str.lower().str.contains("burning", na=False)]
+            bc_cred = str(bc_rows["Credibilite"].iloc[0]).lower() if not bc_rows.empty else ""
+            if bc_cred in {"correcte", "credible", "crédible"}:
+                orientation = "Pour une tranche Cat, le Burning Cost historique reste prioritaire lorsque au moins 3 annees non nulles sont disponibles."
+            else:
+                orientation = "Pour une tranche Cat sans BC historique credible, la simulation de queue et le benchmark marche servent de relais prudents."
         else:
             orientation = "Pour une tranche travaillante, le Burning Cost reste la reference si l'experience est credible."
 
