@@ -4182,7 +4182,8 @@ with tab6:
         border-radius:0 8px 8px 0;padding:10px 16px;margin-bottom:12px;font-size:12px">
         <b>Règles de sélection finale</b> —
         T1 (travaillante) : max(τ_BC, τ_Sim) |
-        T2, T3 (cat) : max(τ_Sim, τ_Marché) —
+        Tranches Cat : Burning Cost prioritaire si au moins 3 années sinistrées non nulles ;
+        sinon relais par max(τ_Sim, τ_Marché).
         Courbe de référence marché appliquée <b>uniquement aux tranches cat</b>.
         </div>""", unsafe_allow_html=True)
     manquants = [n for n, k in [("BC","resultats_bc"),("Simulation","resultats_sim"),("Courbe de référence marché","taux_mkt_final")]
@@ -4194,28 +4195,70 @@ with tab6:
         _sim_list = st.session_state["resultats_sim"]
         _mkt_list = st.session_state["taux_mkt_final"]
         rows_rapport = []; prime_totale = 0
+
+        def _safe_lookup_result_local(liste, nom_tranche, idx):
+            """Récupère le dictionnaire résultat d'une tranche sans dépendre d'un format unique."""
+            try:
+                r = _lookup_result(liste, nom_tranche, idx)
+                if isinstance(r, dict):
+                    return r
+            except Exception:
+                pass
+            try:
+                nom_l = str(nom_tranche).strip().lower()
+                for rr in liste or []:
+                    if str(rr.get("tranche", rr.get("Tranche", rr.get("nom", "")))).strip().lower() == nom_l:
+                        return rr
+                if isinstance(liste, list) and 0 <= idx < len(liste) and isinstance(liste[idx], dict):
+                    return liste[idx]
+            except Exception:
+                pass
+            return {}
+
         for idx_t, t in enumerate(tranches_input):
             nom = t["nom"]
+            typ_t = str(t.get("type", "")).strip().lower()
+            is_cat = typ_t != "travaillante"
+
+            bc_obj = _safe_lookup_result_local(_bc_list, nom, idx_t)
             bc_tt  = _lookup_taux(_bc_list,  nom, idx_t, "taux_technique")
             sim_tt = _lookup_taux(_sim_list, nom, idx_t, "taux_technique")
+
             # Courbe de référence marché uniquement pour tranches cat
-            mkt = _lookup_taux(_mkt_list, nom, idx_t, "taux") if t["type"] != "travaillante" else 0.0
-            if t["type"] == "travaillante":
-                # T1 : max(BC, Sim) — méthode la plus conservative
+            mkt = _lookup_taux(_mkt_list, nom, idx_t, "taux") if is_cat else 0.0
+
+            n_bc_nonzero = int(float(
+                bc_obj.get("n_ann_nonzero",
+                bc_obj.get("n_annees_nonzero",
+                bc_obj.get("nb_annees_nonzero", 0))) or 0
+            ))
+
+            if not is_cat:
+                # T1 : max(BC, Sim) — méthode prudente pour tranche travaillante.
                 taux_retenu = max(bc_tt, sim_tt)
                 methode_base = "BC" if bc_tt >= sim_tt else "Simulation"
                 ecart = abs(bc_tt-sim_tt)/max(bc_tt,sim_tt)*100 if max(bc_tt,sim_tt)>0 else 0
-                methode = f"max(BC,Sim)→{methode_base} | écart {ecart:.0f}% {'' if ecart>25 else ''}"
+                methode = f"max(BC,Sim)→{methode_base} | écart {ecart:.0f}%"
             else:
-                # T2, T3 cat : max(Sim, Marché) — toujours côté sécurité
-                taux_retenu = max(sim_tt, mkt)
-                methode = f"max(Sim,Mkt)→{'Marché' if mkt >= sim_tt else 'Simulation'}"
+                # Tranches Cat : Burning Cost prioritaire si historique crédible.
+                # On ne retient pas max(BC, Sim) : dès que le BC dispose d'au moins
+                # 3 années sinistrées non nulles, il reste la référence de taux.
+                if bc_tt > 0 and n_bc_nonzero >= 3:
+                    taux_retenu = bc_tt
+                    methode = f"BC prioritaire Cat | {n_bc_nonzero} années non nulles"
+                else:
+                    taux_retenu = max(sim_tt, mkt)
+                    methode = (
+                        f"Relais Cat faute de BC crédible ({n_bc_nonzero} années non nulles) "
+                        f"→ {'Marché' if mkt >= sim_tt else 'Simulation'}"
+                    )
+
             prime = gnpi * taux_retenu; prime_totale += prime
             rows_rapport.append({
                 "Tranche": nom, "Type": t["type"],
                 "Taux BC": f"{bc_tt:.4%}", "Taux Sim.": f"{sim_tt:.4%}",
                 "Taux Marché": f"{mkt:.4%}", "Taux retenu": f"{taux_retenu:.4%}",
-                "Prime (AED)": f"{prime:,.0f}", "Méthode": methode
+                "Prime XL (AED)": f"{prime:,.0f}", "Méthode": methode
             })
         st.session_state["df_rapport"]   = pd.DataFrame(rows_rapport)
         st.session_state["prime_totale"] = prime_totale
@@ -4229,7 +4272,7 @@ with tab6:
         st.subheader(" Synthèse de tarification")
         st.dataframe(st.session_state["df_rapport"], use_container_width=True)
         c1, c2, c3 = st.columns(3)
-        with c1: card("Prime totale", f"{prime_totale:,.0f} AED", couleur="#2d8a4e", icone=None)
+        with c1: card("Prime XL totale", f"{prime_totale:,.0f} AED", couleur="#2d8a4e", icone=None)
         with c2: card("Taux global",  f"{prime_totale/gnpi:.4%}", couleur="#1a1a1a",  icone=None)
         with c3: card("Tranches",     str(len(tranches_input)),   couleur="#2d8a4e",  icone=None)
 
@@ -4238,6 +4281,10 @@ with tab6:
         # produits par les méthodes BC / Simulation / Marché et génère une
         # analyse brève, exploitable dans le rapport et dans le prompt Claude.
         st.markdown("### Jugement actuariel et analyse de sensibilité")
+
+        # Fréquence Cat indicative utilisée seulement si aucune simulation Cat
+        # séparée n'a encore été calibrée dans l'outil.
+        st.session_state.setdefault("cat_event_counts", {2024: 6, 2022: 4, 2023: 2, 2020: 1})
 
         if _sensibilite_disponible:
             try:
@@ -4318,7 +4365,7 @@ with tab6:
                     for sc in scenarios_cmp:
                         row_c[sc["label"][:20]] = f"{sc['taux'].get(t['nom'],0):.4f}%"
                     rows_comp_scen.append(row_c)
-                rows_comp_scen.append({"Tranche": "TOTAL PRIME",
+                rows_comp_scen.append({"Tranche": "TOTAL PRIME XL",
                     **{sc["label"][:20]: f"{sc['prime']:,.0f} AED" for sc in scenarios_cmp}})
                 tableau_resultats(rows_comp_scen, "Comparaison des scénarios")
 
@@ -4455,7 +4502,7 @@ with tab6:
 
         st.divider()
         guide_prompt("Rapport Final",
-            ["Négociation de renouvellement XL automobile", "Comité de tarification à venir", "Objectif de prime ou contraintes de placement, si disponibles"],
+            ["Négociation de renouvellement XL automobile", "Comité de tarification à venir", "Objectif de prime XL ou contraintes de placement, si disponibles"],
             ["Justifier chaque taux retenu par rapport aux méthodes disponibles", "Comparer avec les références manuelles externes", "Commenter la sensibilité des taux et les points de vigilance"],
             ["Taux N-1 par tranche : ...", "Paramètres validés sous R/Excel/SAS : ...", "Sinistres majeurs et traitement retenu : ..."],
             ["Synthèse exécutive courte", "Tableau récapitulatif final obligatoire", "Conclusion : exploitable / exploitable avec réserves / à revoir"])
@@ -4463,7 +4510,7 @@ with tab6:
         st.markdown("###  Rapport Claude — Analyse finale")
         ctx_r, inst_r, inp_r, out_r = prompt_inputs(
             key_prefix="rapport",
-            placeholder_contexte="Ex: renouvellement XL automobile, objectif de prime, contraintes de placement...",
+            placeholder_contexte="Ex: renouvellement XL automobile, objectif de prime XL, contraintes de placement...",
             placeholder_instructions="Ex: justifier les taux retenus, commenter les sensibilités, signaler les écarts significatifs...",
             placeholder_input="Ex: taux N-1 par tranche, paramètres validés sous R/Excel/SAS, sinistres majeurs, chargement spécifique...",
             placeholder_output="Ex: synthèse courte, tableau de synthèse, conclusion exploitable / avec réserves / à revoir")
@@ -4480,7 +4527,16 @@ with tab6:
                 data=f"Rapport : {json.dumps(rows_rapport, indent=2)}\nBC : {json.dumps([{k:v for k,v in r.items() if k!='detail_annuel'} for r in st.session_state['resultats_bc']], indent=2)}\nSim : {json.dumps(st.session_state['resultats_sim'], indent=2)}\nGNPI : {gnpi:,} AED | Prime XL : {prime_totale:,.0f} AED | Taux global : {prime_totale/gnpi:.4%}",
                 contexte=ctx_r, instructions=inst_r, input_data=input_data_rapport, output_instructions=out_r,
                 contexte_global=st.session_state.get("instructions_globales",""),
-                contraintes="- Ne pas recalculer les taux\n- Ne jamais recommander un taux inférieur au taux pur sans justification explicite\n- BC=0 sur tranche cat peut être normal si aucune année historique n'atteint la tranche\n- Utiliser l'analyse de sensibilité comme lecture de stabilité, pas comme nouvelle tarification\n- Mentionner incertitudes, limites et besoin de validation actuarielle")
+                contraintes=(
+                    "- Ne pas recalculer les taux\n"
+                    "- Ne jamais recommander un taux inférieur au taux pur sans justification explicite\n"
+                    "- Pour les tranches Cat, le Burning Cost est prioritaire dès qu'il existe au moins 3 années sinistrées non nulles\n"
+                    "- BC=0 sur tranche Cat peut être normal si aucune année historique n'atteint la tranche\n"
+                    "- Si les paramètres Cat spécifiques ne sont pas calibrés, ne pas réutiliser ceux de la tranche travaillante comme s'ils étaient propres aux Cat\n"
+                    "- Utiliser l'analyse de sensibilité comme lecture de stabilité, pas comme nouvelle tarification\n"
+                    "- Mentionner incertitudes, limites et besoin de validation actuarielle"
+                )
+            )
             claude_stream(api_key, prompt, max_tokens=2500, session_key="reco_finale")
 
     if "reco_finale" in st.session_state:
@@ -4517,6 +4573,7 @@ with tab6:
             st.session_state["df_rapport"],
             st.session_state.get("prime_totale", 0),
             gnpi)
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
